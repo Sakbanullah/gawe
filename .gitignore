@@ -1,0 +1,84 @@
+# Runtime data, kandidat, dan artefak lokal — jangan pernah di-commit.
+data/
+profile/
+logs/
+graphify-out/
+temporary/
+raw/
+.venv/
+venv/
+node_modules/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+build/
+frontend/dist/
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+config.toml
+*.pem
+*.key
+*.zip
+
+# Test, fixture, dan konfigurasi pengujian.
+tests/
+test/
+test_*.py
+*_test.py
+conftest.py
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+fixtures/
+snapshots/
+__snapshots__/
+vitest.config.ts
+test-setup.ts
+
+# Dokumentasi, rencana, laporan, dan skrip audit dokumentasi.
+docs/
+*.md
+tools/
+
+# Instruksi dan konfigurasi AI coding agent.
+AGENTS.md
+.opencode/
+.graphifyignore
+CLAUDE.md
+.cursor/
+.windsurf/
+
+# Cache, log, coverage, dan artefak profiling.
+coverage/
+.coverage
+.coverage.*
+htmlcov/
+*.log
+*.tsbuildinfo
+.mypy_cache/
+.ruff_cache/
+.cache/
+.vite/
+
+# Database lokal, dump, dan backup.
+*.dump
+*.bak
+backups/
+
+# Rahasia dan konfigurasi lokal.
+secrets/
+*.p12
+*.pfx
+
+# File editor dan sistem operasi.
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
