@@ -1,0 +1,59 @@
+# Gawe — contoh konfigurasi. Salin ke config.toml untuk runtime lokal.
+#
+# Placeholder runtime. D1 sudah diputuskan 2026-10-19: provider aktif 9Router
+# lewat adapter `openai_compatible`. Nilai di bawah tetap contoh; isi base_url,
+# api_key_ref, dan model per role sesuai konfigurasi lokal. Tidak ada model yang
+# di-hardcode dan tidak ada fallback lintas provider otomatis.
+#
+# C6 selesai 2026-10-19: file ini berada di root repository sebagai template
+# konfigurasi. Backend membaca config dari root.
+# Secret tidak pernah ditulis di file ini; hanya nama referensi keyring.
+
+[server]
+host = "127.0.0.1"          # wajib loopback; jangan 0.0.0.0
+port = 8000                  # port final OPEN; 8000 hanya contoh
+
+[storage]
+data_dir = "data"
+profile_dir = "profile"
+logs_dir = "logs"
+
+[database]                     # MySQL 8 Laragon; bukan PostgreSQL
+host = "127.0.0.1"
+port = 3306
+user = "root"
+name = "gawe"                  # schema pengembangan; tes memakai prefix gawe_test_
+password_env = "GAWE_DB_PASSWORD"   # password tidak ditulis di file ini
+
+[llm]
+active_provider = "provider_a"   # placeholder
+default_timeout_s = 90
+max_retries = 1
+repair_json_once = true
+
+[llm.providers.provider_a]       # placeholder; bukan vendor nyata
+type = "openai_compatible"       # tipe adapter, bukan pilihan vendor
+base_url = "https://provider-a.example/v1"
+api_key_ref = "gawe/llm/provider_a"
+capabilities = ["chat", "json_mode"]
+
+[llm.roles]                      # semua nilai placeholder
+extract = "model-x"
+classify = "model-x"
+write = "model-y"
+review = "model-z"
+
+[privacy]
+cloud_consent_required = true
+send_minimum_context = true
+log_document_content = false
+log_model_io = false
+debug_model_io_redacted = true
+
+[retention]                      # SEMENTARA; D10 OPEN
+job_cache_days = 90
+log_days = 30
+diagnostics_days = 7
+
+[frontend]
+dist_dir = "frontend/dist"
