@@ -1,10 +1,10 @@
 # Runtime data, kandidat, dan artefak lokal — jangan pernah di-commit.
 data/
-profile/
-logs/
-graphify-out/
-temporary/
-raw/
+/profile/
+/logs/
+/graphify-out/
+/temporary/
+/raw/
 .venv/
 venv/
 node_modules/
