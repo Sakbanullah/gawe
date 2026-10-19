@@ -1,0 +1,8 @@
+/*
+ * Documented CSS exceptions. Mantine theme and props cover the rest.
+ *
+ * 1. #root needs a minimum height so the AppShell fills the viewport.
+ */
+#root {
+  min-height: 100vh;
+}
