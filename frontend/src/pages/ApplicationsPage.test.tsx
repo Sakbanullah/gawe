@@ -10,6 +10,7 @@ import type {
   ApplicationWorkspace,
   DocumentSummary,
   DocumentVersion,
+  ExportList,
   FindingsReport,
   Overview,
   TaskCreated,
@@ -23,6 +24,9 @@ vi.mock("../app/apiClient", async (importOriginal) => {
     ...actual,
     getOverview: vi.fn(),
     listApplications: vi.fn(),
+    createApplicationFromUrl: vi.fn(),
+    listExports: vi.fn(),
+    createExport: vi.fn(),
     getApplication: vi.fn(),
     rerunApplicationAnalysis: vi.fn(),
     getDocumentVersion: vi.fn(),
@@ -244,6 +248,23 @@ beforeEach(() => {
   vi.mocked(api.createDocumentRevision).mockResolvedValue(
     documentVersion({ document_version_id: "docv_2", version: 2 }),
   );
+  vi.mocked(api.createApplicationFromUrl).mockResolvedValue({
+    application_id: "app_2",
+    job_id: "job_2",
+    task_id: "tsk_url",
+    deduplicated: false,
+  });
+  vi.mocked(api.listExports).mockResolvedValue({
+    application_id: "app_1",
+    items: [],
+    page: { limit: 200, next_cursor: null, has_more: false },
+  } satisfies ExportList);
+  vi.mocked(api.createExport).mockResolvedValue({
+    task_id: "tsk_export",
+    type: "export",
+    status: "completed",
+    application_id: "app_1",
+  } as TaskCreated);
 });
 
 describe("ApplicationsPage", () => {
@@ -264,6 +285,21 @@ describe("ApplicationsPage", () => {
     renderAt("/applications");
 
     expect(await screen.findByText("Belum ada application.")).toBeTruthy();
+  });
+
+  it("creates a workspace from a pasted URL", async () => {
+    renderAt("/applications");
+
+    fireEvent.change(await screen.findByLabelText("Tambah dari URL lowongan"), {
+      target: { value: "https://example.com/jobs/1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Buat workspace" }));
+
+    await waitFor(() =>
+      expect(api.createApplicationFromUrl).toHaveBeenCalledWith(
+        "https://example.com/jobs/1",
+      ),
+    );
   });
 });
 
@@ -369,6 +405,36 @@ describe("ApplicationWorkspacePage", () => {
     await waitFor(() =>
       expect(api.runDocumentReview).toHaveBeenCalledWith("app_1", "docv_1"),
     );
+  });
+
+  it("exports only an approved version and links the final PDF", async () => {
+    vi.mocked(api.getApplication).mockResolvedValue(
+      workspace({
+        status: "approved",
+        documents: {
+          cv: [documentSummary({ status: "approved", review_status: "completed", approved: true })],
+          cover_letter: [],
+        },
+      }),
+    );
+    vi.mocked(api.getDocumentVersion).mockResolvedValue(
+      documentVersion({ status: "approved", review_status: "completed", approved: true }),
+    );
+    renderAt("/applications/app_1");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Lihat" }));
+    const exportButton = await screen.findByRole("button", { name: "Ekspor PDF" });
+    await waitFor(() => expect((exportButton as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(exportButton);
+
+    await waitFor(() =>
+      expect(api.createExport).toHaveBeenCalledWith("app_1", {
+        kind: "cv",
+        document_version_id: "docv_1",
+        content_hash: "hash_1",
+      }),
+    );
+    expect(screen.getByText("Preview PDF")).toBeTruthy();
   });
 
   it("marks information that the profile does not provide", async () => {

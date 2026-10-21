@@ -1,7 +1,7 @@
 """`/api/applications`: workspace creation, reads, and explicit re-analysis.
 
-Phase 3D slice: job-sourced workspaces only. The manual-URL fallback, document
-generation, review, approval, and export are not implemented yet.
+A workspace is created from a matched `job_id`, or from a pasted URL through the
+manual-URL fallback (API-CONTRACTS.md 3.4).
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ...master_cv.store import MasterCvError
 from ...services.application_service import ApplicationError, ApplicationService
-from ..deps import profile_store
+from ..deps import discovery_service, profile_store
 from ..errors import ApiError
 
 router = APIRouter(prefix="/api/applications")
@@ -85,15 +85,14 @@ def list_applications(
 
 @router.post("")
 def create_application(request: Request, body: CreateApplicationRequest):
-    if body.url and not body.job_id:
-        # Contract allows a manual URL, but the HTML fetch adapter is not built yet.
-        raise _bad_request(
-            "url",
-            "manual_url_not_implemented",
-            "Fallback URL manual belum tersedia. Pilih lowongan dari Job Matches.",
-        )
+    service = _service(request)
     try:
-        record, deduplicated = _service(request).create(body.job_id or "")
+        if body.url and not body.job_id:
+            record, deduplicated = service.create_from_url(
+                body.url, discovery_service(request)
+            )
+        else:
+            record, deduplicated = service.create(body.job_id or "")
     except MasterCvError as exc:
         raise ApiError(
             exc.status_code, exc.code, exc.message, stage="eligibility", active_task_id=exc.active_task_id

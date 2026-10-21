@@ -1,8 +1,13 @@
-import { Alert, Badge, Table, Text } from "@mantine/core";
+import { Alert, Badge, Button, Group, Table, Text, TextInput } from "@mantine/core";
+import { useState } from "react";
 import { Link } from "react-router";
 
-import type { ApplicationList } from "../app/apiClient";
-import { useApplications, useOverview } from "../app/queries";
+import { ApiError, type ApplicationList } from "../app/apiClient";
+import {
+  useApplications,
+  useCreateApplicationFromUrl,
+  useOverview,
+} from "../app/queries";
 import { PageFrame } from "../components/PageFrame";
 import { EmptyState, type PageState } from "../components/states";
 
@@ -20,6 +25,8 @@ const STATUS_LABEL: Record<string, string> = {
 export function ApplicationsPage() {
   const overview = useOverview();
   const applications = useApplications();
+  const createFromUrl = useCreateApplicationFromUrl();
+  const [url, setUrl] = useState("");
   const state: PageState = applications.isPending
     ? "loading"
     : applications.isError
@@ -39,6 +46,33 @@ export function ApplicationsPage() {
       {locked ? (
         <Alert color="orange" title="Profil belum dikonfirmasi">
           Konfirmasi profil sebelum membuat workspace lamaran.
+        </Alert>
+      ) : null}
+      <Group align="flex-end">
+        <TextInput
+          label="Tambah dari URL lowongan"
+          description="HTTPS publik. Halaman dibaca sekali untuk workspace ini."
+          placeholder="https://contoh.com/karier/backend-engineer"
+          value={url}
+          onChange={(event) => setUrl(event.currentTarget.value)}
+          style={{ flex: 1 }}
+          disabled={locked}
+        />
+        <Button
+          loading={createFromUrl.isPending}
+          disabled={locked || url.trim() === ""}
+          onClick={() =>
+            void createFromUrl.mutateAsync(url.trim()).then(() => setUrl(""))
+          }
+        >
+          Buat workspace
+        </Button>
+      </Group>
+      {createFromUrl.isError ? (
+        <Alert color="red" title="URL ditolak">
+          {createFromUrl.error instanceof ApiError
+            ? createFromUrl.error.message
+            : "URL tidak dapat dipakai."}
         </Alert>
       ) : null}
       {items.length === 0 ? <EmptyState message="Belum ada application." /> : null}

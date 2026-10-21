@@ -360,3 +360,30 @@ export function approveDocumentVersion(
     body,
   );
 }
+
+export type ExportRecord = components["schemas"]["ExportRecord"];
+export type ExportList = components["schemas"]["ExportList"];
+export type ExportRequest = components["schemas"]["ExportRequest"];
+
+export function createApplicationFromUrl(url: string): Promise<ApplicationCreated> {
+  return apiSend<ApplicationCreated>("POST", "/api/applications", { url });
+}
+
+export function listExports(applicationId: string): Promise<ExportList> {
+  return apiGet<ExportList>(`/api/applications/${applicationId}/exports?limit=200`);
+}
+
+export function createExport(
+  applicationId: string,
+  body: ExportRequest,
+): Promise<TaskCreated> {
+  return apiSend<TaskCreated>("POST", `/api/applications/${applicationId}/exports`, body);
+}
+
+export function documentPdfUrl(applicationId: string, documentVersionId: string): string {
+  return `/api/applications/${applicationId}/documents/${documentVersionId}/pdf`;
+}
+
+export function exportDownloadUrl(applicationId: string, exportId: string): string {
+  return `/api/applications/${applicationId}/exports/${exportId}/download`;
+}

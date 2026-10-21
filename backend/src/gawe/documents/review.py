@@ -14,10 +14,13 @@ approval; findings stay attached to the version after approval.
 
 from __future__ import annotations
 
+from . import factcheck
 from .draft import required_missing
 
 
-def review(content: dict, evidence_index: dict) -> dict:
+def review(
+    content: dict, evidence_index: dict, profile_content: dict | None = None
+) -> dict:
     findings: list[dict] = []
 
     for problem in required_missing(content):
@@ -62,6 +65,23 @@ def review(content: dict, evidence_index: dict) -> dict:
                     section=section,
                     bullet_id=item_id,
                     evidence_refs=refs,
+                )
+            )
+
+    if profile_content:
+        for item in factcheck.review_text(
+            factcheck.to_text(content),
+            profile_content,
+            kind=content.get("kind") or "cv",
+        ):
+            findings.append(
+                _finding(
+                    len(findings) + 1,
+                    item["severity"],
+                    item["category"],
+                    quote=item["quote"],
+                    problem=item["problem"],
+                    fix=item["fix"],
                 )
             )
 

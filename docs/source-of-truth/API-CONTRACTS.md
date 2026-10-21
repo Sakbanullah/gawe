@@ -8,7 +8,7 @@
 >
 > Kontrak ini menjadi acuan final Phase 1. Perubahan isi kontrak setelah persetujuan memerlukan persetujuan pengguna baru dan pembaruan [`DECISIONS.md`](DECISIONS.md).
 >
-> **Batasan yang tetap berlaku:** D6, D10, D20, D21, ambang rekomendasi, kalibrasi bobot fit, dan port runtime final tetap `OPEN`. D1 sudah diputuskan 2026-10-19 (9Router lewat `openai_compatible`); kontrak ini tidak mengubah status keputusan mana pun.
+> **Batasan yang tetap berlaku:** D10, D20, D21, ambang rekomendasi, kalibrasi bobot fit, dan port runtime final tetap `OPEN`. D1 sudah diputuskan 2026-10-19 (9Router lewat `openai_compatible`) dan D6 sudah diputuskan 2026-10-21 (Tectonic untuk PDF); kontrak ini tidak mengubah status keputusan mana pun.
 
 ---
 
@@ -422,7 +422,7 @@ Aturan kontrak:
 - `exported_at` **nullable**: terisi hanya bila `status: exported`, yaitu setelah PDF berhasil dibuat dan export record ditulis.
 - `download_url` hanya terisi bila `status: exported`; `null` untuk `tex_only` dan `failed`.
 - `error` memuat kode aman (misalnya `compile_failed`) untuk `tex_only`/`failed`, `null` untuk `exported`.
-- Compile gagal menghasilkan export record `tex_only` (sumber LaTeX tersimpan, PDF tidak ada) atau `failed` (tidak ada artefak final); bukan `exported`. Mesin PDF tidak ditetapkan kontrak (D6 `OPEN`).
+- Compile gagal menghasilkan export record `tex_only` (sumber LaTeX tersimpan, PDF tidak ada) atau `failed` (tidak ada artefak final); bukan `exported`. Kontrak tidak menetapkan mesin PDF; implementasi Phase 3 memakai Tectonic (D6 diputuskan 2026-10-21).
 - `tex_only` adalah istilah produk yang sudah dipakai. Bila D6 memilih mesin non-LaTeX, nilai status baru ditambahkan lewat perubahan kontrak; nilai tidak diterima diam-diam.
 - `ExportList` dan `DocumentList` dipaginasi dengan aturan §4.8.
 
@@ -634,7 +634,7 @@ Kode error dan pemetaan HTTP:
 | `review_unavailable` | 503 | true | Layanan reviewer tidak tersedia; tidak ada approval dicatat |
 | `review_not_completed` | 409 | false | Gate approval: review belum selesai atau verdict belum final |
 | `compile_failed` | 500 | true | Compile gagal setelah retry |
-| `toolchain_unavailable` | 503 | false | Mesin PDF belum tersedia atau tidak dapat dipakai (D6 `OPEN`) |
+| `toolchain_unavailable` | 503 | false | Mesin PDF belum tersedia atau tidak dapat dipakai (D6 diputuskan 2026-10-21: Tectonic) |
 | `provider_not_configured` | 409 | false | Provider belum dikonfigurasi (D1) |
 | `provider_unavailable` | 503 | true | Provider gagal sementara; di dalam task dilaporkan sebagai error task dengan kode yang sama |
 | `provider_rate_limited` | — | true | Rate limit provider; dilaporkan sebagai error task, bukan response HTTP |
@@ -797,7 +797,7 @@ Aturan:
 - `GET /api/settings` menyertakan `retention.provisional: true` selama D10 belum disetujui. Durasi tidak boleh ditampilkan sebagai kebijakan final.
 - Cache replay `Idempotency-Key` 24 jam bukan item retensi pengguna dan tidak termasuk tabel retensi. D10 tetap `OPEN`.
 - `toolchain` melaporkan `pdf_engine`, `status`, dan `decision_status`. `pdf_engine` adalah konfigurasi runtime (string bebas atau `null`), bukan keputusan produk. D6 tetap `OPEN`; kontrak tidak menetapkan Tectonic atau mesin lain sebagai persyaratan.
-- Selama D6 `OPEN`, ekspor PDF tidak dijanjikan. Bila mesin PDF belum tersedia atau tidak dapat dipakai, `POST .../exports` dan preview PDF ditolak `503 toolchain_unavailable` (`retryable: false`) dan preview menghasilkan `409 pdf_not_available`.
+- Ekspor PDF tidak dijanjikan bila mesin belum tersedia. Bila mesin PDF belum tersedia atau tidak dapat dipakai, `POST .../exports` dan preview PDF ditolak `503 toolchain_unavailable` (`retryable: false`) dan preview menghasilkan `409 pdf_not_available`.
 - Ekspor yang gagal compile tetap mencatat export record `tex_only` atau `failed`; tidak ada klaim PDF berhasil.
 
 ### 4.11 Status dan transisi workflow melalui API
@@ -839,7 +839,7 @@ Aturan:
 
 #### 4.11.1 Implementasi dokumen deterministik (milestone 3D)
 
-Milestone ini mengimplementasikan versi, review, dan approval tanpa LaTeX/PDF. Endpoint `POST .../exports` dan preview PDF belum ada; D6 tetap `OPEN`.
+Milestone ini mengimplementasikan versi, review, dan approval. LaTeX/PDF/ekspor ditambahkan pada gap-closing 2026-10-21 (lihat A4.11.2); D6 sudah diputuskan.
 
 - Draft CV/cover letter dibangun deterministik dari `profile_version.content` + job. Tidak ada provider/model call; `provider`, `model`, dan `prompt_version` bernilai `null`.
 - Hash versi adalah SHA-256 dari canonical JSON konten (`sort_keys`, separator rapat, UTF-8). Hash berubah bila konten berubah.
@@ -853,7 +853,19 @@ Milestone ini mengimplementasikan versi, review, dan approval tanpa LaTeX/PDF. E
 - Revisi menolak perubahan `kind`, `schema_version`, `target`, `missing`, `language`, dan semua `evidence_ids`; tipe struktur dasar (`header`, `target`, `summary`, `paragraphs`, list section) divalidasi sebelum versi baru dibuat.
 - Catatan revisi disimpan di `diff.note`; catatan per edit disimpan di `diff.edit_notes`.
 - Approval tidak menghapus findings. Findings tetap menempel pada `document_version_id` dan `profile_version_id` saat review.
-- Konten tidak boleh disetujui atau diekspor bila data wajib belum lengkap. Ekspor belum diimplementasikan, jadi gate ini baru teruji pada approval.
+- Konten tidak boleh disetujui atau diekspor bila data wajib belum lengkap.
+
+#### 4.11.2 Implementasi PDF dan ekspor (gap-closing 2026-10-21)
+
+D6 diputuskan: Tectonic 0.17.0 menghasilkan PDF dari LaTeX yang dibangun backend.
+
+- `GET .../documents/{document_version_id}/pdf` adalah preview non-final. Tidak membuat export record, tidak mengubah status approval/ekspor. Respons `application/pdf` dengan `Content-Disposition: inline`.
+- `POST .../exports` menerima `kind` + `document_version_id` + `content_hash` (+ `filename` opsional) dan mengembalikan `202` `TaskCreated` bertipe `export`. Nama file dihitung backend; `filename` hanya mengganti nama.
+- Gate sebelum task dibuat: `404` versi asing, `400 validation_failed` bila `kind` tidak cocok, `409 approval_hash_mismatch` bila hash tidak cocok, `409 export_not_ready` bila versi belum `approved`, `409 task_already_running` + `active_task_id` bila ada task aktif, dan `503 toolchain_unavailable` bila mesin PDF tidak tersedia. Karena `503` terjadi sebelum task, tidak ada export record setengah jadi.
+- `qa` memeriksa batas halaman (CV maks 2, cover letter maks 1) dan PDF yang dapat dibaca. `qa` gagal menghasilkan record `failed` dengan `error.code` dari masalah pertama; tidak pernah `exported`.
+- Kompilasi gagal saat runtime (timeout, error LaTeX) menghasilkan `tex_only` dengan sumber LaTeX tersimpan dan `download_url: null`.
+- `GET .../exports/{export_id}/download` hanya melayani record `exported`; selain itu `409 export_not_ready`.
+- Hasil nyata 2026-10-21: CV 1 halaman (16.3 KB), cover letter 1 halaman (11.8 KB) untuk dua lowongan global nyata.
 
 ### 4.12 Representasi evidence dan kutipan di UI
 
@@ -892,7 +904,7 @@ Milestone ini mengimplementasikan versi, review, dan approval tanpa LaTeX/PDF. E
 | Review belum selesai | Approval ditolak `409 review_not_completed` (`retryable: false`); ini gate, bukan kegagalan layanan |
 | Reviewer gagal setelah 2 siklus revisi | `verdict: unresolved`; sisa temuan dilaporkan; approval tetap keputusan pengguna dengan temuan terlihat |
 | Compile gagal | Export record `tex_only` atau `failed`; dokumen tidak `exported`; error `compile_failed` `retryable: true` |
-| Mesin PDF belum tersedia (D6 `OPEN`) | Ekspor ditolak `503 toolchain_unavailable`, `retryable: false`; preview PDF `409 pdf_not_available`. Tidak ada mesin PDF yang diwajibkan kontrak |
+| Mesin PDF belum tersedia | Ekspor ditolak `503 toolchain_unavailable`, `retryable: false`; preview PDF `409 pdf_not_available`. Tidak ada mesin PDF yang diwajibkan kontrak |
 
 Tidak ada fallback lintas provider otomatis. Tidak ada klaim bahwa dokumen siap saat reviewer tidak tersedia.
 

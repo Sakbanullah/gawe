@@ -236,7 +236,9 @@ class DocumentService:
         try:
             self._tasks.start_stage(task_id, "review")
             result = review_rules.review(
-                version["content"], profile.get("evidence_index") or {}
+                version["content"],
+                profile.get("evidence_index") or {},
+                profile.get("content") or {},
             )
             self._tasks.finish_stage(task_id, "review")
         except Exception as exc:  # noqa: BLE001
@@ -612,6 +614,12 @@ class DocumentService:
     def _summary_row(self, version: dict, approval: dict | None) -> dict:
         approved = bool(approval and approval["decision"] == "approved")
         findings = version.get("findings") or {}
+        latest_export = self._connection.execute(
+            "SELECT export_id, status FROM export_record WHERE document_version_id = ? "
+            "ORDER BY created_at DESC, export_id DESC LIMIT 1",
+            (version["document_version_id"],),
+        ).fetchone()
+        exported = bool(latest_export and latest_export["status"] == "exported")
         return {
             "document_version_id": version["document_version_id"],
             "application_id": version["application_id"],
@@ -625,9 +633,9 @@ class DocumentService:
             "findings_summary": review_rules.summary(findings.get("findings") or []),
             "approved": approved,
             "approval_id": approval["approval_id"] if approved else None,
-            "exported": False,
-            "export_id": None,
-            "pdf_available": False,
+            "exported": exported,
+            "export_id": latest_export["export_id"] if latest_export else None,
+            "pdf_available": latest_export is not None,
             "created_at": version["created_at"],
             "updated_at": version["updated_at"],
         }

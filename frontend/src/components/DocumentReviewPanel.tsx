@@ -14,11 +14,14 @@ import {
 import { useState } from "react";
 
 import { ApiError, type DocumentVersion } from "../app/apiClient";
+import { documentPdfUrl, exportDownloadUrl } from "../app/apiClient";
 import {
   useApproveDocument,
   useCreateDocumentRevision,
+  useCreateExport,
   useDocumentFindings,
   useDocumentVersion,
+  useExports,
   useRunDocumentReview,
 } from "../app/queries";
 
@@ -81,6 +84,8 @@ export function DocumentReviewPanel({
   const review = useRunDocumentReview();
   const approve = useApproveDocument();
   const revise = useCreateDocumentRevision();
+  const exportDocument = useCreateExport();
+  const exports = useExports(applicationId);
   const [note, setNote] = useState("");
   const [summary, setSummary] = useState<string | null>(null);
 
@@ -318,6 +323,95 @@ export function DocumentReviewPanel({
           value={note}
           onChange={(event) => setNote(event.currentTarget.value)}
         />
+
+        <Divider label="Ekspor" labelPosition="left" />
+        <Group>
+          <Button
+            component="a"
+            href={documentPdfUrl(applicationId, documentVersionId)}
+            target="_blank"
+            rel="noreferrer"
+            variant="light"
+          >
+            Preview PDF
+          </Button>
+          <Button
+            loading={exportDocument.isPending}
+            disabled={!data.approved}
+            onClick={() =>
+              void exportDocument.mutateAsync({
+                applicationId,
+                body: {
+                  kind: data.kind,
+                  document_version_id: documentVersionId,
+                  content_hash: data.content_hash,
+                },
+              })
+            }
+          >
+            Ekspor PDF
+          </Button>
+        </Group>
+        <Text size="xs" c="dimmed">
+          Ekspor hanya untuk versi approved. Versi baru perlu approval baru.
+        </Text>
+        {(exports.data?.items ?? []).filter(
+          (item) => item.document_version_id === documentVersionId,
+        ).length > 0 ? (
+          <Table withTableBorder>
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>File</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>Halaman</Table.Th>
+                <Table.Th>Unduh</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {(exports.data?.items ?? [])
+                .filter((item) => item.document_version_id === documentVersionId)
+                .map((item) => (
+                  <Table.Tr key={item.export_id}>
+                    <Table.Td>
+                      <Text size="xs">{item.filename}</Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge
+                        size="xs"
+                        color={item.status === "exported" ? "green" : "orange"}
+                        variant="light"
+                      >
+                        {item.status}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs">
+                        {(item as { qa?: { page_count?: number } | null }).qa?.page_count ?? "—"}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      {item.status === "exported" ? (
+                        <Text
+                          size="xs"
+                          component="a"
+                          href={exportDownloadUrl(applicationId, item.export_id)}
+                        >
+                          Unduh PDF
+                        </Text>
+                      ) : (
+                        <Text size="xs" c="dimmed">
+                          —
+                        </Text>
+                      )}
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+            </Table.Tbody>
+          </Table>
+        ) : null}
+        {exportDocument.isError ? (
+          <Alert color="red">{errorText(exportDocument.error)}</Alert>
+        ) : null}
 
         {data.kind === "cv" && content.summary ? (
           <>

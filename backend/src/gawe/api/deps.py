@@ -60,4 +60,5 @@ def discovery_service(request: Request) -> DiscoveryService:
         limiter=request.app.state.discovery_limiter,
         max_workers=settings.max_workers,
         max_run_seconds=settings.max_run_seconds,
+        document_fetcher=request.app.state.manual_url_fetcher,
     )

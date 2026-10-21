@@ -12,6 +12,9 @@ from gawe.db import repo
 from gawe.profile.store import ProfileStore
 from tests.conftest import TEST_SCHEMA, database_config
 
+# Latest migration filename, so adding a migration does not rewrite every assertion.
+LATEST_SCHEMA = sorted(path.stem for path in repo.MIGRATIONS_DIR.glob("*.sql"))[-1]
+
 TABLES = {
     "schema_version",
     "consent_record",
@@ -59,9 +62,9 @@ def _insert_profile(connection, profile_version_id: str, version: int, active: i
 
 
 def test_migration_applies_and_is_idempotent(connection) -> None:
-    assert repo.schema_version(connection) == "0011_documents"
+    assert repo.schema_version(connection) == LATEST_SCHEMA
     assert repo.migrate(connection) == []
-    assert repo.schema_version(connection) == "0011_documents"
+    assert repo.schema_version(connection) == LATEST_SCHEMA
 
 
 def test_tables_exist(connection) -> None:
@@ -115,15 +118,9 @@ def test_consent_migration_handles_unapplied_and_partial_schema(tmp_path: Path) 
         )
 
         assert repo.migrate(db) == [
-            "0003_consent",
-            "0004_discovery",
-            "0005_task_retry",
-            "0006_discovery_evidence",
-            "0007_discovery_fks",
-            "0008_job_fingerprint",
-            "0009_assessment",
-            "0010_applications",
-            "0011_documents",
+            path.stem
+            for path in sorted(repo.MIGRATIONS_DIR.glob("*.sql"))
+            if path.stem > "0002_setup"
         ]
         assert {"text_version", "text_sha256", "data_classes_json"} <= _consent_columns(db)
         row = db.execute(
@@ -146,7 +143,7 @@ def test_failed_migration_records_nothing(tmp_path: Path, connection) -> None:
     with pytest.raises(repo.MigrationError) as exc:
         repo.migrate(connection, broken)
     assert "0003_broken" in str(exc.value)
-    assert repo.schema_version(connection) == "0011_documents"
+    assert repo.schema_version(connection) == LATEST_SCHEMA
 
 
 def test_duplicate_master_cv_sha256_is_rejected(connection) -> None:
@@ -269,7 +266,7 @@ def test_drop_schema_never_targets_development_schema(monkeypatch) -> None:
 def test_reset_keeps_schema_and_migration_history(connection) -> None:
     _insert_master_cv(connection)
     repo.reset(connection)
-    assert repo.schema_version(connection) == "0011_documents"
+    assert repo.schema_version(connection) == LATEST_SCHEMA
     rows = connection.execute("SELECT COUNT(*) AS total FROM master_cv").fetchone()
     assert rows["total"] == 0
 

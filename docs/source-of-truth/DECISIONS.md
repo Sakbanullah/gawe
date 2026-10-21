@@ -65,10 +65,10 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 |---|---|---|---|---|
 | D1 | Provider/model LLM apa? Cloud, lokal, atau hybrid? | **9Router** sebagai satu provider aktif, diakses lewat adapter `openai_compatible` yang sudah ada. `base_url` dan model per role (`[llm.roles]`) configurable; tidak ada model yang di-hardcode. API key dari keyring lokal (`api_key_ref`) atau environment development; tidak pernah di-commit. Fake provider dipertahankan untuk test tanpa network. Tidak ada fallback lintas provider otomatis. Detail kebijakan data upstream (D18) tetap `OPEN`. | **Diputuskan** 2026-10-19 | Tidak; consent tetap wajib sebelum pengiriman cloud pertama |
 | D2 | Pasar target? | Indonesia + global | **Diputuskan** | Tidak |
-| D3 | Perusahaan/board ATS mana yang jadi seed? | Target ~20 perusahaan Indonesia + global; dikelola lewat UI; status verifikasi per sumber. Usulan sementara 2026-10-20: 3 Indonesia + ~17 global; daftar final belum ada | Provisional (belum final) | Ya sebelum aktivasi sumber dan acceptance discovery Phase 3 |
+| D3 | Perusahaan/board ATS mana yang jadi seed? | **Global-only disetujui pengguna 2026-10-21** untuk Phase 3: sumber global yang sudah terverifikasi di riset Phase 2B (`greenhouse`: GitLab, Stripe; `lever`: Binance; `ashby`: Linear, PostHog, Supabase) boleh dibuat dan diaktifkan lewat UI. Sumber Indonesia (Xendit/Greenhouse, Amartha/Workable, Ajaib/Workable) tetap nonaktif sampai D17 dan persetujuan ToS/atribusi. Daftar final ~20 belum ditetapkan; tidak ada klaim cakupan Indonesia. | **Diputuskan sebagian** 2026-10-21 (global); Indonesia menunggu D17 | Ya sebelum aktivasi sumber Indonesia dan sebelum acceptance Phase 4 |
 | D4 | Interface? | Web lokal single-user; React + TypeScript + Vite SPA di atas API JSON | **Diputuskan** | Tidak |
 | D5 | Format CV? | Maks. 2 halaman, satu kolom, ATS-friendly, tanpa foto default; bahasa mengikuti lowongan | **Diputuskan** | Tidak |
-| D6 | Boleh instal Tectonic + unduh cache bundle? | Belum ada keputusan instalasi; diputuskan saat Phase 3; belum ada instalasi pada tahap perencanaan | **Terbuka** (diputuskan saat Phase 3) | Ya saat Phase 3 |
+| D6 | Boleh instal Tectonic + unduh cache bundle? | **Disetujui pengguna 2026-10-21.** Tectonic 0.17.0 dipasang di `%LOCALAPPDATA%\Gawe\tectonic\tectonic.exe` (di luar repo). Mesin PDF untuk 3D adalah Tectonic + LaTeX; bundle diunduh sekali saat kompilasi pertama. Bila binary tidak ada, ekspor tercatat `tex_only` dengan error `tectonic_unavailable` dan tidak ada klaim PDF. Font `texgyretermes`/`texgyreheros` dirujuk lewat nama file OTF. | **Diputuskan** 2026-10-21 | Tidak |
 | D7 | Apakah ada CV scan/gambar? | Asumsi tidak; OCR ditunda | Menunggu konfirmasi | Tidak |
 | D8 | Perlu enkripsi data at-rest selain BitLocker? | BitLocker + ACL cukup untuk v1 | Menunggu konfirmasi | Tidak |
 | D9 | Reviewer wajib model/provider berbeda? | Dianjurkan bila tersedia; catat bila sama | Menunggu konfirmasi | Tidak |
@@ -112,23 +112,24 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 
 ### D3 — Daftar seed
 
-- **Status:** provisional (usulan sementara 2026-10-20); daftar final belum disetujui.
-- **Usulan sementara:** 3 kandidat Indonesia + sekitar 17 kandidat global.
-  - Indonesia: Xendit (Greenhouse), Amartha (Workable), Ajaib (Workable).
-  - Global: board Greenhouse/Lever/Ashby yang sudah diuji dan punya adapter.
-- **Aturan verifikasi:** `verified` hanya bila kriteria proyek terpenuhi (adapter ada, endpoint diuji, bukti fetch tersimpan). Amartha dan Ajaib tetap `unverified` sampai adapter Workable dan kontrak sumbernya lolos pemeriksaan.
+- **Status:** diputuskan sebagian 2026-10-21. Pengguna menyetujui **hanya sumber global** untuk Phase 3; daftar final ~20 belum ditetapkan.
+- **Global yang disetujui (terverifikasi di riset Phase 2B, adapter tersedia):** GitLab (Greenhouse), Stripe (Greenhouse), Binance (Lever), Linear (Ashby), PostHog (Ashby), Supabase (Ashby).
+  - Bukti fetch live 2026-10-21: GitLab 232 job, Binance 17 job, Linear 29 job dari 3 sumber yang diaktifkan.
+- **Indonesia (tetap nonaktif):** Xendit (Greenhouse), Amartha (Workable), Ajaib (Workable). Menunggu D17 dan persetujuan ToS/atribusi. Workable belum punya adapter.
+- **Aturan verifikasi:** `verified` hanya bila kriteria proyek terpenuhi (adapter ada, endpoint diuji, bukti fetch tersimpan).
 - **Batas klaim:** daftar ini bukan cakupan lowongan Indonesia nasional dan bukan sumber yang mencakup seluruh lowongan.
 - **Bukti:** [`../../temporary/research/job-sources-2026-10.md`](../../temporary/research/job-sources-2026-10.md), [`../../temporary/api-results/`](../../temporary/api-results/).
-- **Dibutuhkan untuk:** aktivasi sumber dan acceptance discovery Phase 3.
+- **Dibutuhkan untuk:** aktivasi sumber Indonesia dan acceptance Phase 4.
 - **Tidak memblokir:** fondasi, Master CV, dan implementasi adapter dengan fixture.
 - **Rujukan:** [`../domains/JOB-DISCOVERY.md`](../domains/JOB-DISCOVERY.md), `PLAN.md` §4.2.
 
 ### D6 — Instalasi Tectonic
 
-- **Status:** terbuka; diputuskan saat Phase 3.
-- **Dampak:** tanpa izin instalasi, PDF tidak dapat diproduksi dengan toolchain ini; alternatif harus diputuskan.
-- **Tidak memblokir:** Phase 0–2.
-- **Rujukan:** [`../domains/DOCUMENT-GENERATION.md`](../domains/DOCUMENT-GENERATION.md).
+- **Status:** diputuskan 2026-10-21. Pengguna menyetujui instalasi Tectonic + unduh cache bundle.
+- **Implementasi:** Tectonic 0.17.0 di `%LOCALAPPDATA%\Gawe\tectonic\tectonic.exe` (di luar repo, tidak di-commit). `render.find_tectonic` memeriksa config, env `GAWE_TECTONIC`, PATH, lalu lokasi lokal. Kompilasi dibatasi 120 detik dan 2 percobaan.
+- **Perilaku bila mesin tidak ada:** ekspor ditolak `503 toolchain_unavailable` sebelum task dibuat; kegagalan kompilasi saat runtime menghasilkan `tex_only`, bukan `exported`.
+- **Bukti:** PDF nyata dihasilkan pada `tests/test_export.py` dan pada uji live 2026-10-21 (CV 1 halaman, CL 1 halaman; batas 2/1).
+- **Rujukan:** [`../domains/DOCUMENT-GENERATION.md`](../domains/DOCUMENT-GENERATION.md), [`../phases/PHASE-03.md`](../phases/PHASE-03.md) §5.3.
 
 ### D10 — Retensi
 
@@ -193,7 +194,7 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 | Phase 1 | Tidak ada keputusan terbuka selain D22; C6 sudah diputuskan (root) | Fake provider cukup; D1 tidak dibutuhkan di fase ini |
 | Phase 2A | Tidak ada | Fondasi, ingest, schema, UI review, fake provider |
 | Phase 2B | D1 + consent | D1 sudah diputuskan 2026-10-19 (9Router via `openai_compatible`); consent cloud versioned tersedia 2026-10-19 (API + UI Settings). Acceptance 2B tetap menunggu uji live |
-| Phase 3 | D1 untuk uji live; D3 untuk aktivasi sumber; D17 untuk klaim cakupan Indonesia; D6 saat instalasi Tectonic; D21 sebelum override `ineligible` | D1 sudah diputuskan; Phase 3 kini mencakup discovery otomatis |
+| Phase 3 | D1 untuk uji live; D3 untuk aktivasi sumber; D17 untuk klaim cakupan Indonesia; D6 saat instalasi Tectonic; D21 sebelum override `ineligible` | D1 diputuskan 2026-10-19; D3 global-only disetujui 2026-10-21; D6 diputuskan 2026-10-21. Phase 3 mencakup discovery otomatis. D17 dan sumber Indonesia tetap terbuka |
 | Phase 4 (implementasi) | Tidak ada gate baru selain Phase 3 selesai | Perluasan sumber dan agregator |
 | Phase 4 (acceptance) | D17 untuk cakupan Indonesia penuh | Acceptance tidak boleh diklaim tanpa sumber terverifikasi |
 | Phase 5 | ToS/attribution per sumber | Tidak ada D baru |
@@ -201,7 +202,7 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 
 Aturan tambahan:
 
-- D3/D17 tidak memblokir implementasi adapter dengan fixture, tetapi memblokir aktivasi sumber dan klaim cakupan Indonesia.
+- D3 global sudah disetujui 2026-10-21; sumber Indonesia tetap menunggu D17. D3/D17 tidak memblokir implementasi adapter dengan fixture, tetapi memblokir aktivasi sumber Indonesia dan klaim cakupan Indonesia.
 - C6 sudah diputuskan: `config.example.toml` dan `.env.example` tetap di root repository.
 - D1 sudah diputuskan: 9Router lewat adapter `openai_compatible`, dengan `base_url` dan model per role sebagai konfigurasi. Prasyarat provider untuk fitur live terpenuhi; consent dan D18 tetap berlaku.
 - D10 tidak memblokir implementasi, tetapi retensi tetap sementara.

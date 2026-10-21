@@ -1,7 +1,7 @@
-"""`/api/applications/{id}/documents`: versions, revisions, review, approval.
+"""`/api/applications/{id}/documents`: versions, revisions, review, approval, PDF.
 
-Phase 3D slice. LaTeX/PDF and export endpoints stay unimplemented while D6 is
-OPEN; nothing here claims a PDF exists.
+D6 is decided: Tectonic renders the PDF. The `pdf` endpoint is a non-final
+preview; only `/exports` creates a final file.
 """
 
 from __future__ import annotations
@@ -9,9 +9,10 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ...documents import render
 from ...services.document_service import DocumentError, DocumentService
 from ..deps import profile_store
 from ..errors import ApiError
@@ -188,6 +189,56 @@ def get_document_findings(
         return _service(request).findings(application_id, document_version_id)
     except DocumentError as exc:
         _raise(exc, "review")
+
+
+@router.get("/{application_id}/documents/{document_version_id}/pdf")
+def preview_document_pdf(
+    request: Request, application_id: str, document_version_id: str
+):
+    """Non-final PDF preview. Never marks the version approved or exported."""
+    try:
+        version = _service(request).get(application_id, document_version_id)
+        pdf_bytes, _log = render.compile_pdf(render.build(version["content"]))
+    except DocumentError as exc:
+        _raise(exc, "draft")
+    except render.RenderError as exc:
+        raise ApiError(
+            409,
+            exc.code,
+            exc.message,
+            stage="export",
+            retryable=exc.code in {"tectonic_unavailable", "compile_timeout"},
+        ) from exc
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"X-Content-Type-Options": "nosniff", "Content-Disposition": "inline"},
+    )
+
+
+@router.get("/{application_id}/documents/{document_version_id}/pdf")
+def preview_document_pdf(
+    request: Request, application_id: str, document_version_id: str
+):
+    """Non-final PDF preview. Never marks the version approved or exported."""
+    try:
+        version = _service(request).get(application_id, document_version_id)
+        pdf_bytes, _log = render.compile_pdf(render.build(version["content"]))
+    except DocumentError as exc:
+        _raise(exc, "draft")
+    except render.RenderError as exc:
+        raise ApiError(
+            503 if exc.code == "tectonic_unavailable" else 409,
+            exc.code,
+            exc.message,
+            stage="export",
+            retryable=exc.code in {"tectonic_unavailable", "compile_timeout"},
+        ) from exc
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"X-Content-Type-Options": "nosniff", "Content-Disposition": "inline"},
+    )
 
 
 @router.post("/{application_id}/documents/{document_version_id}/approval")

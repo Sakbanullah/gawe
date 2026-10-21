@@ -19,6 +19,31 @@ from ..security.url_guard import MAX_RESPONSE_BYTES, TIMEOUT_S, UnsafeUrl, valid
 MAX_WORKERS = 3
 MIN_INTERVAL_S = 1.0
 
+# Registrable-domain approximation for redirect checks. Two hosts on the same
+# registrable domain (boards.greenhouse.io -> job-boards.greenhouse.io) are the
+# same site; anything else is rejected. Multi-label suffixes need the list below
+# so `evil.co.id` is not treated as the same site as `bank.co.id`.
+_PUBLIC_SUFFIXES = {
+    "co.uk", "co.id", "or.id", "ac.id", "web.id", "my.id", "biz.id", "sch.id",
+    "com.au", "co.jp", "com.br", "co.in", "com.sg", "co.nz", "co.za", "com.mx",
+}
+
+
+def _registrable_domain(host: str) -> str:
+    labels = host.split(".")
+    if len(labels) < 2:
+        return host
+    if ".".join(labels[-2:]) in _PUBLIC_SUFFIXES and len(labels) >= 3:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def _redirect_allowed(host: str, allowed_hosts: frozenset[str]) -> bool:
+    if host in allowed_hosts:
+        return True
+    domain = _registrable_domain(host)
+    return any(_registrable_domain(allowed) == domain for allowed in allowed_hosts)
+
 
 class FetchError(Exception):
     def __init__(
@@ -83,7 +108,7 @@ class _ValidatingRedirect(urllib.request.HTTPRedirectHandler):
             safe = validate_url(newurl)
         except UnsafeUrl as exc:
             raise FetchError("source_unavailable", f"Redirect ditolak: {exc}.", retryable=False)
-        if safe.host not in self._allowed_hosts:
+        if not _redirect_allowed(safe.host, self._allowed_hosts):
             raise FetchError("source_unavailable", "Redirect ke host yang tidak diizinkan.", retryable=False)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
@@ -93,7 +118,7 @@ def http_fetch(url: str, allowed_hosts: frozenset[str]) -> FetchResponse:
         safe = validate_url(url)
     except UnsafeUrl as exc:
         raise FetchError("url_rejected", f"URL fetch ditolak: {exc}.", retryable=False) from exc
-    if safe.host not in allowed_hosts:
+    if not _redirect_allowed(safe.host, allowed_hosts):
         raise FetchError("source_unavailable", "Host sumber tidak diizinkan.", retryable=False)
 
     opener = urllib.request.build_opener(_ValidatingRedirect(allowed_hosts))
@@ -147,3 +172,64 @@ def fetch_source(
     if fetcher is None:
         return http_fetch(url, frozenset(adapter.HOSTS))
     return fetcher(url)
+
+
+def fetch_document(
+    url: str,
+    *,
+    allowed_hosts: frozenset[str],
+    accept: tuple[str, ...] = ("text/html", "application/xhtml+xml"),
+) -> FetchResponse:
+    """Fetch one HTML page for the manual-URL fallback.
+
+    Same guard, timeout, redirect and size rules as `http_fetch`; only the
+    accepted content types differ, because an ATS JSON body is not a job page.
+    """
+    try:
+        safe = validate_url(url)
+    except UnsafeUrl as exc:
+        raise FetchError("url_rejected", f"URL ditolak: {exc}.", retryable=False) from exc
+    if not _redirect_allowed(safe.host, allowed_hosts):
+        raise FetchError("source_unavailable", "Host tidak diizinkan.", retryable=False)
+
+    opener = urllib.request.build_opener(_ValidatingRedirect(allowed_hosts))
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "Gawe/0.1 (local)", "Accept": ", ".join(accept)}
+    )
+    try:
+        with opener.open(request, timeout=TIMEOUT_S) as response:
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise FetchError("response_too_large", "Halaman melebihi 5 MB.", retryable=False)
+            content_type = response.headers.get("Content-Type")
+            media_type = (content_type or "").split(";", 1)[0].strip().lower()
+            if media_type and media_type not in accept:
+                raise FetchError(
+                    "source_unavailable",
+                    f"Halaman bukan HTML: {content_type}.",
+                    retryable=False,
+                )
+            return FetchResponse(
+                status_code=response.status,
+                body=body.decode("utf-8", errors="replace"),
+                final_url=response.geturl(),
+                content_type=content_type,
+            )
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403, 429):
+            raise FetchError(
+                "source_unavailable",
+                "Halaman menolak akses otomatis. Tempelkan teks lowongan secara manual.",
+                retryable=False,
+                http_status=exc.code,
+            ) from exc
+        if exc.code == 404:
+            raise FetchError("source_not_found", "Halaman tidak ditemukan.", retryable=False) from exc
+        raise FetchError(
+            "source_error",
+            "Halaman mengembalikan status HTTP yang tidak diharapkan.",
+            retryable=exc.code >= 500,
+            http_status=exc.code,
+        ) from exc
+    except (TimeoutError, urllib.error.URLError) as exc:
+        raise FetchError("source_unavailable", "Halaman tidak dapat dihubungi.", retryable=True) from exc

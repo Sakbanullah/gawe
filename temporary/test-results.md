@@ -450,3 +450,48 @@ Note: run used `-o addopts=` so the `-q` in `backend/pyproject.toml` does not ca
 ## Failure details
 
 None. No test failed or errored.
+
+---
+
+## Gap-closing 3D (2026-10-21)
+
+### Backend suite
+
+- Command: `backend\.venv\Scripts\python.exe -m pytest backend/tests -o addopts="" -q -p no:warnings`
+- Result: `334 passed, 1 skipped in 69.30s (0:01:08)`
+- Skipped: `backend/tests/test_live_9router.py` (opt-in live provider; unchanged reason)
+- Change vs previous run: 317 -> 334 passed. New: `tests/test_export.py` (12), `tests/test_reviewer_seeded_defects.py` (3), 2 frontend-unrelated; schema assertions now derive from the latest migration file instead of a hardcoded name.
+
+### Focused runs during the work
+
+- `backend\tests\test_export.py` alone: `12 passed in 14.90s` (includes real Tectonic PDF: CV 1 page, cover letter 1 page).
+- `backend\tests\test_db.py backend\tests\test_api.py backend\tests\test_doctor.py`: `27 passed in 5.05s`.
+- `temporary/check_seeded.py`: `misses: 0` (all 11 seeded defects detected).
+
+### Frontend
+
+- Command: `cd frontend; npx vitest run`
+- Result: `Test Files 7 passed (7)`, `Tests 41 passed (41)` in ~5.5 s.
+- Command: `cd frontend; npx tsc --noEmit` -> no output (clean).
+- Command: `cd frontend; npm run build` -> `999 modules transformed`, `built in 1.24s`; warning only: chunk > 500 kB.
+
+### Live run (real network, no mocks)
+
+- Command: `backend\.venv\Scripts\python.exe temporary\live_phase3.py`
+- Log: `temporary/live-phase3-run.log`
+- Result: `failures: 0`
+- Schema: throwaway `gawe_test_live_*`; dropped after the run. Fake provider used only for profile extraction; discovery, parsing, eligibility, PDF, and export ran live.
+- Discovery: 3 verified+enabled global sources -> GitLab/Greenhouse 232 jobs, Binance/Lever 17, Linear/Ashby 29. 259 jobs assessed: 116 `eligible`, 125 `needs_review`, 18 `ineligible`.
+- URL 1 (discovery, Greenhouse): `https://job-boards.greenhouse.io/gitlab/jobs/8877428002` -> workspace, CV + cover letter, review, approval, export; CV 1 page (16.3 KB), CL 1 page (11.8 KB), both downloaded as real PDF.
+- URL 2 (discovery, Ashby): `https://jobs.ashbyhq.com/linear/0c7c2e26-0a98-42cf-a47c-9a3999fb513b` -> same full chain, PDF 1 page each.
+- URL 3 (manual fallback): a Stripe job page from a board that is not in the registry -> `manual_url` synthetic source, job parsed with title/company, eligibility computed. Documents blocked because eligibility is `needs_review`, which is the correct product rule.
+- Redirect handling: `boards.greenhouse.io` -> `job-boards.greenhouse.io` now allowed when both hosts share a registrable domain; every redirect is still re-validated by the URL guard.
+
+### Limitations of this evidence
+
+- No manual UI test; UI behaviour is covered by component tests only.
+- Draft content quality has no human review yet.
+- `D9` (separate reviewer model) is not implemented; the reviewer is deterministic.
+- Indonesian sources are inactive (D17 + ToS/attribution).
+- HTML adapter for registry `html` sources and scheduled discovery runs are not implemented; they are outside the 3A-3D acceptance list.
+- Acceptance 3A-3D is not marked passed until the user approves the §11 gate.

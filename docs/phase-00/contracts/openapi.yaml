@@ -37,8 +37,9 @@ info:
     - Teks dan versi consent diterbitkan server; klien tidak memilih `text_version`.
     - Status task API adalah superset internal dari status proses produk. Pemetaan
       ke status UI ada di `API-CONTRACTS.md` §4.1.
-    - D6 (mesin PDF) OPEN. Kontrak tidak menetapkan mesin PDF tertentu dan tidak
-      menjamin satu mesin tersedia.
+    - D6 (mesin PDF) diputuskan 2026-10-21: Tectonic dipakai implementasi Phase 3.
+      Kontrak tetap tidak mewajibkan satu mesin; bila mesin tidak tersedia, ekspor
+      ditolak `503 toolchain_unavailable`.
 servers:
   - url: /
     description: |
@@ -1304,8 +1305,8 @@ paths:
         ekspor versi approved.
 
         `409 pdf_not_available` bila belum ada PDF untuk versi ini. `503
-        toolchain_unavailable` bila mesin PDF belum tersedia (D6 OPEN); kontrak
-        tidak menetapkan mesin PDF tertentu.
+        toolchain_unavailable` bila mesin PDF belum tersedia; kontrak tidak
+        menetapkan mesin PDF tertentu (implementasi: Tectonic).
       parameters:
         - $ref: '#/components/parameters/ApplicationId'
         - $ref: '#/components/parameters/DocumentVersionId'
@@ -1373,7 +1374,7 @@ paths:
         Task per application diserialisasi: task aktif lain untuk `application_id`
         yang sama menghasilkan `409 task_already_running` dengan `active_task_id`.
 
-        Bila mesin PDF belum tersedia (D6 OPEN) atau toolchain tidak dapat dipakai,
+        Bila mesin PDF belum tersedia atau toolchain tidak dapat dipakai,
         request ditolak `503 toolchain_unavailable` sebelum task dibuat.
       security:
         - csrfToken: []
@@ -1563,8 +1564,8 @@ paths:
         `Idempotency-Key` 24 jam, yang merupakan mekanisme teknis dan bukan
         kebijakan retensi data pengguna.
 
-        `toolchain` melaporkan status mesin PDF. D6 OPEN: tidak ada mesin PDF yang
-        diwajibkan kontrak dan ekspor PDF tidak dijanjikan sampai D6 diputuskan.
+        `toolchain` melaporkan status mesin PDF. Kontrak tidak mewajibkan satu
+        mesin; D6 diputuskan 2026-10-21 dengan Tectonic sebagai implementasi.
       responses:
         '200':
           description: Pengaturan.
@@ -3947,8 +3948,8 @@ components:
           description: |
             `exported`: PDF berhasil dan file final tercatat. `tex_only`: sumber
             LaTeX tersimpan tetapi PDF tidak dihasilkan. `failed`: tidak ada
-            artefak final yang dapat diunduh. Mesin PDF tidak ditetapkan kontrak
-            (D6 OPEN).
+            artefak final yang dapat diunduh. Mesin PDF tidak diwajibkan kontrak
+            (implementasi: Tectonic).
           enum: [exported, tex_only, failed]
         error:
           oneOf:
@@ -4219,7 +4220,7 @@ components:
     ToolchainInfo:
       type: object
       description: |
-        Status mesin PDF. D6 OPEN: kontrak tidak menetapkan mesin PDF tertentu dan
+        Status mesin PDF. Kontrak tidak menetapkan mesin PDF tertentu dan
         tidak menjamin satu mesin tersedia. `pdf_engine` melaporkan konfigurasi
         runtime, bukan keputusan produk.
       required: [pdf_engine, status, decision_status]
@@ -4235,7 +4236,7 @@ components:
           enum: [available, unavailable, unknown]
         decision_status:
           type: string
-          description: Status keputusan D6. Selama OPEN, ekspor PDF tidak dijanjikan.
+          description: Status keputusan D6. Bila open, ekspor PDF tidak dijanjikan.
           enum: [open, decided]
         detail:
           type: [string, 'null']

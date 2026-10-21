@@ -149,15 +149,73 @@ def test_application_job_and_eligibility_endpoints(
     assert missing.json()["error"]["code"] == "not_found"
 
 
-def test_manual_url_fallback_is_not_implemented_yet(
-    setup_client, csrf, monkeypatch
-) -> None:
+MANUAL_PAGE = """
+<html><head>
+<title>Senior Backend Engineer - Acme</title>
+<meta property="og:site_name" content="Acme">
+</head><body>
+<h1>Senior Backend Engineer</h1>
+<p>We need a backend engineer with Python and PostgreSQL experience.
+You will build payment services and own reliability for the billing API.</p>
+</body></html>
+"""
+
+
+def _manual_fetcher(monkeypatch, client, page: str = MANUAL_PAGE):
+    fetcher = _Fetcher(
+        {"robots.txt": "User-agent: *\nAllow: /\n", "example.com": page}
+    )
+    monkeypatch.setattr(client.app.state, "manual_url_fetcher", fetcher, raising=False)
+    return fetcher
+
+
+def test_manual_url_fallback_creates_workspace(setup_client, csrf, monkeypatch) -> None:
     _confirm(setup_client, csrf)
+    fetcher = _manual_fetcher(monkeypatch, setup_client)
+
+    response = setup_client.post(
+        "/api/applications", headers=csrf, json={"url": "https://example.com/jobs/1"}
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["job_id"].startswith("job_")
+
+    workspace = setup_client.get(f"/api/applications/{body['application_id']}").json()
+    assert workspace["job"]["title"] == "Senior Backend Engineer"
+    assert workspace["job"]["company"] == "Acme"
+    assert workspace["job"]["source_id"] == "manual_url"
+    assert any("example.com/jobs/1" in call for call in fetcher.calls)
+    assert any("robots.txt" in call for call in fetcher.calls)
+
+    # The synthetic source never shows up as a registry entry.
+    sources = setup_client.get("/api/settings/sources").json()["items"]
+    assert all(item["source_id"] != "manual_url" for item in sources)
+
+
+def test_manual_url_rejects_non_https(setup_client, csrf, monkeypatch) -> None:
+    _confirm(setup_client, csrf)
+    _manual_fetcher(monkeypatch, setup_client)
+    response = setup_client.post(
+        "/api/applications", headers=csrf, json={"url": "http://example.com/jobs/1"}
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "url_rejected"
+
+
+def test_manual_url_respects_robots(setup_client, csrf, monkeypatch) -> None:
+    _confirm(setup_client, csrf)
+    _manual_fetcher(
+        monkeypatch,
+        setup_client,
+        page="",  # unused: robots denies first
+    )
+    fetcher = _Fetcher({"robots.txt": "User-agent: *\nDisallow: /jobs\n"})
+    monkeypatch.setattr(setup_client.app.state, "manual_url_fetcher", fetcher, raising=False)
     response = setup_client.post(
         "/api/applications", headers=csrf, json={"url": "https://example.com/jobs/1"}
     )
     assert response.status_code == 400
-    assert response.json()["error"]["details"][0]["code"] == "manual_url_not_implemented"
+    assert response.json()["error"]["code"] == "robots_disallowed"
 
 
 def test_rerun_analysis_is_explicit_and_leaves_scores_stable(

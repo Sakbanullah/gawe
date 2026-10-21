@@ -7,6 +7,7 @@ it never changes content or approval.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 KIND_PREFIX = {"cv": "CV", "cover_letter": "Cover_Letter"}
 MAX_FILENAME_LENGTH = 150
@@ -45,6 +46,13 @@ def with_collision_suffix(filename: str, job_id: str) -> str:
     tail = _part(job_id.replace("job_", "")[-8:], "job")
     stem, _, extension = filename.rpartition(".")
     return _clamp(f"{stem}_{tail}.{extension}")
+
+
+def sanitize(requested: str, kind: str) -> str:
+    """User-supplied rename: keep the shape, force the kind prefix and `.pdf`."""
+    stem = Path(requested).stem if requested.lower().endswith(".pdf") else requested
+    prefix = KIND_PREFIX.get(kind, KIND_PREFIX["cv"])
+    return _clamp(f"{prefix}_{_part(stem, 'Document')}.pdf")
 
 
 def _clamp(filename: str) -> str:

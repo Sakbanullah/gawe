@@ -84,9 +84,9 @@ Status implementasi:
 | Langkah | Status |
 |---|---|
 | 1–6 | Diimplementasikan deterministik |
-| 7–11 | Belum (D6 `OPEN`; reviewer LLM D9 belum dijalankan) |
-| 12–13 | Diimplementasikan (review deterministik + approval per versi) |
-| 14 | Belum (tidak ada endpoint ekspor) |
+| 7-11 | Diimplementasikan 2026-10-21 (LaTeX, Tectonic, QA PDF; reviewer LLM D9 belum dijalankan) |
+| 12-13 | Diimplementasikan (review deterministik + approval per versi) |
+| 14 | Diimplementasikan (`/api/applications/{id}/exports`, migrasi `0012_export`) |
 | 15 | Ada di UI (buka URL resmi), tanpa auto-submit |
 
 Draft dibangun dari `profile_version.content` + job tanpa provider/model call. `provider`, `model`, dan `prompt_version` bernilai `null`; `template_version` hanya disimpan bila klien mengirimkannya.

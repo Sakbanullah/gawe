@@ -292,37 +292,48 @@ Acceptance lama tetap berlaku. Kriteria baru ditambahkan per milestone.
 - Uji live terbatas hanya pada sumber yang disetujui; tanpa data kandidat nyata di log.
 - Laporkan perintah, output ringkas, pass/fail, dan batasan.
 
-### 8.1 Bukti terakhir (2026-10-21)
+### 8.1 Bukti terakhir (2026-10-21, setelah gap 3D ditutup)
 
-Perintah: `cd backend; .\.venv\Scripts\python.exe -m pytest -o addopts="" --tb=no -p no:warnings`
+Perintah: `backend\.venv\Scripts\python.exe -m pytest backend/tests -o addopts="" -q -p no:warnings`
 
-Output ringkas: `317 passed, 1 skipped in 229.95s` (skip = `tests/test_live_9router.py`, opt-in live provider). Bukti lengkap: `temporary/test-results.md`.
+Output ringkas: `334 passed, 1 skipped in 69.30s` (skip = `tests/test_live_9router.py`, opt-in live provider). Bukti lengkap: `temporary/test-results.md`.
 
-Perintah: `cd frontend; npm run test`, `npm run typecheck`
+Perintah: `cd frontend; npx vitest run`, `npx tsc --noEmit`, `npm run build`
 
-Output ringkas: `Test Files 7 passed (7)`, `Tests 39 passed (39)`; typecheck tanpa error. Build tidak dijalankan ulang pada increment ini.
+Output ringkas: `Test Files 7 passed (7)`, `Tests 41 passed (41)`; typecheck tanpa error; build sukses (`999 modules transformed`, `built in 1.24s`), hanya peringatan ukuran chunk >500 kB.
 
-Cakupan 3B–3D yang teruji otomatis (tanpa network):
+Uji live (network nyata, tanpa mock): `backend\.venv\Scripts\python.exe temporary\live_phase3.py`
+
+Output ringkas (`failures: 0`, log `temporary/live-phase3-run.log`):
+
+- Discovery: 3 sumber global aktif (GitLab/Greenhouse, Binance/Lever, Linear/Ashby) → 232 + 17 + 29 job diterima; 259 job dinilai: 116 `eligible`, 125 `needs_review`, 18 `ineligible`.
+- 3 URL nyata end-to-end: `job-boards.greenhouse.io/gitlab/jobs/8877428002`, `jobs.ashbyhq.com/linear/0c7c2e26-...`, dan URL manual `stripe.com/jobs/search?gh_jid=8172503` (sumber sintetis `manual_url`, job Stripe "Abuse Research Engineer" terbentuk dengan eligibility `needs_review`).
+- Dua workspace discovery melewati draft → review → approval → ekspor: CV 1 halaman (batas 2), CL 1 halaman (batas 1), PDF nyata (16.3 KB / 11.8 KB), nama file `CV_Ayu_Pratama_<Company>_<Title>.pdf`.
+- Manual URL: dokumen diblokir karena eligibility `needs_review` — perilaku produk yang benar, bukan kegagalan.
+
+Cakupan otomatis (tanpa network):
 
 - `tests/test_discovery_dedupe.py` — normalisasi, URL kanonik, `content_hash`, versi baru, dedupe exact/lintas sumber/fuzzy, `duplicate_of`, penandaan `closed`.
 - `tests/test_assessment.py` — klasifikasi tier (D15/D16), ekstraksi requirement must/nice + constraint `min_years`, eligibility per kategori dengan kutipan lowongan + `evidence_refs`, `needs_review` tanpa must-have, fit hanya untuk `eligible`, formula dan pembulatan half-up, ranking fit-first + tie-breaker `tie_window`, idempotensi assessment/ranking, `/api/matches` list/detail, count `/api/overview` dari assessment, cursor keyset (paging + cursor invalid/asing), batas `description_text` 262144 byte + `description_truncated`, bentuk `job_detail` sesuai kontrak, koreksi tier (simpan, hapus, validasi, CSRF, 404, ranking run tidak berubah), dan kegagalan assessment yang tampil sebagai `partial` + `assessment_failed`.
-- `tests/test_applications.py` — Application Workspace: gate profil confirmed, `POST /api/applications` idempoten per `job_id` (201 lalu 200 `deduplicated`), daftar workspace + filter `status`, cursor keyset (cursor invalid ditolak), workspace memuat job + `job_posting_version_id` + eligibility + fit + nama file saran, `application_id` muncul di `/api/matches`, `needs_review` tanpa fit (`409 fit_not_available`), endpoint job/eligibility, 404 workspace asing, analisis ulang eksplisit lewat task `analysis` tanpa mengubah skor fit, `409 task_already_running` dengan `active_task_id`, CSRF pada analisis ulang, dan penolakan fallback URL manual dengan detail `manual_url_not_implemented`.
-- `tests/test_documents.py` — dokumen deterministik: draft CV/CL dari profil + job, hash canonical, diff Master CV/versi induk, gate eligibility (`needs_review`, `ineligible`, `status_outdated`), revisi + hash stale, review deterministik (evidence wajib, evidence tidak dikenal), findings, approval terikat `document_version_id` + `content_hash`, replay idempoten, versi baru tidak mewarisi approval, data wajib, review versi approved ditolak, regenerate, CSRF, pagination, dan path edit invalid.
-- `tests/test_db.py` — migrasi `0010_applications` dan `0011_documents` diterapkan dan idempoten.
+- `tests/test_applications.py` — Application Workspace: gate profil confirmed, `POST /api/applications` idempoten per `job_id` (201 lalu 200 `deduplicated`), daftar workspace + filter `status`, cursor keyset (cursor invalid ditolak), workspace memuat job + `job_posting_version_id` + eligibility + fit + nama file saran, `application_id` muncul di `/api/matches`, `needs_review` tanpa fit (`409 fit_not_available`), endpoint job/eligibility, 404 workspace asing, analisis ulang eksplisit lewat task `analysis` tanpa mengubah skor fit, `409 task_already_running` dengan `active_task_id`, CSRF pada analisis ulang, serta fallback URL manual: workspace dibuat dari halaman HTML nyata/fixture, penolakan non-HTTPS (`url_rejected`), dan penghormatan robots.txt (`robots_disallowed`).
+- `tests/test_documents.py` — dokumen deterministik: draft CV/CL dari profil + job, hash canonical, diff Master CV/versi induk, gate eligibility (`needs_review`, `ineligible`, `status_outdated`), revisi + hash stale, review deterministik (evidence wajib, evidence tidak dikenal, ditambah pemeriksaan fakta terhadap profil), findings, approval terikat `document_version_id` + `content_hash`, replay idempoten, versi baru tidak mewarisi approval, data wajib, review versi approved ditolak, regenerate, CSRF, pagination, dan path edit invalid.
+- `tests/test_reviewer_seeded_defects.py` — reviewer menangkap **11/11** seeded defect pada `docs/phase-00/fixtures/seeded_defects/cv_seeded_defects.md` dengan severity dan kategori yang diharapkan; tidak menghasilkan temuan pada teks yang setia pada profil; batas halaman dilaporkan sebagai temuan `format`.
+- `tests/test_export.py` — ekspor hanya versi approved; `export_not_ready`, `approval_hash_mismatch`, `validation_failed` untuk `kind` salah, 404 versi asing; `503 toolchain_unavailable` sebelum task dibuat; kompilasi gagal → `tex_only`; QA gagal → `failed` (tidak pernah `exported`); versi revisi tidak mewarisi approval; PDF nyata ≤2 halaman untuk CV dan 1 halaman untuk CL; preview PDF tidak membuat export record; CSRF wajib.
+- `tests/test_db.py` — migrasi `0010_applications`, `0011_documents`, dan `0012_export` diterapkan dan idempoten.
 - `frontend/src/pages/MatchesPage.test.tsx` — gate profil, tabel ranking, filter eligibility, paging cursor, side panel + koreksi tier, empty state.
-- `frontend/src/pages/ApplicationsPage.test.tsx` — daftar workspace, empty state, workspace menampilkan eligibility/fit/nama file/Apply, blokir dokumen saat `needs_review`, analisis ulang eksplisit, generate dokumen, tabel versi + diff, review, approval, dan penandaan informasi yang belum tersedia.
+- `frontend/src/pages/ApplicationsPage.test.tsx` — daftar workspace, empty state, pembuatan workspace dari URL manual, workspace menampilkan eligibility/fit/nama file/Apply, blokir dokumen saat `needs_review`, analisis ulang eksplisit, generate dokumen, tabel versi + diff, review, approval, aksi ekspor khusus versi approved + tautan PDF final, dan penandaan informasi yang belum tersedia.
 - `frontend/src/pages/DiscoveryPage.test.tsx` — status per sumber, retry, data tidak lengkap, dan peringatan `assessment_failed`.
 
-Batasan: semua bukti memakai fixture dan fake provider. Tidak ada test live, tidak ada data kandidat nyata, tidak ada uji UI manual. Acceptance 3A–3D belum ditandai lulus.
+Batasan: tidak ada uji UI manual; tidak ada data kandidat nyata di log; kualitas isi draft belum direview manusia; sumber Indonesia belum aktif; `D9` (reviewer model terpisah) belum dijalankan. Acceptance 3A–3D belum ditandai lulus sampai pengguna menyetujui gate §11.
 
 ### 8.2 Gap 3D yang masih terbuka (per 2026-10-21)
 
-- Fallback URL manual: ditolak `400 validation_failed` + detail `manual_url_not_implemented` karena adapter fetch HTML belum ada (3A). Kontrak `createApplication` tetap menyebut `url`.
-- LaTeX, compile Tectonic, PDF QA, dan ekspor file belum ada. `D6` tetap `OPEN`; tidak ada klaim PDF.
-- Reviewer LLM terisolasi belum ada (D9 belum dijalankan). Review saat ini deterministik: data wajib, evidence pada klaim, dan resolusi `evidence_index`.
+- Reviewer LLM terisolasi belum ada (D9 belum dijalankan). Review deterministik kini mencakup data wajib, evidence pada klaim, resolusi `evidence_index`, serta pemeriksaan fakta terhadap profil (tanggal, angka berskala, jabatan, sertifikasi, kewarganegaraan, kosakata berlebihan) dan aturan ATS/halaman.
 - `status/projector.py` belum ada; proyeksi status tetap di `ApplicationService` dan `DocumentService`.
 - Retensi dokumen mengikuti D10 yang masih `OPEN`; semua durasi tetap sementara.
 - Kualitas isi draft belum diuji dengan reviewer manusia; tailoring deterministik hanya memilih dan mengurutkan fakta yang ada.
+- Adapter `html` untuk sumber registry dan run discovery terjadwal belum diimplementasikan (di luar §7.1; jalur manual URL sudah ada).
+- Sumber Indonesia belum aktif (D17 + ToS/atribusi).
 
 
 ---
@@ -333,17 +344,19 @@ Batasan: semua bukti memakai fixture dan fake provider. Tidak ada test live, tid
 |---|---|
 | D3 | Daftar seed; memblokir aktivasi sumber dan acceptance discovery |
 | D17 | Sumber Indonesia; memblokir klaim cakupan Indonesia |
-| D6 | Memblokir instalasi Tectonic dan PDF (3D) |
+| D6 | **Diputuskan 2026-10-21**: Tectonic dipasang; PDF tersedia |
 | D1 | Sudah diputuskan; memblokir uji live bila provider belum dikonfigurasi |
 | D21 | Memblokir implementasi override `ineligible` |
 | D9 | Independensi reviewer |
 | D10 | Retensi cache job/log/diagnostik |
 
-Catatan: Phase 3 kini membutuhkan discovery. D3/D17 tetap tidak memblokir 3A–3C secara teknis, tetapi memblokir acceptance penuh dan klaim cakupan Indonesia.
+Catatan: Phase 3 kini membutuhkan discovery. D3 global disetujui 2026-10-21; D17 tetap memblokir aktivasi sumber Indonesia dan acceptance penuh Phase 4.
 
-Catatan 3C/3D (2026-10-20): koreksi tier pengguna kini punya endpoint `PATCH /api/matches/{job_id}/tier` (kontrak di `API-CONTRACTS.md` §2.4/§4.8 dan `openapi.yaml`). Koreksi disimpan per job, tidak mengubah fit atau ranking run tersimpan, dan dipakai pada ranking berikutnya. Endpoint diuji lewat `tests/test_assessment.py` dan `MatchesPage.test.tsx`. Acceptance §7.3 butir terakhir terpenuhi secara implementasi; acceptance penuh Phase 3 tetap belum ditandai lulus karena butir 3D lain (fallback URL manual, dokumen, approval, ekspor, uji live) belum ada.
+Catatan 3C/3D (2026-10-20): koreksi tier pengguna kini punya endpoint `PATCH /api/matches/{job_id}/tier` (kontrak di `API-CONTRACTS.md` §2.4/§4.8 dan `openapi.yaml`). Koreksi disimpan per job, tidak mengubah fit atau ranking run tersimpan, dan dipakai pada ranking berikutnya. Endpoint diuji lewat `tests/test_assessment.py` dan `MatchesPage.test.tsx`.
 
-Catatan 3D (2026-10-21): dokumen deterministik ditambahkan: migrasi `0011_documents` (`document_version`, `document_approval`), `documents/draft.py` (CV/CL dari `profile_version.content`, hash canonical JSON, diff), `documents/review.py` (review integritas deterministik), `services/document_service.py`, dan `/api/applications/{id}/documents*` (list, generate, detail, revisi, regenerate, review, findings, approval). Approval terikat `document_version_id` + `content_hash`, menolak data wajib yang belum lengkap dan eligibility non-`eligible`, serta tidak mewarisi approval ke versi baru. Frontend menampilkan versi, isi, diff, findings, review, approval, dan edit ringkasan. LaTeX/PDF/ekspor dan reviewer LLM tetap belum ada.
+Catatan 3D (2026-10-21): dokumen deterministik ditambahkan: migrasi `0011_documents` (`document_version`, `document_approval`), `documents/draft.py` (CV/CL dari `profile_version.content`, hash canonical JSON, diff), `documents/review.py` (review integritas deterministik), `services/document_service.py`, dan `/api/applications/{id}/documents*` (list, generate, detail, revisi, regenerate, review, findings, approval). Approval terikat `document_version_id` + `content_hash`, menolak data wajib yang belum lengkap dan eligibility non-`eligible`, serta tidak mewarisi approval ke versi baru. Frontend menampilkan versi, isi, diff, findings, review, approval, dan edit ringkasan.
+
+Catatan 3D gap-closing (2026-10-21): fallback URL manual diimplementasikan (`jobs/sources/manual.py`, `jobs/robots.py`, `fetch_document`, `DiscoveryService.ingest_manual_url`, sumber sintetis `manual_url` yang dibuat lazily); LaTeX + Tectonic + QA PDF ditambahkan (`documents/render.py`); ekspor approval-gated ditambahkan (`services/export_service.py`, migrasi `0012_export`, `/api/applications/{id}/exports`); preview PDF tersedia di `/documents/{id}/pdf`; reviewer deterministik diperluas dengan pemeriksaan fakta terhadap profil (`documents/factcheck.py`). Frontend menambahkan input URL manual dan aksi preview/ekspor PDF. Sumber sintetis `manual_url` tidak muncul di registry dan tidak dapat diubah pengguna.
 
 ---
 
@@ -356,7 +369,6 @@ Berhenti bila:
 - sumber yang akan dipakai tidak punya dokumentasi akses resmi;
 - ToS/robots melarang akses otomatis;
 - rate limit tidak dapat dipatuhi;
-- D6 belum diputuskan saat instalasi Tectonic diperlukan;
 - D21 belum diputuskan tetapi override diminta;
 - acceptance criteria tidak dapat dipenuhi;
 - reviewer tidak menangkap seeded defects setelah 2 siklus;

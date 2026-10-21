@@ -16,6 +16,7 @@ from ..export.naming import suggested_filename, with_collision_suffix
 from ..master_cv import new_id, now_iso
 from ..profile.store import ProfileStore
 from .assessment_service import AssessmentService
+from .discovery_service import DiscoveryService
 from .document_service import DocumentService
 from .tasks import TaskStore
 
@@ -64,6 +65,12 @@ class ApplicationService:
         record = self._row(application_id)
         assert record is not None
         return record, False
+
+    def create_from_url(self, url: str, discovery: DiscoveryService) -> tuple[dict, bool]:
+        """Manual-URL fallback: ingest one pasted job page, then create the workspace."""
+        profile = self._profiles.require_confirmed()
+        result = discovery.ingest_manual_url(url)
+        return self.create(result["job_id"])
 
     def rerun_analysis(self, application_id: str) -> dict:
         """Explicit re-analysis; nothing here is triggered automatically.

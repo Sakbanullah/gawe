@@ -16,16 +16,30 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from ..db.repo import Connection
-from ..jobs import ADAPTERS
+from ..jobs import ADAPTERS, robots
 from ..jobs.dedupe import link_duplicate
-from ..jobs.fetch import FetchError, FetchResponse, HostRateLimiter, fetch_source
+from ..jobs.fetch import (
+    FetchError,
+    FetchResponse,
+    HostRateLimiter,
+    fetch_document,
+    fetch_source,
+)
+from ..jobs.sources import manual
 from ..jobs.sources.base import AdapterError, InvalidJob, RawJob, normalize
-from ..jobs.sources.registry import FETCHABLE, SourceError, SourceRegistry
+from ..jobs.sources.registry import (
+    FETCHABLE,
+    MANUAL_SOURCE_ID,
+    SourceError,
+    SourceRegistry,
+)
 from ..master_cv import new_id, now_iso
 from ..master_cv.store import MasterCvError
 from ..profile.store import ProfileStore
+from ..security.url_guard import UnsafeUrl, validate_url
 from .assessment_service import AssessmentService
 from .tasks import MAX_ATTEMPTS, TaskStore
 
@@ -84,6 +98,7 @@ class DiscoveryService:
         limiter: HostRateLimiter | None = None,
         max_workers: int = DEFAULT_WORKERS,
         max_run_seconds: int = DEFAULT_MAX_RUN_S,
+        document_fetcher=None,
     ) -> None:
         self._connection = connection
         self._profiles = profile_store
@@ -93,6 +108,7 @@ class DiscoveryService:
         self._limiter = limiter or HostRateLimiter()
         self._max_workers = max_workers
         self._max_run_seconds = max_run_seconds
+        self._document_fetcher = document_fetcher
 
     def start_run(
         self,
@@ -257,6 +273,128 @@ class DiscoveryService:
             if task_id is not None:
                 _clear_active(task_id)
             self._release_lock()
+
+    def ingest_manual_url(self, url: str, profile_version_id: str | None = None) -> dict:
+        """Fetch one pasted job URL, store it, and assess it.
+
+        This is the fallback path from JOB-DISCOVERY.md §1: one page, no link
+        following, `robots.txt` checked, URL guard applied. It records a normal
+        discovery run so the raw response, hash, and `fetched_at` stay auditable.
+        """
+        profile = self._profiles.require_confirmed()
+        if profile_version_id and profile_version_id != profile["profile_version_id"]:
+            raise MasterCvError(
+                "profile_version_mismatch",
+                "profile_version_id bukan profil confirmed yang aktif.",
+                409,
+            )
+        try:
+            validate_url(url)
+        except UnsafeUrl as exc:
+            raise MasterCvError("url_rejected", f"URL ditolak: {exc}.", 400) from exc
+        source = self._registry.ensure_manual_source()
+
+        allowed, reason = robots.check(url, fetcher=self._document_fetcher)
+        if not allowed:
+            raise MasterCvError("robots_disallowed", reason or "robots.txt menolak.", 400)
+
+        try:
+            response = self._fetch_document(url)
+            raw_job = manual.parse(response.body, url)
+        except FetchError as exc:
+            raise MasterCvError(exc.code, exc.message, 400 if exc.code == "url_rejected" else 502) from exc
+        except AdapterError as exc:
+            raise MasterCvError("manual_page_unreadable", str(exc), 400) from exc
+
+        run_id = new_id("run")
+        task_id: str | None = None
+        started_at = now_iso()
+        try:
+            with self._connection:
+                task = self._tasks.create("discovery", RUN_STAGES)
+                task_id = task["task_id"]
+                self._connection.execute(
+                    "INSERT INTO discovery_run (run_id, task_id, profile_version_id, status, "
+                    "counts_json, error_json, started_at, finished_at) "
+                    "VALUES (?, ?, ?, 'processing', '{}', NULL, ?, NULL)",
+                    (run_id, task_id, profile["profile_version_id"], started_at),
+                )
+                self._connection.execute(
+                    "INSERT INTO discovery_run_source (run_id, source_id, company, status, "
+                    "fetched_count, accepted_count, duplicate_count, retry_count, "
+                    "last_attempt_at, error_json) VALUES (?, ?, ?, 'queued', 0, 0, 0, 0, NULL, NULL)",
+                    (run_id, MANUAL_SOURCE_ID, manual.COMPANY),
+                )
+            self._tasks.start_stage(task_id, "fetch")
+            fetched_at = now_iso()
+            raw = response.body
+            raw_sha = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+            record = normalize(
+                raw_job, {**source, "company": manual.company_of(raw_job)}, fetched_at
+            )
+            self._store_fetch(run_id, MANUAL_SOURCE_ID, response, raw, None)
+            created, job_id = self._store_job(record, raw_sha, fetched_at)
+            link_duplicate(self._connection, job_id, record)
+            self._update_source_progress(
+                run_id,
+                MANUAL_SOURCE_ID,
+                status="completed",
+                fetched=1,
+                accepted=1 if created else 0,
+                duplicates=0 if created else 1,
+                error=None,
+                close_skipped=None,
+                stats={"manual_url": True},
+            )
+            self._tasks.finish_stage(task_id, "fetch")
+            assessment, assessment_error = self._assess(profile)
+            counts = {
+                "fetched": 1,
+                "new_jobs": 1 if created else 0,
+                "duplicates": 0 if created else 1,
+                "eligible": assessment["eligible"],
+                "needs_review": assessment["needs_review"],
+                "ineligible": assessment["ineligible"],
+                "fit_computed": assessment["eligible"],
+            }
+            status = "partial" if assessment_error else "completed"
+            if assessment_error:
+                assessment_error = {**assessment_error, "run_id": run_id}
+            with self._connection:
+                self._connection.execute(
+                    "UPDATE discovery_run SET status = ?, counts_json = ?, error_json = ?, "
+                    "finished_at = ? WHERE run_id = ?",
+                    (
+                        status,
+                        json.dumps(counts),
+                        json.dumps(assessment_error) if assessment_error else None,
+                        now_iso(),
+                        run_id,
+                    ),
+                )
+            self._tasks.finish(
+                task_id,
+                status,
+                result={
+                    "run_id": run_id,
+                    "profile_version_id": profile["profile_version_id"],
+                    "counts": counts,
+                    "job_id": job_id,
+                },
+                error=assessment_error,
+            )
+            return {"run_id": run_id, "job_id": job_id, "created": created}
+        except BaseException:
+            if task_id is not None:
+                self._fail_run(run_id, task_id)
+            raise
+
+    def _fetch_document(self, url: str) -> FetchResponse:
+        host = (urlsplit(url).hostname or "").lower()
+        self._limiter.wait(host)
+        if self._document_fetcher is not None:
+            return self._document_fetcher(url)
+        return fetch_document(url, allowed_hosts=frozenset({host}))
 
     def _assess(self, profile: dict) -> tuple[dict, dict | None]:
         """Assess new jobs after the fetch stage.

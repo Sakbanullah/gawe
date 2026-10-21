@@ -3,6 +3,10 @@ from __future__ import annotations
 import json
 
 from gawe.cli import main
+from gawe.db import repo
+
+# Latest migration filename, so adding a migration does not rewrite every assertion.
+LATEST_SCHEMA = sorted(path.stem for path in repo.MIGRATIONS_DIR.glob("*.sql"))[-1]
 
 
 def test_doctor_reports_environment(repo_root, capsys) -> None:
@@ -10,7 +14,7 @@ def test_doctor_reports_environment(repo_root, capsys) -> None:
     report = json.loads(capsys.readouterr().out)
     assert code == 0
     assert report["bind_loopback"] is True
-    assert report["schema_version"] == "0011_documents"
+    assert report["schema_version"] == LATEST_SCHEMA
     assert report["key_source"] in {"keyring", "env", "missing"}
     assert report["frontend_build"] in {"present", "missing"}
     assert "super-secret" not in json.dumps(report)

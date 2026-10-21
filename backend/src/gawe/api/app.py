@@ -25,6 +25,7 @@ from .routes import (
     applications,
     discovery,
     documents,
+    exports,
     matches,
     overview,
     session,
@@ -90,6 +91,7 @@ def create_app(
     app.state.sessions = {}
     app.state.llm_client = llm_client or build_llm_client(config)
     app.state.discovery_fetcher = None
+    app.state.manual_url_fetcher = None
     # One limiter per app: the per-host interval must survive across requests.
     app.state.discovery_limiter = HostRateLimiter()
 
@@ -179,6 +181,7 @@ def create_app(
     app.include_router(matches.router)
     app.include_router(applications.router)
     app.include_router(documents.router)
+    app.include_router(exports.router)
     app.include_router(tasks.router)
 
     dist = config.dist_dir

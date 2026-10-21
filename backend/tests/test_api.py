@@ -7,6 +7,9 @@ import pytest
 from gawe.api.app import create_app
 from gawe.db import repo
 
+# Latest migration filename, so adding a migration does not rewrite every assertion.
+LATEST_SCHEMA = sorted(path.stem for path in repo.MIGRATIONS_DIR.glob("*.sql"))[-1]
+
 # Every test here builds an app against the test schema and asserts empty counts.
 pytestmark = pytest.mark.usefixtures("_clean_database")
 
@@ -66,5 +69,5 @@ def test_startup_runs_migrations(config) -> None:
     with _client(config) as client:
         assert client.get("/api/overview").status_code == 200
     connection = repo.connect(config.database)
-    assert repo.schema_version(connection) == "0011_documents"
+    assert repo.schema_version(connection) == LATEST_SCHEMA
     connection.close()

@@ -12,6 +12,9 @@ from .. import ADAPTERS
 
 FETCHABLE = "verified"
 VERIFICATION = {"unverified", "verified", "restricted", "broken"}
+# Synthetic source for the manual-URL fallback (API-CONTRACTS.md 3.4): managed
+# by the backend, never listed, never fetched by a discovery run.
+MANUAL_SOURCE_ID = "manual_url"
 
 
 class SourceError(Exception):
@@ -77,6 +80,30 @@ class SourceRegistry:
     def __init__(self, connection: Connection) -> None:
         self._connection = connection
 
+    def ensure_manual_source(self) -> dict:
+        """Create the synthetic `manual_url` row if it is missing.
+
+        Seeded lazily rather than by migration because test cleanup deletes
+        every data row; the row must exist before a manual job can reference it.
+        """
+        self._connection.execute(
+            "INSERT IGNORE INTO source_registry (source_id, company, market, careers_url, "
+            "access_method, ats, verification_status, tos_notes, last_checked_at, enabled, "
+            "created_at, updated_at) VALUES (?, ?, 'unknown', ?, 'manual_url', 'unknown', "
+            "'verified', ?, NULL, 0, ?, ?)",
+            (
+                MANUAL_SOURCE_ID,
+                "Manual URL",
+                "https://example.com/manual-url",
+                "Sumber sintetis: satu URL ditempel pengguna, divalidasi per request.",
+                now_iso(),
+                now_iso(),
+            ),
+        )
+        record = self.get(MANUAL_SOURCE_ID)
+        assert record is not None
+        return record
+
     def get(self, source_id: str) -> dict | None:
         row = self._connection.execute(
             "SELECT *, (SELECT COUNT(*) FROM job j WHERE j.source_id = source_registry.source_id) "
@@ -92,8 +119,8 @@ class SourceRegistry:
         enabled: bool | None = None,
         verification_status: str | None = None,
     ) -> tuple[list[dict], str | None]:
-        clauses: list[str] = []
-        params: list[Any] = []
+        clauses: list[str] = ["source_id <> ?"]
+        params: list[Any] = [MANUAL_SOURCE_ID]
         if enabled is not None:
             clauses.append("enabled = ?")
             params.append(1 if enabled else 0)
@@ -118,8 +145,8 @@ class SourceRegistry:
         rows = self._connection.execute(
             "SELECT *, (SELECT COUNT(*) FROM job j WHERE j.source_id = source_registry.source_id) "
             "AS job_count FROM source_registry WHERE enabled = 1 AND verification_status = ? "
-            "ORDER BY source_id",
-            (FETCHABLE,),
+            "AND source_id <> ? ORDER BY source_id",
+            (FETCHABLE, MANUAL_SOURCE_ID),
         ).fetchall()
         return [self._to_public(row) for row in rows]
 
@@ -155,6 +182,10 @@ class SourceRegistry:
         return record
 
     def update(self, source_id: str, changes: dict) -> dict:
+        if source_id == MANUAL_SOURCE_ID:
+            raise SourceError(
+                "not_found", "Sumber manual_url dikelola sistem dan tidak dapat diubah.", 404
+            )
         current = self.get(source_id)
         if current is None:
             raise SourceError("not_found", "Sumber tidak ditemukan.", 404)

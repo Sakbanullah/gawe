@@ -5,6 +5,8 @@ import {
   confirmProfile,
   correctProfile,
   createApplication,
+  createApplicationFromUrl,
+  createExport,
   createSource,
   getApplication,
   getConsent,
@@ -18,6 +20,7 @@ import {
   grantConsent,
   listApplications,
   listDiscoveryRuns,
+  listExports,
   listMatches,
   listProfiles,
   listSources,
@@ -35,6 +38,7 @@ import {
   generateDocuments,
   runDocumentReview,
   type MatchQuery,
+  type ExportRequest,
 } from "./apiClient";
 
 export function useOverview() {
@@ -283,5 +287,24 @@ export function useApproveDocument() {
         content_hash: args.contentHash,
         note: args.note ?? undefined,
       }),
+  );
+}
+
+export function useCreateApplicationFromUrl() {
+  return useSetupMutation((url: string) => createApplicationFromUrl(url));
+}
+
+export function useExports(applicationId: string | undefined) {
+  return useQuery({
+    queryKey: ["exports", applicationId],
+    queryFn: () => listExports(applicationId as string),
+    enabled: Boolean(applicationId),
+  });
+}
+
+export function useCreateExport() {
+  return useSetupMutation(
+    (args: { applicationId: string; body: ExportRequest }) =>
+      createExport(args.applicationId, args.body),
   );
 }

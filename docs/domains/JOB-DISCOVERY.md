@@ -66,7 +66,9 @@ Operasi UI: tambah, edit, nonaktifkan, ubah status verifikasi.
 
 - Target sekitar **20 perusahaan** Indonesia dan global (K12, D3).
 - Target perencanaan, bukan cakupan terverifikasi.
-- Daftar final belum ada dan harus diisi/dikonfirmasi pengguna.
+- **Disetujui 2026-10-21 (D3, global-only):** GitLab (Greenhouse), Stripe (Greenhouse), Binance (Lever), Linear (Ashby), PostHog (Ashby), Supabase (Ashby). Sumber dibuat lewat registry/UI, bukan migrasi.
+- **Tetap nonaktif:** Xendit (Greenhouse), Amartha (Workable), Ajaib (Workable) sampai D17 dan persetujuan ToS/atribusi. Workable belum punya adapter.
+- Daftar final ~20 belum ada dan harus diisi/dikonfirmasi pengguna.
 
 ### Status verifikasi
 
@@ -292,9 +294,9 @@ Verifikasi: contract test adapter dengan respons fixture tersimpan, test dedupe,
 
 ## 13. Keputusan dan `OPEN`
 
-Final: K1, K2, K12, K18; D2, D15, D16.
+Final: K1, K2, K12, K18; D2, D15, D16, D6. D3 diputuskan sebagian (global-only, 2026-10-21).
 
-`OPEN`: D3 (daftar seed), D17 (sumber Indonesia), D11 (API berbayar), D10 (retensi cache).
+`OPEN`: D3 (daftar final ~20 dan sumber Indonesia), D17 (sumber Indonesia), D11 (API berbayar), D10 (retensi cache), D9 (reviewer model terpisah).
 
 ---
 
