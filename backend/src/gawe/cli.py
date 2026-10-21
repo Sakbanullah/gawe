@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import ConfigError, load_config
 from .db import repo
+from .llm.prompts import PromptNotFound, validate_role_prompts
 from .security.consent import key_source
 
 
@@ -85,6 +86,11 @@ def main(argv: list[str] | None = None) -> int:
             config.server.port = args.port
         if config.server.host not in {"127.0.0.1", "::1", "localhost"}:
             print("error: server must bind to loopback", file=sys.stderr)
+            return 1
+        try:
+            validate_role_prompts(config)
+        except PromptNotFound as exc:
+            print(f"error: {exc}", file=sys.stderr)
             return 1
         uvicorn.run(create_app(config), host=config.server.host, port=config.server.port)
         return 0

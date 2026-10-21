@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 
-from .base import Call, Completion
+from .base import Call, Completion, ProviderError
 
 LINE_RE = re.compile(r"^(?P<locator>[A-Za-z0-9:._-]+) \| (?P<text>.*)$")
 PHONE_RE = re.compile(r"\+?\d[\d\s()-]{6,}\d")
@@ -35,13 +35,23 @@ URL_RE = re.compile(r"https?://\S+")
 
 
 class SyntheticExtractProvider:
+    """Extraction test double. Other roles are refused, not faked.
+
+    A document call answered with profile JSON would look like a writer bug in
+    the logs. Refusing keeps the failure where it belongs: this double only
+    covers `extract`.
+    """
+
     provider_id = "fake"
+    SUPPORTED_ROLES = {"extract"}
 
     def __init__(self) -> None:
         self.calls: list[Call] = []
 
     def complete(self, call: Call) -> Completion:
         self.calls.append(call)
+        if call.role not in self.SUPPORTED_ROLES:
+            raise ProviderError("provider_not_configured", retryable=False)
         text = "\n".join(message.get("content", "") for message in call.messages)
         inside = re.findall(r"<untrusted>(.*?)</untrusted>", text, flags=re.DOTALL)
         body = inside[-1] if inside else text

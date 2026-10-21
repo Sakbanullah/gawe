@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..ingest.types import DocumentText
 from ..llm.client import LLMClient, LLMContractError
+from ..llm.prompts import load_prompt as _load_prompt
 from .merge import detect_conflicts
 from .validate import validate_extraction
 
@@ -46,25 +47,14 @@ RESPONSE_SCHEMA = {
 
 FRONT_MATTER_RE = re.compile(r"^---\n(.*?)\n---\n", re.DOTALL)
 
+# A real multi-page CV extracts to more than 4000 completion tokens; truncation
+# then yields unparseable JSON. 8000 covers the largest fixture observed.
+MAX_TOKENS = 8000
+
 
 def load_prompt(root_dir: Path) -> tuple[str, str, str]:
-    """Return (prompt_id, prompt_version, body)."""
-    path = root_dir / "docs" / "phase-00" / "prompts" / "extract_profile.md"
-    if not path.is_file():
-        return "extract_profile", "0", FALLBACK_PROMPT
-    raw = path.read_text(encoding="utf-8")
-    prompt_id, version = "extract_profile", "0"
-    body = raw
-    match = FRONT_MATTER_RE.match(raw)
-    if match:
-        body = raw[match.end():]
-        for line in match.group(1).splitlines():
-            key, _, value = line.partition(":")
-            if key.strip() == "prompt_id":
-                prompt_id = value.strip()
-            elif key.strip() == "version":
-                version = value.strip()
-    return prompt_id, version, body
+    """Return (prompt_id, prompt_version, body) for the `extract` role."""
+    return _load_prompt(root_dir, "extract_profile", FALLBACK_PROMPT)
 
 
 def locator_text(document: DocumentText) -> str:
@@ -96,7 +86,7 @@ def extract_profile(
             messages=messages,
             response_schema=RESPONSE_SCHEMA,
             temperature=0.0,
-            max_tokens=4000,
+            max_tokens=MAX_TOKENS,
             prompt_id=prompt_id,
             prompt_version=prompt_version,
         )
