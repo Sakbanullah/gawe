@@ -112,7 +112,9 @@ backend/tests/fixtures/{jobs,sources,seeded_defects}
 
 Lokasi mengikuti proposal `PLAN.md` §12.
 
-Catatan 2026-10-20: `JobMatchesTable.tsx` memuat tabel + `JobDetailDrawer` di satu modul, agar side panel dan tabel memakai tipe yang sama. `ApplicationWorkspacePage.tsx` ada pada 3D sebagai baca-saja (job, eligibility, fit, nama file, Apply, analisis ulang). Belum ada `DocumentDiffView.tsx`, `ApprovalPanel.tsx`, `ExportPanel.tsx`, `generate/*`, `review/*`, `status/projector.py`, atau `export/{export.py,manifest.py}`; `export/naming.py` sudah ada.
+Catatan 2026-10-20: `JobMatchesTable.tsx` memuat tabel + `JobDetailDrawer` di satu modul, agar side panel dan tabel memakai tipe yang sama. `ApplicationWorkspacePage.tsx` ada pada 3D sebagai baca-saja (job, eligibility, fit, nama file, Apply, analisis ulang). Belum ada `DocumentDiffView.tsx`, `ApprovalPanel.tsx`, `ExportPanel.tsx`, `generate/*`, `status/projector.py`, atau `export/{export.py,manifest.py}`; `export/naming.py` sudah ada.
+
+Catatan 2026-10-21: reviewer dan writer berada di lokasi yang berbeda dari proposal. Yang ada: `documents/{ai_draft.py,ai_review.py,draft.py,review.py,factcheck.py,render.py}` dan prompt di `docs/phase-00/prompts/`. Tidak ada direktori `review/` terpisah, dan `review/llm_review.py` tidak dibuat.
 
 ---
 
@@ -157,7 +159,7 @@ Catatan 2026-10-20: `JobMatchesTable.tsx` memuat tabel + `JobDetailDrawer` di sa
 9. Render LaTeX.
 10. Compile Tectonic, timeout 120 detik.
 11. PDF QA.
-12. Reviewer; revisi maks 2 siklus.
+12. Reviewer independen + revisi otomatis, maksimum 5 iterasi per dokumen (penghitung lintas versi).
 13. Review pengguna.
 14. Ekspor versi approved.
 15. Apply manual.
@@ -328,10 +330,11 @@ Batasan: tidak ada uji UI manual; tidak ada data kandidat nyata di log; kualitas
 
 ### 8.2 Gap 3D yang masih terbuka (per 2026-10-21)
 
-- Reviewer LLM terisolasi belum ada (D9 belum dijalankan). Review deterministik kini mencakup data wajib, evidence pada klaim, resolusi `evidence_index`, serta pemeriksaan fakta terhadap profil (tanggal, angka berskala, jabatan, sertifikasi, kewarganegaraan, kosakata berlebihan) dan aturan ATS/halaman.
+- Reviewer LLM terisolasi belum ada; **D9 ditunda untuk Phase 3** atas persetujuan pengguna 2026-10-21. Review deterministik mencakup data wajib, evidence pada klaim, resolusi `evidence_index`, pemeriksaan fakta terhadap profil (tanggal, angka berskala, jabatan, sertifikasi, kewarganegaraan, kosakata berlebihan), dan aturan ATS/halaman. Reviewer deterministik bukan pengganti reviewer LLM: kualitas prosa dan relevansi lowongan hanya dinilai lewat review manusia.
 - `status/projector.py` belum ada; proyeksi status tetap di `ApplicationService` dan `DocumentService`.
 - Retensi dokumen mengikuti D10 yang masih `OPEN`; semua durasi tetap sementara.
-- Kualitas isi draft belum diuji dengan reviewer manusia; tailoring deterministik hanya memilih dan mengurutkan fakta yang ada.
+- Kualitas isi draft belum diuji dengan reviewer manusia; paket sampel siap di `temporary/review-samples/` (README + CHECKLIST, belum diisi). Tailoring deterministik hanya memilih dan mengurutkan fakta yang ada.
+- Dua temuan dari penyiapan sampel **sudah diperbaiki 2026-10-21** (tanpa commit): (a) `apply_url` kosong untuk job Greenhouse — adapter kini memakai `absolute_url` sebagai `apply_url` karena Job Board API tidak punya endpoint apply terpisah dan form lamaran dirender di halaman posting itu; (b) ekstraksi requirement memisahkan section, membuang section benefit/EEO/`about`/`responsibilities`, dan menolak kalimat benefit atau boilerplate sebagai gate. Bukti: `tests/test_discovery_adapters.py`, `tests/test_assessment.py`, dan evaluasi ulang sampel di `temporary/test-results.md`. Gate lain di bawah tetap terbuka.
 - Adapter `html` untuk sumber registry dan run discovery terjadwal belum diimplementasikan (di luar §7.1; jalur manual URL sudah ada).
 - Sumber Indonesia belum aktif (D17 + ToS/atribusi).
 
@@ -347,7 +350,7 @@ Batasan: tidak ada uji UI manual; tidak ada data kandidat nyata di log; kualitas
 | D6 | **Diputuskan 2026-10-21**: Tectonic dipasang; PDF tersedia |
 | D1 | Sudah diputuskan; memblokir uji live bila provider belum dikonfigurasi |
 | D21 | Memblokir implementasi override `ineligible` |
-| D9 | Independensi reviewer |
+| D9 | Independensi reviewer; **ditunda untuk Phase 3** (2026-10-21). Reviewer deterministik tidak setara reviewer LLM |
 | D10 | Retensi cache job/log/diagnostik |
 
 Catatan: Phase 3 kini membutuhkan discovery. D3 global disetujui 2026-10-21; D17 tetap memblokir aktivasi sumber Indonesia dan acceptance penuh Phase 4.

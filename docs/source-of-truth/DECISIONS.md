@@ -71,7 +71,7 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 | D6 | Boleh instal Tectonic + unduh cache bundle? | **Disetujui pengguna 2026-10-21.** Tectonic 0.17.0 dipasang di `%LOCALAPPDATA%\Gawe\tectonic\tectonic.exe` (di luar repo). Mesin PDF untuk 3D adalah Tectonic + LaTeX; bundle diunduh sekali saat kompilasi pertama. Bila binary tidak ada, ekspor tercatat `tex_only` dengan error `tectonic_unavailable` dan tidak ada klaim PDF. Font `texgyretermes`/`texgyreheros` dirujuk lewat nama file OTF. | **Diputuskan** 2026-10-21 | Tidak |
 | D7 | Apakah ada CV scan/gambar? | Asumsi tidak; OCR ditunda | Menunggu konfirmasi | Tidak |
 | D8 | Perlu enkripsi data at-rest selain BitLocker? | BitLocker + ACL cukup untuk v1 | Menunggu konfirmasi | Tidak |
-| D9 | Reviewer wajib model/provider berbeda? | Dianjurkan bila tersedia; catat bila sama | Menunggu konfirmasi | Tidak |
+| D9 | Reviewer wajib model/provider berbeda? | **Dibuka dan diputuskan untuk Phase 3 atas persetujuan pengguna 2026-10-21.** Reviewer LLM terpisah diizinkan sebagai role `review` dengan batas berikut: (1) keluaran wajib JSON tervalidasi schema `review-response.schema.json`; (2) reviewer tidak menerima riwayat ronde sebelumnya, alasan penulis, atau skor lama; (3) reviewer memberi `verdict` berdasarkan severity saja dan skor 0-10 pada lima dimensi; (4) skor tidak pernah meloloskan dokumen yang masih punya `blocker` atau `major`; (5) maksimum 5 iterasi per dokumen, dihitung lintas versi; (6) loop berhenti bila kenaikan skor < 0.5 dan hasilnya dilaporkan belum lolos; (7) reviewer deterministik (`documents/factcheck.py`, `documents/review.py`) tetap berjalan dan tidak bisa ditimpa reviewer LLM. Model per role tetap diatur `[llm.roles]`; D1 tidak mewajibkan model berbeda, dan tidak ada klaim bahwa reviewer LLM lebih baik dari reviewer deterministik tanpa kalibrasi. | **Diputuskan** 2026-10-21 | Tidak |
 | D10 | Retensi cache job dan log? | Usulan sementara: job 90 hari, log 30 hari, diagnostik 7 hari. Semua durasi belum final. | Menunggu konfirmasi | Tidak; tetapi retensi tidak boleh dinyatakan final |
 | D11 | Apakah Adzuna/API berbayar lain diperlukan? | Tidak untuk v1 | Menunggu konfirmasi | Tidak |
 | D12 | Konfirmasi tidak ada auto-submit? | Ya | **Diputuskan** | Tidak |
@@ -181,8 +181,17 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 |---|---|---|
 | D7 | CV scan/OCR | Dokumen scan ditolak; OCR Phase 6 |
 | D8 | Enkripsi at-rest | BitLocker + ACL dianggap cukup untuk v1 |
-| D9 | Model reviewer berbeda | Independensi reviewer lebih lemah dan harus dicatat |
+| D9 | Model reviewer berbeda | **Ditunda untuk Phase 3** (persetujuan pengguna 2026-10-21). Reviewer deterministik tidak setara dengan reviewer LLM: cakupannya fakta-vs-profil dan aturan format saja. Dampak: independensi reviewer lebih lemah dan dicatat di §8.2 `PHASE-03.md` |
 | D11 | API berbayar | Tidak dipakai di v1 |
+
+### D9 — Reviewer model terpisah (ditunda untuk Phase 3)
+
+- **Status:** ditunda (deferred) untuk Phase 3, atas persetujuan pengguna 2026-10-21. D9 tidak blocking menurut tabel keputusan, dan gate §11 `PHASE-03.md` tidak mewajibkannya.
+- **Yang berjalan:** reviewer deterministik `backend/src/gawe/documents/factcheck.py` — data wajib, evidence pada klaim, resolusi `evidence_index`, kecocokan fakta terhadap profil (tanggal, angka, jabatan, sertifikasi, kewarganegaraan), kosakata berlebihan, dan aturan ATS/halaman.
+- **Yang tidak dicakup:** penilaian kualitas prosa, relevansi terhadap lowongan, personalisasi cover letter, dan penalaran atas klaim implisit. Reviewer deterministik **bukan** pengganti reviewer LLM dan tidak boleh disebut setara.
+- **Konsekuensi:** independensi reviewer lebih lemah. Verdict `pass` berarti "tidak ada pelanggaran fakta/format yang terdeteksi", bukan "dokumen layak dikirim".
+- **Mitigasi saat ini:** review manusia wajib sebelum gate Phase 3 (checklist di `temporary/review-samples/CHECKLIST.md`), plus 11/11 seeded-defect regression test.
+- **Kapan dibuka lagi:** bila pengguna meminta reviewer LLM, atau saat Phase 5/6 membutuhkan quality gate otomatis. Perubahan status D9 memerlukan persetujuan pengguna.
 
 ---
 

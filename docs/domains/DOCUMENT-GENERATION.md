@@ -70,8 +70,8 @@ Aturan:
 7. Render LaTeX (`.tex.j2` → `.tex`).
 8. Compile Tectonic, timeout 120 detik.
 9. PDF QA: halaman, font, link, metadata, glyph rusak.
-10. Reviewer terisolasi.
-11. Revisi maksimal 2 siklus.
+10. Reviewer terisolasi (role `review`), digabung dengan review deterministik.
+11. Revisi otomatis sampai gate terpenuhi, maksimum 5 iterasi per dokumen.
 12. Review pengguna; dokumen `In Review`.
 13. Approval per versi (CV dan CL terpisah).
 14. Ekspor hanya versi `Approved`.
@@ -83,13 +83,13 @@ Status implementasi:
 
 | Langkah | Status |
 |---|---|
-| 1–6 | Diimplementasikan deterministik |
-| 7-11 | Diimplementasikan 2026-10-21 (LaTeX, Tectonic, QA PDF; reviewer LLM D9 belum dijalankan) |
-| 12-13 | Diimplementasikan (review deterministik + approval per versi) |
+| 1–6 | Diimplementasikan deterministik, dengan role `write` opsional di atasnya |
+| 7-11 | Diimplementasikan 2026-10-21 (LaTeX, Tectonic, QA PDF; reviewer LLM role `review` aktif bila provider nyata) |
+| 12-13 | Diimplementasikan (review deterministik + reviewer LLM + approval per versi) |
 | 14 | Diimplementasikan (`/api/applications/{id}/exports`, migrasi `0012_export`) |
 | 15 | Ada di UI (buka URL resmi), tanpa auto-submit |
 
-Draft dibangun dari `profile_version.content` + job tanpa provider/model call. `provider`, `model`, dan `prompt_version` bernilai `null`; `template_version` hanya disimpan bila klien mengirimkannya.
+Draft dibangun dari `profile_version.content` + job. Bila role `write` aktif, konten datang dari model; bila tidak, atau bila keluaran model gagal validasi, draft deterministik dipakai dan `provider`/`model`/`prompt_version` mencerminkan sumber yang benar-benar dipakai.
 
 Bentuk `content` (schema versi 1):
 
@@ -206,24 +206,28 @@ Severity:
 | `minor` | Kalimat lemah, format kurang rapi | Boleh tersisa, dilaporkan |
 | `nit` | Preferensi gaya | Diabaikan |
 
-Kriteria lulus: 0 `blocker`, 0 `major`.
+Kriteria lulus: 0 `blocker`, 0 `major`, dan skor reviewer minimal sama dengan ambang (default 8.0, sementara sampai kalibrasi).
 
 Siklus:
 
-- Maksimal 2 siklus revisi (3 review: awal + revisi 1 + revisi 2).
-- Berhenti lebih awal bila tidak ada `blocker`/`major` atau tidak ada perubahan bermakna.
-- Berhenti bila perbaikan menuntut fakta baru; laporkan `unresolved`.
+- Maksimum 5 iterasi per dokumen. Satu iterasi = satu versi dibuat + satu review.
+- Penghitung iterasi bersifat global per dokumen: nilainya adalah posisi versi dalam rantai `parent_document_version_id`, bukan `review_cycle` per baris. Versi baru tidak mereset penghitung.
+- Berhenti lebih awal bila gate terpenuhi, bila kenaikan skor antar iterasi < 0.5, bila reviewer tidak menghasilkan skor, atau bila perbaikan menuntut fakta baru.
+- Iterasi berhenti tanpa lulus → `passed = false` dan `stop_reason` di `passed`/`stagnated`/`iteration_limit`/`review_unavailable`/`review_skipped`. Tidak pernah dilaporkan sebagai sukses.
 - Compile gagal 2 kali → `tex_only`.
-- Reviewer gagal → `review_unavailable`; dokumen tidak siap.
+- Reviewer gagal → `review_unavailable`; dokumen tidak siap dan tidak bisa di-approve.
 - Approve pengguna tidak menghapus temuan; laporan tetap menampilkan sisa temuan.
+- Approval hanya untuk versi dengan `review_verdict = pass` dan skor memenuhi ambang. Verdict `unresolved`, `changes_required`, dan `review_unavailable` semuanya memblokir approval.
 
-Status milestone 3D: reviewer LLM terisolasi belum diimplementasikan (D9 belum dijalankan). Yang berjalan adalah review deterministik:
+Status implementasi 2026-10-21 (D9 diputuskan):
 
-- `blocker`: data wajib tidak ada, atau `evidence_id` tidak ditemukan di `evidence_index`.
-- `major`: klaim faktual tanpa `evidence_id`.
-- Verdict `pass` hanya bila 0 `blocker` dan 0 `major`; selain itu `changes_required`.
-- `review_unavailable`, `unresolved`, dan siklus revisi otomatis berbasis model belum dihasilkan.
-- Batas 3 siklus review per versi ditegakkan; siklus ke-4 ditolak `409 conflict` dengan `details[].code = review_cycle_limit`.
+- Role `write` menghasilkan konten JSON yang bentuknya identik dengan `draft.build()`; hasil model yang gagal validasi jatuh ke draft deterministik dan mencatat `fallback_code`.
+- Role `review` menghasilkan `verdict`, `overall_score`, `dimension_scores` (clarity, relevance, credibility, differentiation, professional_quality), dan `findings`.
+- Review deterministik (`documents/review.py`, `documents/factcheck.py`) tetap berjalan dan digabung dengan temuan reviewer LLM. Blocker atau major dari salah satu lapisan menggagalkan dokumen, berapa pun skornya.
+- Identitas (`header`, `target`, `signature`, `schema_version`, `kind`, `language`) selalu diambil dari data tepercaya, bukan dari keluaran model.
+- Loop otomatis hanya berjalan bila prompt reviewer tersedia untuk root yang dipakai. Tanpa reviewer, versi dibiarkan belum direview dan endpoint review eksplisit tetap memutuskan.
+- Batas 5 iterasi ditegakkan di `regenerate` dan `run_review`: permintaan berikutnya ditolak `409 conflict` dengan `details[].code = iteration_limit`.
+- Ambang skor belum dikalibrasi terhadap sampel yang disetujui; nilai 8.0 adalah default sementara, bukan hasil kalibrasi.
 
 ---
 
