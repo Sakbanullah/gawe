@@ -36,6 +36,8 @@ class OpenAICompatibleProvider:
                 "messages": call.messages,
                 "temperature": call.temperature,
                 "max_tokens": call.max_tokens,
+                # 9Router streams by default; this adapter reads the whole body.
+                "stream": False,
             }
         ).encode("utf-8")
         headers = {"Content-Type": "application/json"}

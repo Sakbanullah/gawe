@@ -35,6 +35,14 @@ REPAIR_INSTRUCTION = (
     "Return only a JSON value that matches the schema. Do not add commentary."
 )
 
+_FENCE_RE = re.compile(r"^\s*```[A-Za-z0-9_-]*\s*\n(.*?)\n?\s*```\s*$", re.DOTALL)
+
+
+def _strip_code_fence(text: str) -> str:
+    """Accept a fenced JSON block: some providers wrap JSON in markdown."""
+    match = _FENCE_RE.match(text)
+    return match.group(1) if match else text
+
 
 class LLMContractError(Exception):
     def __init__(self, code: str, retryable: bool = False) -> None:
@@ -195,7 +203,7 @@ class LLMClient:
 
             text = completion.text
             try:
-                parsed = json.loads(text)
+                parsed = json.loads(_strip_code_fence(text))
             except json.JSONDecodeError:
                 if self.config.llm.repair_json_once and not repaired:
                     repaired = True
