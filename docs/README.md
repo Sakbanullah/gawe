@@ -1,6 +1,6 @@
 # Dokumentasi Gawe
 
-**Status:** dokumentasi perencanaan. Belum ada implementasi, kode aplikasi, schema runtime, atau konfigurasi runtime.
+**Status:** implementasi Phase 1–3 berjalan; Phase 3 gap 3D ditutup 2026-10-21 dan acceptance-nya menunggu gate §11. Dokumen di folder ini tetap dokumen perencanaan dan source of truth.
 **Sumber master:** [`PLAN.md`](../PLAN.md) Revisi 7 (19 Oktober 2026).
 **Direktori proyek:** `D:\gawe`
 
@@ -149,7 +149,7 @@ Jangan membaca seluruh `PLAN.md` secara default. Jangan mengulang pembacaan doku
 | [PHASE-00](phases/PHASE-00.md) | Kontrak dan keputusan | Selesai 2026-10-19; gate lulus |
 | [PHASE-01](phases/PHASE-01.md) | Fondasi backend dan frontend | Implementasi selesai 2026-10-19; menunggu persetujuan |
 | [PHASE-02](phases/PHASE-02.md) | Master CV dan `/setup` (2A/2B) | 2A selesai; consent 2B diimplementasikan; acceptance 2B belum diklaim |
-| [PHASE-03](phases/PHASE-03.md) | Discovery otomatis, eligibility, `/apply` | Belum dimulai |
+| [PHASE-03](phases/PHASE-03.md) | Discovery otomatis, eligibility, `/apply` | 3A–3D terimplementasi; uji live 2026-10-21; acceptance menunggu gate §11 (review manusia + persetujuan) |
 | [PHASE-04](phases/PHASE-04.md) | Perluasan sumber dan skala discovery | Belum dimulai |
 | [PHASE-05](phases/PHASE-05.md) | Aggregator dan operasi | Belum dimulai |
 | [PHASE-06](phases/PHASE-06.md) | Hardening opsional | Belum dimulai |

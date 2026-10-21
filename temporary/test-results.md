@@ -495,3 +495,10 @@ None. No test failed or errored.
 - Indonesian sources are inactive (D17 + ToS/attribution).
 - HTML adapter for registry `html` sources and scheduled discovery runs are not implemented; they are outside the 3A-3D acceptance list.
 - Acceptance 3A-3D is not marked passed until the user approves the §11 gate.
+
+### Re-run setelah perbaikan dokumentasi (2026-10-21)
+
+- `backend\tests\test_db.py backend\tests\test_api.py backend\tests\test_doctor.py`: `27 passed in 5.02s`
+- `backend\tests` penuh: `334 passed, 1 skipped in 67.68s`
+- `cd frontend; npx vitest run`: `Test Files 7 passed (7)`, `Tests 41 passed (41)`; `npx tsc --noEmit` bersih
+- Catatan: `docs/source-of-truth/API-CONTRACTS.md`, `docs/phase-00/contracts/openapi.yaml`, dan tiga file test migrasi sempat ditulis ulang dengan encoding salah (mojibake + BOM). Semua dikembalikan ke isi HEAD lalu diedit ulang; pemeriksaan mojibake bersih dan `openapi.yaml` tetap valid YAML (`yaml ok 40`).
