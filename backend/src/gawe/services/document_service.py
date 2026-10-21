@@ -1,8 +1,11 @@
-"""Document versions: deterministic generation, revisions, review, and approval.
+"""Document versions: generation, revisions, review, approval, and the rewrite loop.
 
-Phase 3D slice: no LaTeX, no PDF, no export. Approval is bound to a version id
-plus its content hash; a new version never inherits an approval. Review is a
-deterministic integrity pass (see `gawe.documents.review`), not an LLM reviewer.
+A document is generated, reviewed, and rewritten until it passes or the iteration
+budget runs out. The deterministic draft is always the fallback, so a provider
+outage produces a usable draft instead of nothing.
+
+Approval is bound to a version id plus its content hash; a new version never
+inherits an approval.
 """
 
 from __future__ import annotations
@@ -11,9 +14,13 @@ import base64
 import binascii
 import copy
 import json
+import logging
+from pathlib import Path
 
 from ..db.repo import Connection
-from ..documents import draft, review as review_rules
+from ..documents import ai_draft, ai_review, draft, review as review_rules
+from ..llm.client import LLMClient
+from ..llm.prompts import prompt_path
 from ..master_cv import new_id, now_iso
 from ..profile.store import ProfileStore
 from .assessment_service import AssessmentService
@@ -21,7 +28,15 @@ from .tasks import TaskStore
 
 GENERATION_STAGES = ["select_evidence", "draft", "diff"]
 REVIEW_STAGES = ["review"]
-MAX_REVIEW_CYCLES = 3
+# Total iterations per document, including the first generate + review. The
+# counter walks the version chain, so a new version does not reset it.
+MAX_ITERATIONS = 5
+# Score threshold is provisional until calibration on the approved samples.
+DEFAULT_SCORE_THRESHOLD = 8.0
+# Below this gain, another rewrite chases reviewer noise instead of improving.
+MIN_SCORE_IMPROVEMENT = 0.5
+
+logger = logging.getLogger(__name__)
 
 
 class DocumentError(Exception):
@@ -42,11 +57,41 @@ class DocumentError(Exception):
 
 
 class DocumentService:
-    def __init__(self, connection: Connection, profile_store: ProfileStore) -> None:
+    def __init__(
+        self,
+        connection: Connection,
+        profile_store: ProfileStore,
+        llm_client: LLMClient | None = None,
+        root_dir: Path | None = None,
+        score_threshold: float = DEFAULT_SCORE_THRESHOLD,
+    ) -> None:
         self._connection = connection
         self._profiles = profile_store
         self._assessments = AssessmentService(connection, profile_store)
         self._tasks = TaskStore(connection)
+        self._client = llm_client
+        self._root_dir = root_dir
+        self._threshold = score_threshold
+
+    @property
+    def _llm_ready(self) -> bool:
+        return self._client is not None and self._root_dir is not None
+
+    def _writer_ready(self, kind: str) -> bool:
+        """Only call the writer when its prompt actually exists for this root."""
+        if not self._llm_ready:
+            return False
+        prompt_id = ai_draft.PROMPT_IDS.get(kind)
+        if not prompt_id:
+            return False
+        return prompt_path(self._root_dir, prompt_id).is_file()
+
+    @property
+    def _reviewer_ready(self) -> bool:
+        """The loop only auto-reviews when the reviewer prompt is actually present."""
+        if not self._llm_ready:
+            return False
+        return prompt_path(self._root_dir, "review").is_file()
 
     # -- generation ------------------------------------------------------
     def generate(
@@ -62,36 +107,37 @@ class DocumentService:
         profile = self._profile(record)
         job = self._job_context(record)
 
-        task = self._tasks.create("document_generation", GENERATION_STAGES, application_id)
+        task = self._tasks.create(
+            "document_generation", GENERATION_STAGES + REVIEW_STAGES, application_id
+        )
         task_id = task["task_id"]
+        created: list[str] = []
+        results: list[dict] = []
         try:
-            self._tasks.start_stage(task_id, "select_evidence")
-            self._tasks.finish_stage(task_id, "select_evidence")
-            self._tasks.start_stage(task_id, "draft")
-            drafts = {
-                kind: draft.build(kind, profile["content"], job, language) for kind in kinds
-            }
-            self._tasks.finish_stage(task_id, "draft")
-            self._tasks.start_stage(task_id, "diff")
-            created: list[str] = []
-            for kind, content in drafts.items():
-                diff = draft.diff_against_profile(content, profile["content"])
-                created.append(
-                    self._insert(
-                        record,
-                        kind=kind,
-                        content=content,
-                        diff=diff,
-                        parent_document_version_id=None,
-                        template_version=template_version,
-                        job_posting_version_id=self._job_posting_version_id(record),
-                    )["document_version_id"]
+            for kind in kinds:
+                summary, report = self._iterate(
+                    record,
+                    task_id,
+                    kind=kind,
+                    profile=profile,
+                    job=job,
+                    language=language,
+                    template_version=template_version,
+                    parent=None,
                 )
-            self._tasks.finish_stage(task_id, "diff")
+                created.append(summary["document_version_id"])
+                results.append(
+                    {
+                        "document_version_id": summary["document_version_id"],
+                        "kind": kind,
+                        **_public(report),
+                    }
+                )
         except DocumentError as exc:
             self._tasks.fail(task_id, exc.code, exc.message, "draft")
             raise
         except Exception as exc:  # noqa: BLE001 - task must not stay processing
+            logger.exception("document generation failed")
             self._tasks.fail(task_id, "internal_error", "Pembuatan dokumen gagal.", "draft")
             raise DocumentError(
                 "internal_error", "Pembuatan dokumen gagal.", 500
@@ -99,7 +145,9 @@ class DocumentService:
 
         self._touch_application(application_id)
         self._tasks.finish(
-            task_id, "completed", result={"document_version_ids": created, "kinds": kinds}
+            task_id,
+            "completed",
+            result={"document_version_ids": created, "kinds": kinds, "documents": results},
         )
         return {"task_id": task_id, "status": "completed"}
 
@@ -118,28 +166,38 @@ class DocumentService:
             )
         self._require_eligible(record)
         self._require_no_active_task(application_id)
+        if self._iteration_index(document_version_id) >= MAX_ITERATIONS:
+            raise DocumentError(
+                "conflict",
+                f"Batas {MAX_ITERATIONS} iterasi per dokumen tercapai.",
+                409,
+                details=[
+                    {
+                        "field": "document_version_id",
+                        "code": "iteration_limit",
+                        "message": "Buat workspace baru atau sunting versi secara manual.",
+                    }
+                ],
+            )
         profile = self._profile(record)
         job = self._job_context(record)
 
-        task = self._tasks.create("document_generation", GENERATION_STAGES, application_id)
+        task = self._tasks.create(
+            "document_generation", GENERATION_STAGES + REVIEW_STAGES, application_id
+        )
         task_id = task["task_id"]
         try:
-            self._tasks.start_stage(task_id, "select_evidence")
-            self._tasks.finish_stage(task_id, "select_evidence")
-            self._tasks.start_stage(task_id, "draft")
-            content = draft.build(parent["kind"], profile["content"], job, parent["content"].get("language"))
-            self._tasks.finish_stage(task_id, "draft")
-            self._tasks.start_stage(task_id, "diff")
-            created = self._insert(
+            summary, report = self._iterate(
                 record,
+                task_id,
                 kind=parent["kind"],
-                content=content,
-                diff=draft.diff_between(parent["content"], content, document_version_id),
-                parent_document_version_id=document_version_id,
+                profile=profile,
+                job=job,
+                language=parent["content"].get("language") or "en",
                 template_version=parent["template_version"],
-                job_posting_version_id=self._job_posting_version_id(record),
+                parent=parent,
+                revision_instructions=_revision_instructions(parent),
             )
-            self._tasks.finish_stage(task_id, "diff")
         except DocumentError as exc:
             self._tasks.fail(task_id, exc.code, exc.message, "draft")
             raise
@@ -152,12 +210,130 @@ class DocumentService:
             task_id,
             "completed",
             result={
-                "document_version_ids": [created["document_version_id"]],
+                "document_version_ids": [summary["document_version_id"]],
                 "kinds": [parent["kind"]],
                 "reason": reason,
+                "documents": [
+                    {
+                        "document_version_id": summary["document_version_id"],
+                        "kind": parent["kind"],
+                        **_public(report),
+                    }
+                ],
             },
         )
         return {"task_id": task_id, "status": "completed"}
+
+    def _iterate(
+        self,
+        record: dict,
+        task_id: str,
+        *,
+        kind: str,
+        profile: dict,
+        job: dict,
+        language: str,
+        template_version: str | None,
+        parent: dict | None,
+        revision_instructions: str = "",
+    ) -> tuple[dict, dict]:
+        """Generate, review, and rewrite until the gates hold or the budget ends.
+
+        The loop stops on the first of: gates satisfied, score not improving,
+        iteration budget exhausted, or no reviewer score available. Only the last
+        case leaves a document without a score, and it is reported as such.
+        """
+        best_score: float | None = None
+        summary: dict | None = None
+        report: dict | None = None
+        previous = parent
+
+        while True:
+            iteration = (
+                1 if previous is None else self._iteration_index(previous["document_version_id"]) + 1
+            )
+            self._tasks.start_stage(task_id, "select_evidence")
+            self._tasks.finish_stage(task_id, "select_evidence")
+            self._tasks.start_stage(task_id, "draft")
+            content, metadata = self._draft(kind, profile, job, language, revision_instructions)
+            self._tasks.finish_stage(task_id, "draft")
+            self._tasks.start_stage(task_id, "diff")
+            if previous is None:
+                diff = draft.diff_against_profile(content, profile["content"])
+            else:
+                diff = draft.diff_between(
+                    previous["content"], content, previous["document_version_id"]
+                )
+            summary = self._insert(
+                record,
+                kind=kind,
+                content=content,
+                diff=diff,
+                parent_document_version_id=previous["document_version_id"] if previous else None,
+                template_version=template_version,
+                job_posting_version_id=self._job_posting_version_id(record),
+                metadata=metadata,
+            )
+            self._tasks.finish_stage(task_id, "diff")
+
+            if not self._reviewer_ready:
+                # No reviewer configured: leave the version unreviewed so the
+                # explicit review endpoint still owns that decision.
+                report = {
+                    "iteration": iteration,
+                    "overall_score": None,
+                    "dimension_scores": None,
+                    "passed": None,
+                    "stop_reason": "review_skipped",
+                }
+                self._store_loop_state(summary["document_version_id"], report)
+                return summary, report
+
+            report = self._review_version(
+                record,
+                summary["document_version_id"],
+                profile,
+                job,
+                iteration,
+                gaps=metadata.get("gaps") or [],
+            )
+
+            score = report["overall_score"]
+            if report["passed"]:
+                stop_reason = "passed"
+                break
+            if score is None:
+                stop_reason = "review_unavailable"
+                break
+            if iteration >= MAX_ITERATIONS:
+                stop_reason = "iteration_limit"
+                break
+            if best_score is not None and score - best_score < MIN_SCORE_IMPROVEMENT:
+                stop_reason = "stagnated"
+                break
+            best_score = score if best_score is None else max(best_score, score)
+            previous = self._version(record["application_id"], summary["document_version_id"])
+            revision_instructions = _revision_instructions(report)
+
+        report["stop_reason"] = stop_reason
+        self._store_loop_state(summary["document_version_id"], report)
+        return summary, report
+
+    def _draft(
+        self, kind: str, profile: dict, job: dict, language: str, revision_instructions: str
+    ) -> tuple[dict, dict]:
+        if not self._writer_ready(kind):
+            return draft.build(kind, profile["content"], job, language), {"source": "deterministic"}
+        return ai_draft.write(
+            self._client,
+            self._root_dir,
+            kind,
+            profile["content"],
+            profile.get("evidence_index") or {},
+            job,
+            language,
+            revision_instructions,
+        )
 
     # -- revisions -------------------------------------------------------
     def revise(
@@ -215,44 +391,108 @@ class DocumentService:
                     }
                 ],
             )
-        cycle = int(version.get("review_cycle") or 0) + 1
-        if cycle > MAX_REVIEW_CYCLES:
+        if self._iteration_index(document_version_id) > MAX_ITERATIONS:
             raise DocumentError(
                 "conflict",
-                "Batas 3 siklus review tercapai; buat versi baru.",
+                f"Batas {MAX_ITERATIONS} iterasi per dokumen tercapai.",
                 409,
                 details=[
                     {
                         "field": "document_version_id",
-                        "code": "review_cycle_limit",
-                        "message": "Maksimum 3 siklus review per versi.",
+                        "code": "iteration_limit",
+                        "message": "Buat versi dari workspace baru.",
                     }
                 ],
             )
         self._require_no_active_task(application_id)
         profile = self._profile(record)
+        job = self._job_context(record)
         task = self._tasks.create("review", REVIEW_STAGES, application_id)
         task_id = task["task_id"]
         try:
             self._tasks.start_stage(task_id, "review")
-            result = review_rules.review(
-                version["content"],
-                profile.get("evidence_index") or {},
-                profile.get("content") or {},
+            report = self._review_version(
+                record,
+                document_version_id,
+                profile,
+                job,
+                self._iteration_index(document_version_id),
+                review_run_id=task_id,
             )
             self._tasks.finish_stage(task_id, "review")
+        except DocumentError as exc:
+            self._tasks.fail(task_id, exc.code, exc.message, "review")
+            raise
         except Exception as exc:  # noqa: BLE001
             self._tasks.fail(task_id, "internal_error", "Review dokumen gagal.", "review")
             raise DocumentError("internal_error", "Review dokumen gagal.", 500) from exc
 
+        self._touch_application(application_id)
+        self._tasks.finish(
+            task_id,
+            "completed",
+            result={
+                "verdict": report["verdict"],
+                "score": report["overall_score"],
+                "passed": report["passed"],
+            },
+        )
+        return {"task_id": task_id, "status": "completed"}
+
+    def _review_version(
+        self,
+        record: dict,
+        document_version_id: str,
+        profile: dict,
+        job: dict,
+        iteration: int,
+        review_run_id: str | None = None,
+        gaps: list[dict] | None = None,
+    ) -> dict:
+        """Review one version, persist the report, and return it with `passed`."""
+        version = self._version(record["application_id"], document_version_id)
+        if self._reviewer_ready:
+            report, metadata = ai_review.review(
+                self._client,
+                self._root_dir,
+                version["content"],
+                profile.get("evidence_index") or {},
+                profile.get("content") or {},
+                job,
+            )
+        else:
+            deterministic = review_rules.review(
+                version["content"],
+                profile.get("evidence_index") or {},
+                profile.get("content") or {},
+            )
+            report = {
+                "verdict": deterministic["verdict"],
+                "overall_score": None,
+                "dimension_scores": None,
+                "findings": deterministic["findings"],
+                "source": "deterministic",
+            }
+            metadata = {"source": "deterministic"}
+
+        report["passed"] = ai_review.passed(report, self._threshold)
+        report["iteration"] = iteration
+        report["review_run_id"] = review_run_id
+        report["reviewer"] = metadata
         timestamp = now_iso()
-        report = {
+        stored = {
             "document_version_id": document_version_id,
             "profile_version_id": version["profile_version_id"],
-            "review_run_id": task_id,
-            "cycle": cycle,
-            "verdict": result["verdict"],
-            "findings": result["findings"],
+            "review_run_id": review_run_id,
+            "cycle": iteration,
+            "iteration": iteration,
+            "verdict": report["verdict"],
+            "overall_score": report["overall_score"],
+            "dimension_scores": report["dimension_scores"],
+            "passed": report["passed"],
+            "stop_reason": report.get("stop_reason"),
+            "findings": report["findings"],
+            "gaps": list(gaps or []),
             "reviewed_at": timestamp,
         }
         with self._connection:
@@ -261,17 +501,47 @@ class DocumentService:
                 "review_verdict = ?, review_cycle = ?, findings_json = ?, reviewed_at = ?, "
                 "updated_at = ? WHERE document_version_id = ?",
                 (
-                    result["verdict"],
-                    cycle,
-                    json.dumps(report, ensure_ascii=False),
+                    report["verdict"],
+                    iteration,
+                    json.dumps(stored, ensure_ascii=False),
                     timestamp,
                     timestamp,
                     document_version_id,
                 ),
             )
-        self._touch_application(application_id)
-        self._tasks.finish(task_id, "completed", result={"verdict": result["verdict"]})
-        return {"task_id": task_id, "status": "completed"}
+        return report
+
+    def _store_loop_state(self, document_version_id: str, report: dict) -> None:
+        """Persist why the loop stopped, next to the findings it stopped on."""
+        row = self._connection.execute(
+            "SELECT findings_json FROM document_version WHERE document_version_id = ?",
+            (document_version_id,),
+        ).fetchone()
+        if row is None or not row["findings_json"]:
+            return
+        stored = json.loads(row["findings_json"])
+        stored["stop_reason"] = report.get("stop_reason")
+        stored["iteration"] = report.get("iteration")
+        stored["passed"] = report.get("passed")
+        with self._connection:
+            self._connection.execute(
+                "UPDATE document_version SET findings_json = ? WHERE document_version_id = ?",
+                (json.dumps(stored, ensure_ascii=False), document_version_id),
+            )
+
+    def _iteration_index(self, document_version_id: str) -> int:
+        """Position in the version chain: 1 for the first version, 2 for its child."""
+        count = 0
+        current: str | None = document_version_id
+        while current and count <= MAX_ITERATIONS + 1:
+            count += 1
+            row = self._connection.execute(
+                "SELECT parent_document_version_id FROM document_version "
+                "WHERE document_version_id = ?",
+                (current,),
+            ).fetchone()
+            current = row["parent_document_version_id"] if row else None
+        return count
 
     def findings(self, application_id: str, document_version_id: str) -> dict:
         version = self._version(application_id, document_version_id)
@@ -313,10 +583,20 @@ class DocumentService:
             raise DocumentError(
                 "review_not_completed", "Review belum selesai untuk versi ini.", 409
             )
-        if version.get("review_verdict") == "changes_required":
+        if version.get("review_verdict") != "pass":
             raise DocumentError(
                 "review_not_completed",
-                "Review meminta perubahan; buat versi baru lalu review ulang.",
+                "Review tidak meloloskan versi ini; buat versi baru lalu review ulang.",
+                409,
+            )
+        # The threshold is a gate, not a hint: a version the loop never lifted
+        # above it stays unapprovable. A deterministic-only review has no score,
+        # so severity alone decides there.
+        score = (version.get("findings") or {}).get("overall_score")
+        if score is not None and float(score) < self._threshold:
+            raise DocumentError(
+                "review_not_completed",
+                f"Skor review {score} di bawah ambang {self._threshold}.",
                 409,
             )
 
@@ -414,6 +694,7 @@ class DocumentService:
             "provider": version.get("provider"),
             "model": version.get("model"),
             "review_verdict": version.get("review_verdict"),
+            "findings": version.get("findings"),
         }
 
     def summaries(self, application_id: str) -> dict:
@@ -536,12 +817,14 @@ class DocumentService:
         parent_document_version_id: str | None,
         template_version: str | None,
         job_posting_version_id: str,
+        metadata: dict | None = None,
     ) -> dict:
         version = self._next_version(record["application_id"], kind)
         document_version_id = new_id("docv")
         timestamp = now_iso()
         content_hash = draft.content_hash(content)
         evidence_ids = _evidence_ids(content)
+        metadata = metadata or {}
         with self._connection:
             self._connection.execute(
                 "INSERT INTO document_version (document_version_id, application_id, "
@@ -550,7 +833,7 @@ class DocumentService:
                 "evidence_json, prompt_version, template_version, provider, model, "
                 "review_status, review_verdict, review_cycle, findings_json, reviewed_at, "
                 "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, "
-                "NULL, ?, NULL, NULL, 'not_started', NULL, NULL, NULL, NULL, ?, ?)",
+                "?, ?, ?, ?, 'not_started', NULL, NULL, NULL, NULL, ?, ?)",
                 (
                     document_version_id,
                     record["application_id"],
@@ -563,7 +846,10 @@ class DocumentService:
                     content_hash,
                     json.dumps(diff, ensure_ascii=False),
                     json.dumps(evidence_ids, ensure_ascii=False),
+                    metadata.get("prompt_version"),
                     template_version,
+                    metadata.get("provider"),
+                    metadata.get("model"),
                     timestamp,
                     timestamp,
                 ),
@@ -664,6 +950,49 @@ def _version_row(row: dict) -> dict:
         json.loads(record["findings_json"]) if record.get("findings_json") else None
     )
     return record
+
+
+def _revision_instructions(report: dict) -> str:
+    """Turn open findings into instructions for the next write call.
+
+    Only findings the writer can act on are passed: the writer cannot add facts,
+    so a factuality blocker becomes a request to remove or soften the claim.
+    """
+    lines: list[str] = []
+    for finding in report.get("findings") or []:
+        if finding.get("severity") not in {"blocker", "major", "minor"}:
+            continue
+        if finding.get("status") == "resolved":
+            continue
+        location = finding.get("location") or {}
+        where = " / ".join(
+            part
+            for part in (location.get("doc"), location.get("section"), location.get("bullet_id"))
+            if part
+        )
+        quote = (finding.get("quote") or "").strip()
+        problem = (finding.get("problem") or "").strip()
+        fix = (finding.get("suggested_fix") or finding.get("fix") or "").strip()
+        line = f"- [{finding.get('severity')}/{finding.get('category')}]"
+        if where:
+            line += f" {where}:"
+        if quote:
+            line += f' "{quote[:300]}"'
+        line += f" — {problem}"
+        if fix:
+            line += f" Perbaikan: {fix}"
+        lines.append(line)
+    return "\n".join(lines[:40])
+
+
+def _public(report: dict) -> dict:
+    """The loop summary safe to expose: no findings text, no prompt content."""
+    return {
+        "iteration": report.get("iteration"),
+        "score": report.get("overall_score"),
+        "passed": report.get("passed"),
+        "stop_reason": report.get("stop_reason"),
+    }
 
 
 def _evidence_ids(content: dict) -> list[str]:

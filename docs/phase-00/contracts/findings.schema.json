@@ -2,22 +2,122 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://gawe.local/schemas/phase-00/findings.schema.json",
   "title": "Gawe Reviewer Findings Report",
-  "description": "Laporan findings reviewer. Selaras dengan components.schemas.FindingsReport pada openapi.yaml. Findings tidak dihapus oleh approval. Kriteria lulus: 0 blocker, 0 major. Maksimum 3 siklus review (awal + 2 revisi).",
+  "description": "Laporan findings reviewer. Selaras dengan components.schemas.FindingsReport pada openapi.yaml. Findings tidak dihapus oleh approval. Kriteria lulus: 0 blocker, 0 major, dan skor minimal sama dengan ambang. Maksimum 5 iterasi per dokumen (satu iterasi = satu versi dibuat + satu review), dihitung lintas versi.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["document_version_id", "profile_version_id", "verdict", "findings"],
+  "required": [
+    "document_version_id",
+    "profile_version_id",
+    "verdict",
+    "findings"
+  ],
   "properties": {
-    "document_version_id": { "type": "string", "minLength": 1, "maxLength": 64 },
-    "profile_version_id": { "type": "string", "minLength": 1, "maxLength": 64 },
-    "review_run_id": { "type": ["string", "null"], "maxLength": 64 },
+    "document_version_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "profile_version_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "review_run_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 64
+    },
     "cycle": {
-      "type": ["integer", "null"],
+      "type": [
+        "integer",
+        "null"
+      ],
       "minimum": 1,
-      "maximum": 3
+      "maximum": 5
+    },
+    "iteration": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "maximum": 5,
+      "description": "Posisi versi ini dalam rantai versi dokumen. Sama dengan `cycle`."
     },
     "verdict": {
       "type": "string",
-      "enum": ["pass", "changes_required", "unresolved", "review_unavailable"]
+      "enum": [
+        "pass",
+        "changes_required",
+        "unresolved",
+        "review_unavailable"
+      ]
+    },
+    "overall_score": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Kosong bila reviewer LLM tidak tersedia; gate severity tetap berlaku."
+    },
+    "dimension_scores": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "clarity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "relevance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "credibility": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "differentiation": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "professional_quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        }
+      }
+    },
+    "passed": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Kosong bila belum ada skor. `true` hanya bila 0 blocker, 0 major, dan skor mencapai ambang."
+    },
+    "stop_reason": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "passed",
+        "stagnated",
+        "iteration_limit",
+        "review_unavailable",
+        "review_skipped",
+        null
+      ]
     },
     "findings": {
       "type": "array",
@@ -25,12 +125,27 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["finding_id", "severity", "category", "quote", "problem"],
+        "required": [
+          "finding_id",
+          "severity",
+          "category",
+          "quote",
+          "problem"
+        ],
         "properties": {
-          "finding_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "finding_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
           "severity": {
             "type": "string",
-            "enum": ["blocker", "major", "minor", "nit"]
+            "enum": [
+              "blocker",
+              "major",
+              "minor",
+              "nit"
+            ]
           },
           "category": {
             "type": "string",
@@ -52,31 +167,98 @@
             "properties": {
               "doc": {
                 "type": "string",
-                "enum": ["cv", "cover_letter"]
+                "enum": [
+                  "cv",
+                  "cover_letter"
+                ]
               },
-              "section": { "type": ["string", "null"], "maxLength": 100 },
-              "bullet_id": { "type": ["string", "null"], "maxLength": 100 }
+              "section": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 100
+              },
+              "bullet_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 100
+              }
             }
           },
-          "quote": { "type": "string", "minLength": 1, "maxLength": 2000 },
-          "problem": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "quote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "problem": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
           "evidence_refs": {
             "type": "array",
             "maxItems": 100,
-            "items": { "type": "string", "pattern": "^ev_[A-Za-z0-9_-]+$" }
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
           },
-          "suggested_fix": { "type": ["string", "null"], "maxLength": 2000 },
-          "auto_fixable": { "type": "boolean" },
+          "suggested_fix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "auto_fixable": {
+            "type": "boolean"
+          },
           "status": {
             "type": "string",
-            "enum": ["open", "resolved", "accepted"]
+            "enum": [
+              "open",
+              "resolved",
+              "accepted"
+            ]
           }
         }
       }
     },
     "reviewed_at": {
-      "type": ["string", "null"],
+      "type": [
+        "string",
+        "null"
+      ],
       "format": "date-time"
+    },
+    "gaps": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Requirement lowongan yang tidak punya bukti pendukung. Dilaporkan, tidak masuk konten dokumen.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requirement",
+          "question"
+        ],
+        "properties": {
+          "requirement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "question": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
+      }
     }
   }
 }

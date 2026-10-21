@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ...documents import render
 from ...services.document_service import DocumentError, DocumentService
-from ..deps import profile_store
+from ..deps import llm_client, profile_store
 from ..errors import ApiError
 
 router = APIRouter(prefix="/api/applications")
@@ -66,7 +66,12 @@ class ApprovalRequest(BaseModel):
 
 
 def _service(request: Request) -> DocumentService:
-    return DocumentService(request.state.db, profile_store(request))
+    return DocumentService(
+        request.state.db,
+        profile_store(request),
+        llm_client(request),
+        request.app.state.config.root_dir,
+    )
 
 
 def _raise(exc: DocumentError, stage: str) -> None:

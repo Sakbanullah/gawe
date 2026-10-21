@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gawe.local/schemas/phase-00/tailored-cv.schema.json",
+  "title": "Gawe Tailored CV Content",
+  "description": "Bentuk konten CV yang dihasilkan role `write`. Harus identik dengan keluaran draft._cv() karena render.py, factcheck.py, diff_against_profile, dan export_service membaca bentuk ini. Field `missing` tidak diisi model; service menghitungnya lewat draft.missing_information().",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "language",
+    "target",
+    "header",
+    "summary",
+    "skills",
+    "experience",
+    "projects",
+    "education",
+    "certifications",
+    "languages"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "const": "cv" },
+    "language": { "type": "string", "enum": ["en", "id"] },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "job_posting_version_id", "title", "company"],
+      "properties": {
+        "job_id": { "type": ["string", "null"], "maxLength": 64 },
+        "job_posting_version_id": { "type": ["string", "null"], "maxLength": 64 },
+        "title": { "type": ["string", "null"], "maxLength": 300 },
+        "company": { "type": ["string", "null"], "maxLength": 300 }
+      }
+    },
+    "header": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "email", "phone", "location", "links"],
+      "properties": {
+        "full_name": { "type": ["string", "null"], "maxLength": 200 },
+        "email": { "type": ["string", "null"], "maxLength": 200 },
+        "phone": { "type": ["string", "null"], "maxLength": 60 },
+        "location": { "type": ["string", "null"], "maxLength": 200 },
+        "links": {
+          "type": "array",
+          "maxItems": 10,
+          "items": { "type": "string", "maxLength": 500 }
+        }
+      }
+    },
+    "summary": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["text", "evidence_ids"],
+      "properties": {
+        "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+        "evidence_ids": { "$ref": "#/$defs/evidence_ids" }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "maxItems": 60,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "proficiency", "evidence_ids"],
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 64 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "proficiency": { "type": ["string", "null"], "maxLength": 100 },
+          "evidence_ids": { "$ref": "#/$defs/evidence_ids" }
+        }
+      }
+    },
+    "experience": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "company", "title", "location", "start", "end", "bullets"],
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 64 },
+          "company": { "type": ["string", "null"], "maxLength": 300 },
+          "title": { "type": ["string", "null"], "maxLength": 300 },
+          "location": { "type": ["string", "null"], "maxLength": 200 },
+          "start": { "type": ["string", "null"], "maxLength": 20 },
+          "end": { "type": ["string", "null"], "maxLength": 20 },
+          "bullets": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "text", "evidence_ids", "skills"],
+              "properties": {
+                "id": { "type": ["string", "null"], "maxLength": 64 },
+                "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+                "evidence_ids": { "$ref": "#/$defs/evidence_ids" },
+                "skills": {
+                  "type": "array",
+                  "maxItems": 30,
+                  "items": { "type": "string", "maxLength": 100 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "role",
+          "technologies",
+          "description",
+          "start",
+          "end",
+          "evidence_ids"
+        ],
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 64 },
+          "name": { "type": ["string", "null"], "maxLength": 300 },
+          "role": { "type": ["string", "null"], "maxLength": 300 },
+          "technologies": {
+            "type": "array",
+            "maxItems": 40,
+            "items": { "type": "string", "maxLength": 100 }
+          },
+          "description": { "type": ["string", "null"], "maxLength": 2000 },
+          "start": { "type": ["string", "null"], "maxLength": 20 },
+          "end": { "type": ["string", "null"], "maxLength": 20 },
+          "evidence_ids": { "$ref": "#/$defs/evidence_ids" }
+        }
+      }
+    },
+    "education": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "institution", "degree", "field", "start", "end", "evidence_ids"],
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 64 },
+          "institution": { "type": ["string", "null"], "maxLength": 300 },
+          "degree": { "type": ["string", "null"], "maxLength": 200 },
+          "field": { "type": ["string", "null"], "maxLength": 200 },
+          "start": { "type": ["string", "null"], "maxLength": 20 },
+          "end": { "type": ["string", "null"], "maxLength": 20 },
+          "evidence_ids": { "$ref": "#/$defs/evidence_ids" }
+        }
+      }
+    },
+    "certifications": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "issuer", "date", "evidence_ids"],
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 64 },
+          "name": { "type": ["string", "null"], "maxLength": 300 },
+          "issuer": { "type": ["string", "null"], "maxLength": 300 },
+          "date": { "type": ["string", "null"], "maxLength": 20 },
+          "evidence_ids": { "$ref": "#/$defs/evidence_ids" }
+        }
+      }
+    },
+    "languages": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "level", "evidence_ids"],
+        "properties": {
+          "id": { "type": ["string", "null"], "maxLength": 64 },
+          "name": { "type": ["string", "null"], "maxLength": 200 },
+          "level": { "type": ["string", "null"], "maxLength": 100 },
+          "evidence_ids": { "$ref": "#/$defs/evidence_ids" }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "maxItems": 50,
+      "description": "Requirement lowongan tanpa bukti. Dibuang sebelum konten disimpan; hanya dilaporkan.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requirement", "question"],
+        "properties": {
+          "requirement": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "question": { "type": "string", "minLength": 1, "maxLength": 500 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "evidence_ids": {
+      "type": "array",
+      "maxItems": 100,
+      "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+    }
+  }
+}

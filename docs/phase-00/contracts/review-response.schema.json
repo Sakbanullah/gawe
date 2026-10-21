@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gawe.local/schemas/phase-00/review-response.schema.json",
+  "title": "Gawe Reviewer Response",
+  "description": "Keluaran role `review`. Ini bentuk yang diisi model. Laporan yang disimpan tetap findings.schema.json: service menambahkan document_version_id, profile_version_id, review_run_id, cycle, dan reviewed_at. Skor tidak boleh meloloskan blocker atau major; gate tetap 0 blocker + 0 major.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "verdict",
+    "overall_score",
+    "dimension_scores",
+    "findings"
+  ],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "changes_required",
+        "unresolved"
+      ],
+      "description": "`pass` hanya bila 0 blocker dan 0 major. `unresolved` bila reviewer tidak dapat memutuskan karena bukti tidak cukup."
+    },
+    "overall_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Skor keseluruhan 0-10 dengan satu desimal. Ambang lulus ditetapkan setelah kalibrasi. `multipleOf` tidak dipakai karena JSON Schema memperlakukannya sebagai float dan menolak 8.2."
+    },
+    "dimension_scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clarity",
+        "relevance",
+        "credibility",
+        "differentiation",
+        "professional_quality"
+      ],
+      "properties": {
+        "clarity": {
+          "$ref": "#/$defs/dimension"
+        },
+        "relevance": {
+          "$ref": "#/$defs/dimension"
+        },
+        "credibility": {
+          "$ref": "#/$defs/dimension"
+        },
+        "differentiation": {
+          "$ref": "#/$defs/dimension"
+        },
+        "professional_quality": {
+          "$ref": "#/$defs/dimension"
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "finding_id",
+          "severity",
+          "category",
+          "quote",
+          "problem"
+        ],
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocker",
+              "major",
+              "minor",
+              "nit"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40,
+            "description": "Label kategori bebas. Service memetakan ke kategori tersimpan (factuality, relevance, exaggeration, language, ats, consistency, format, priority, eligibility)."
+          },
+          "location": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "doc": {
+                "type": "string",
+                "enum": [
+                  "cv",
+                  "cover_letter"
+                ]
+              },
+              "section": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 100
+              },
+              "bullet_id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 100
+              }
+            }
+          },
+          "quote": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "problem": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "evidence_refs": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          },
+          "suggested_fix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 2000
+          },
+          "auto_fixable": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "dimension": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10
+    }
+  }
+}

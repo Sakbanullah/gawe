@@ -26,11 +26,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
 from gawe.api.app import _make_provider
-from gawe.config import Config, DatabaseConfig, load_config
+from gawe.config import LOOPBACK_HOSTS, Config, DatabaseConfig, load_config
 from gawe.db import repo
 from gawe.ingest.text import parse_text
 from gawe.ingest.types import normalize_text
@@ -125,7 +126,11 @@ def test_live_9router_extraction(test_schema: str, _clean_database) -> None:
     assert provider_config is not None, "active_provider is not defined in [llm.providers]"
     assert provider_config.type == "openai_compatible", "live test expects the approved adapter"
     assert provider_config.base_url, "provider base_url is empty"
-    assert provider_config.base_url.startswith("https://"), "provider base_url must be HTTPS"
+    # Plaintext is refused for remote hosts; a loopback router cannot leave the machine.
+    base_host = urlparse(provider_config.base_url).hostname or ""
+    assert provider_config.base_url.startswith("https://") or base_host in LOOPBACK_HOSTS, (
+        "provider base_url must be HTTPS unless it is a loopback host"
+    )
     assert config.llm.roles.get("extract"), "llm.roles.extract is empty"
 
     # Never touch the development schema named in the config file.
@@ -280,3 +285,149 @@ def _response_schema() -> dict:
     from gawe.profile.extract import RESPONSE_SCHEMA
 
     return RESPONSE_SCHEMA
+
+
+@pytest.mark.live
+@pytest.mark.skipif(os.environ.get(OPT_IN_ENV) != "1", reason=skip_reason)
+def test_live_9router_write_and_review(test_schema: str, _clean_database) -> None:
+    """The writer and the reviewer, on the real provider, end to end.
+
+    Proves the two things unit tests cannot: that the prompts produce
+    schema-valid JSON against a real model, and that the reviewer returns a
+    score the loop can act on.
+    """
+    from gawe.documents import ai_draft, ai_review
+    from gawe.profile.extract import extract_profile
+
+    config_path = Path(os.environ.get(CONFIG_ENV, ROOT / "config.toml"))
+    config = load_config(config_path)
+    database, provider = _prepare_live_run(config, test_schema)
+    connection = _connect_live(database)
+    try:
+        store = ConsentStore(connection, config)
+        store.grant()
+        client = LLMClient(
+            config=config,
+            provider=provider,
+            consent_store=store,
+            connection=connection,
+        )
+
+        prompt_id, prompt_version, prompt_body = load_prompt(ROOT)
+        document = parse_text(DOCUMENTS["doc_live_001"].read_bytes())
+        profile, evidence, _conflicts, _meta = extract_profile(
+            client=client,
+            document=document,
+            doc_id="doc_live_001",
+            prompt_body=prompt_body,
+            prompt_id=prompt_id,
+            prompt_version=prompt_version,
+            active_content=None,
+        )
+        job = {
+            "job_id": "job_live_001",
+            "job_posting_version_id": "jpv_live_001",
+            "title": "Senior Backend Engineer",
+            "company": "Contoh Nusantara",
+            "description_text": (
+                "Build and operate payment APIs. Must have Python, PostgreSQL, and "
+                "experience owning production services."
+            ),
+            "requirements": [
+                {
+                    "requirement_id": "req_live_1",
+                    "text": "Python",
+                    "kind": "must_have",
+                    "weight": 1.0,
+                },
+                {
+                    "requirement_id": "req_live_2",
+                    "text": "PostgreSQL",
+                    "kind": "must_have",
+                    "weight": 1.0,
+                },
+            ],
+        }
+
+        content, write_meta = ai_draft.write(
+            client, ROOT, "cv", profile, evidence, job, "en"
+        )
+        assert write_meta["source"] == "llm", write_meta
+        assert content["kind"] == "cv"
+        assert content["experience"], "writer returned a CV without experience"
+        assert content["header"]["full_name"] == (profile.get("personal") or {}).get(
+            "full_name"
+        ), "identity fields must come from the profile, not the model"
+        assert content["target"]["company"] == job["company"]
+        unknown = {
+            ref
+            for ref in _all_evidence_ids(content)
+            if ref not in evidence
+        }
+        assert not unknown, f"writer invented evidence ids: {sorted(unknown)[:5]}"
+
+        report, review_meta = ai_review.review(
+            client, ROOT, content, evidence, profile, job
+        )
+        assert review_meta["source"] == "llm", review_meta
+        assert 0.0 <= report["overall_score"] <= 10.0
+        assert set(report["dimension_scores"]) == set(ai_review.DIMENSIONS)
+        assert report["verdict"] in {"pass", "changes_required"}
+        if any(f["severity"] in {"blocker", "major"} for f in report["findings"]):
+            assert report["verdict"] == "changes_required"
+            assert ai_review.passed(report, 8.0) is False
+
+        print(
+            json.dumps(
+                {
+                    "provider": config.llm.active_provider,
+                    "models": {
+                        "write": config.llm.roles["write"],
+                        "review": config.llm.roles["review"],
+                    },
+                    "write": {
+                        key: write_meta.get(key)
+                        for key in (
+                            "prompt_id",
+                            "prompt_version",
+                            "input_tokens",
+                            "output_tokens",
+                            "latency_ms",
+                        )
+                    },
+                    "review": {
+                        "overall_score": report["overall_score"],
+                        "dimension_scores": report["dimension_scores"],
+                        "verdict": report["verdict"],
+                        "findings": len(report["findings"]),
+                        "severities": sorted(
+                            {item["severity"] for item in report["findings"]}
+                        ),
+                        "input_tokens": review_meta.get("input_tokens"),
+                        "output_tokens": review_meta.get("output_tokens"),
+                        "latency_ms": review_meta.get("latency_ms"),
+                    },
+                },
+                indent=2,
+            )
+        )
+    finally:
+        connection.close()
+
+
+def _all_evidence_ids(content: dict) -> list[str]:
+    refs: list[str] = []
+
+    def collect(node) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "evidence_ids":
+                    refs.extend(str(ref) for ref in value or [])
+                else:
+                    collect(value)
+        elif isinstance(node, list):
+            for item in node:
+                collect(item)
+
+    collect(content)
+    return refs
