@@ -54,7 +54,11 @@ class ValidationReport:
 
 
 def _evidence_ids(item: dict) -> list[str]:
-    return [ref for ref in item.get("evidence") or [] if isinstance(ref, str)]
+    # `evidence` is the contract field; `evidence_ids` is a common model alias.
+    refs = item.get("evidence")
+    if not refs:
+        refs = item.get("evidence_ids")
+    return [ref for ref in refs or [] if isinstance(ref, str)]
 
 
 def _valid_date(value: Any) -> str | None:
@@ -101,7 +105,10 @@ def validate_extraction(
             if not quote_matches(quote, source_text):
                 report.unverified.append(f"evidence_index.{evidence_id}")
                 continue
-            locator = item.get("locator") or {}
+            locator = item.get("locator")
+            if not isinstance(locator, dict):
+                # Models sometimes emit the locator as a bare string; keep the quote.
+                locator = {}
             evidence[evidence_id] = {
                 "evidence_id": evidence_id,
                 "source": "cv",

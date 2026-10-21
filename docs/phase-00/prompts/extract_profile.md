@@ -41,6 +41,7 @@ Aturan wajib:
 - `quote` harus berupa potongan teks sumber yang sama setelah normalisasi spasi. Jangan memparafrase.
 - `quote` maksimum 2000 karakter.
 - Setiap item pendidikan, pengalaman, bullet, skill, proyek, sertifikasi, bahasa, dan award wajib membawa minimal satu `evidence_id`.
+- Field pembawa referensi bernama `evidence`, berisi array `evidence_id`. Contoh: `{"id": "exp_1", "company": "...", "evidence": ["ev_1"]}`. Jangan memakai nama field lain seperti `evidence_ids`.
 - `evidence_index` memetakan setiap `evidence_id` ke `doc_id`, `locator`, `quote`, dan `source`.
 - Bila sebuah fakta hanya muncul sebagai deklarasi pengguna, `source` adalah `user_declaration`; selain itu `cv`.
 
