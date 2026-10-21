@@ -110,6 +110,53 @@ def test_requirement_extraction_is_stable_and_skips_responsibilities() -> None:
     assert fallback["quote"] == text
 
 
+# -- requirement sections, benefits, and EEO --------------------------------
+def test_benefit_section_never_becomes_a_requirement() -> None:
+    text = (
+        "What you'll do You will build payment services. "
+        "What we offer Competitive salary and equity. Health insurance and dental. "
+        "5 weeks paid vacation, plus local statutory holidays."
+    )
+    assert requirement_rules.extract(text) == []
+
+
+def test_eeo_statement_is_excluded_and_keeps_the_real_requirement() -> None:
+    text = (
+        "Required: 3+ years Python. Acme is an equal opportunity employer and all "
+        "qualified applicants will receive consideration."
+    )
+    found = requirement_rules.extract(text)
+    assert [item["kind"] for item in found] == ["must_have"]
+    assert "equal opportunity" not in found[0]["text"]
+
+
+def test_benefit_prose_without_a_heading_is_not_a_nice_to_have() -> None:
+    found = requirement_rules.extract(
+        "Nice to have: Kubernetes. We also offer competitive salary and equity."
+    )
+    assert [item["text"] for item in found] == ["Kubernetes."]
+
+
+def test_requirement_section_item_without_a_cue_word_is_a_gate() -> None:
+    found = requirement_rules.extract("Requirements: Kubernetes. Nice to have: Terraform.")
+    by_kind = {item["kind"]: item["text"] for item in found}
+    assert by_kind == {"must_have": "Kubernetes.", "nice_to_have": "Terraform."}
+
+
+def test_responsibility_sentence_with_a_strong_cue_is_not_a_gate() -> None:
+    text = "You'll work across sales and support teams and bring strong account leadership."
+    assert requirement_rules.extract(text) == []
+
+
+def test_ambiguous_skill_sentence_stays_a_skill_not_a_years_gate() -> None:
+    found = requirement_rules.extract(
+        "Requirements: Comfortable working with a high degree of ownership."
+    )
+    assert found and found[0]["category"] == "other"
+    assert found[0]["kind"] == "must_have"
+    assert found[0]["constraint"] is None
+
+
 # -- eligibility -------------------------------------------------------------
 def test_eligible_job_with_met_experience() -> None:
     job = _job(description_text="Required: 5+ years backend experience.")
