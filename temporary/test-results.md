@@ -502,3 +502,72 @@ None. No test failed or errored.
 - `backend\tests` penuh: `334 passed, 1 skipped in 67.68s`
 - `cd frontend; npx vitest run`: `Test Files 7 passed (7)`, `Tests 41 passed (41)`; `npx tsc --noEmit` bersih
 - Catatan: `docs/source-of-truth/API-CONTRACTS.md`, `docs/phase-00/contracts/openapi.yaml`, dan tiga file test migrasi sempat ditulis ulang dengan encoding salah (mojibake + BOM). Semua dikembalikan ke isi HEAD lalu diedit ulang; pemeriksaan mojibake bersih dan `openapi.yaml` tetap valid YAML (`yaml ok 40`).
+
+### Paket review manusia (2026-10-21, tanpa commit)
+
+- Harness: `backend\.venv\Scripts\python.exe temporary\review_package.py` -> sampel nyata di `temporary/review-samples/` (2 lowongan discovery + 1 URL manual). Skema `gawe_test_review_*` dihapus setelah run.
+- Verifikasi PDF: `backend\.venv\Scripts\python.exe temporary\verify_review_samples.py` -> `problems: 0`; 4 PDF terbuka, halaman cocok dengan QA ekspor (CV 1/2, CL 1/1), teks terbaca (538-1133 karakter).
+- Semua dokumen berstatus `approved` + `exported`, review deterministik `pass`, findings 0.
+- Temuan yang belum diperbaiki: `apply_url` null untuk job Greenhouse; ekstraksi requirement masih mencampur teks benefit/EEO.
+- Belum ada review manusia; checklist belum diisi.
+
+### Remediasi dua temuan Phase 3 (2026-10-21, tanpa commit)
+
+Perubahan kode: `backend/src/gawe/jobs/sources/greenhouse.py` (mapping `apply_url`), `backend/src/gawe/jobs/requirements.py` (klasifikasi section/benefit/EEO), plus test regresi di `backend/tests/test_discovery_adapters.py` dan `backend/tests/test_assessment.py`.
+
+- Command: `cd backend; .venv\Scripts\python.exe -m pytest tests/test_assessment.py tests/test_discovery_adapters.py -q`
+  - Result: `82 passed` (0 failed, 0 skipped) in 23.05s. Termasuk 2 test baru adapter dan 6 test baru requirement.
+- Command: `cd backend; .venv\Scripts\python.exe -m pytest`
+  - Result: `342 passed, 1 skipped, 1 warning in 64.79s` (sebelumnya 334 passed; +8 test baru). Skip = test live provider opt-in.
+- Command: `cd frontend; npx vitest run`
+  - Result: `Test Files 7 passed (7)`, `Tests 41 passed (41)` in 77.22 s. Tidak ada file frontend yang diubah.
+- Evaluasi sampel (read-only, `temporary/evaluate_samples.py`):
+  - `1-gitlab`: requirement 1 -> 8 (sebelumnya 1 paragraf campur + 1 kalimat accommodation). `eligible`, fit 68 -> 43.
+  - `2-linear`: requirement 2 -> 3; paragraf benefit ("Here's what you can expect") dan kalimat benefit/EEO hilang. `eligible`, fit 57 -> 68.
+  - `manual-url`: deskripsi kosong di paket, 0 requirement (tidak berubah).
+- `apply_url` live (read-only, `temporary/live_apply_url_check.py`):
+  - GitLab/Greenhouse 232 job, `missing_apply_url=0` (sebelumnya 232).
+  - Binance/Lever 17, Linear/Ashby 29, PostHog/Ashby 10, Supabase/Ashby 55 -> `missing_apply_url=0` (tidak berubah).
+  - Stripe/Greenhouse gagal `response_too_large` (5 MB cap, perilaku guard yang sudah ada); sumber lain lanjut.
+- Batasan: DB dev `gawe` kosong (tidak ada baris live run), jadi ranking dan status seluruh 259 job tidak dapat dihitung ulang dari data tersimpan. Fit/eligibility di atas dihitung ulang dari `description_text` di paket review dengan profil sintetis yang sama.
+- Batasan: PDF, CV, cover letter, dan desain tidak disentuh; `CHECKLIST.md` tetap kosong.
+
+### Konsistensi `apply_url` untuk job tersimpan (2026-10-21, tanpa commit)
+
+- `_store_job()` kini memakai `apply_url = COALESCE(?, apply_url)` pada jalur versi-baru maupun jalur konten-sama. URL valid tidak pernah ditimpa `NULL`; `job_id`, `latest_version_id`, dan `content_hash` tidak berubah.
+- Command: `cd backend; .venv\Scripts\python.exe -m pytest tests/test_discovery.py -p no:warnings`
+  - Result: `43 passed in 16.97s` (termasuk 3 test baru).
+- Test baru membuktikan: (1) baris lama dengan `apply_url` NULL terisi pada fetch berikutnya tanpa posting version baru dan `job_id` tetap; (2) snapshot tanpa `applyUrl` tidak menghapus URL tersimpan; (3) perubahan konten tanpa `applyUrl` membuat versi baru tetapi tetap mempertahankan URL lama.
+- Fetch ulang: **diperlukan** untuk baris yang sudah ada, karena backfill hanya berjalan saat job itu muncul lagi di snapshot sumber. Tidak ada migration/backfill massal.
+- Command: `cd backend; .venv\Scripts\python.exe -m pytest`
+  - Result: `345 passed, 1 skipped, 1 warning in 66.10s` (sebelumnya 342; +3 test).
+- Cek live ulang GitLab/Greenhouse: 232 job, `missing_apply=0`.
+
+### Audit skor fit GitLab 43 (2026-10-21, tanpa perubahan kode scoring)
+
+- `temporary/reproduce_old_fit.py`: ekstraktor HEAD mereproduksi skor tercatat **68** (GitLab) dan **57** (Linear) persis, jadi angka di paket review berasal dari ekstraktor lama.
+- `temporary/audit_gitlab_fit.py`: 8 must-have; `met` = requirement 1 (tahun pengalaman) dan 6 (bahasa Inggris); 6 lainnya `unknown`.
+- Dekomposisi 43 = `must_coverage` 0.25 x 60 = 15.0, `nice_coverage` 1.0 x 15 = 15.0, `experience_fit` 0.5 x 25 = 12.5.
+- Temuan audit: (a) himpunan `nice_to_have` kosong dinilai 1.0 sehingga memberi 15 poin gratis; (b) `experience_fit` masih konstanta 0.5 (12.5 poin, masih `OPEN` di dokumen domain); (c) `_experience()` hanya membandingkan total tahun, sehingga "5+ years selling into Financial Services" dianggap `met` oleh 6,6 tahun pengalaman backend; (d) `_language()` menandai `met` bila satu bahasa cocok ("English and Portuguese" -> Inggris saja); (e) `unknown` dan `not_met` bernilai sama dalam coverage.
+- Tidak ada perubahan formula, bobot, eligibility, atau tier. Rekomendasi menunggu persetujuan pengguna.
+
+
+### Phase 3 — writer LLM, reviewer LLM, dan loop revisi otomatis (2026-10-21)
+
+Kode: `documents/ai_draft.py` (baru), `documents/ai_review.py` (baru), `llm/prompts.py` (baru, loader generik), `services/document_service.py` (loop, penghitung iterasi global, gate approval), `api/routes/documents.py` (wiring), `cli.py` (validasi prompt saat `serve`).
+Prompt runtime: `docs/phase-00/prompts/{write_cv,write_cover_letter,review}.md` versi 0.2.0.
+Schema: `docs/phase-00/contracts/{tailored-cv,tailored-cover-letter,review-response}.schema.json` (baru), `findings.schema.json` diperbarui (cycle maks 5, `iteration`, `overall_score`, `dimension_scores`, `passed`, `stop_reason`, `gaps`).
+
+- Command: `cd backend; .venv\Scripts\python.exe -m pytest`
+  - Result: `356 passed, 2 skipped, 1 warning in 68.66s`. 2 skip = dua test live provider opt-in. Tidak ada kegagalan.
+  - Sebelumnya: `345 passed, 1 skipped` (sebelum `tests/test_documents_ai.py` ditambah).
+- Command: `cd backend; .venv\Scripts\python.exe -m pytest tests/test_documents_ai.py -q`
+  - Result: `11 passed`. Cakupan: lulus pada iterasi pertama, rewrite sampai ambang, skor tinggi dengan `blocker` tetap gagal, stagnasi, budget 5 iterasi lintas versi + `regenerate` 409 `iteration_limit`, reviewer tidak tersedia, approval ditolak, metadata writer, laporan tersimpan valid terhadap `findings.schema.json`, fallback draft deterministik saat keluaran writer tidak valid, prompt tidak ada -> versi tidak direview.
+- Command: `cd backend; $env:GAWE_LIVE_9ROUTER="1"; $env:GAWE_LIVE_CONFIG="D:\gawe\config.toml"; .venv\Scripts\python.exe -m pytest tests/test_live_9router.py -m live -q`
+  - Result: `2 passed` (ekstraksi profil + writer & reviewer live), 1 deselected (guard opt-in). Network live, provider 9Router, model combo `deepseek`.
+- Flaky, bukan regresi: `tests/test_applications.py::test_manual_url_fallback_creates_workspace` dan `::test_manual_url_respects_robots` gagal sekali dengan `socket.gaierror: [Errno 11001] getaddrinfo failed`, lalu lulus pada run berikutnya dan pada run final.
+
+Batasan:
+- Ambang skor 8.0 **belum dikalibrasi**. `temporary/review-samples/CHECKLIST.md` masih kosong; dua sampel yang disetujui belum dinilai dengan rubric baru.
+- Frontend belum menampilkan skor, dimensi, `gaps`, atau `stop_reason`. Backend sudah mengirimnya di `findings`.
+- `docs/phase-00/prompts/` (runtime) dan `prompts/` (spesifikasi pengguna) masih duplikat; runtime memakai yang pertama.
