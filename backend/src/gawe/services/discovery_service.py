@@ -803,7 +803,8 @@ class DiscoveryService:
                 )
                 with self._connection:
                     self._connection.execute(
-                        "UPDATE job SET canonical_url = ?, apply_url = ?, company = ?, "
+                        "UPDATE job SET canonical_url = ?, apply_url = COALESCE(?, apply_url), "
+                        "company = ?, "
                         "title = ?, location_json = ?, work_mode = ?, employment_type = ?, "
                         "seniority = ?, market = ?, posted_at = ?, fetched_at = ?, "
                         "last_seen_at = ?, latest_version_id = ?, description_truncated = ?, "
@@ -831,15 +832,21 @@ class DiscoveryService:
                         ),
                     )
             else:
+                # Same content: no new version, but a stored job may predate the
+                # adapter that supplies apply_url. COALESCE keeps an existing
+                # URL when this snapshot has none, so a source that drops the
+                # field never erases a valid link.
                 with self._connection:
                     self._connection.execute(
                         "UPDATE job SET fetched_at = ?, last_seen_at = ?, "
-                        "latest_version_id = ?, status = 'open', updated_at = ? "
+                        "latest_version_id = ?, status = 'open', "
+                        "apply_url = COALESCE(?, apply_url), updated_at = ? "
                         "WHERE job_id = ?",
                         (
                             fetched_at,
                             fetched_at,
                             version["job_posting_version_id"],
+                            record["apply_url"],
                             timestamp,
                             existing["job_id"],
                         ),

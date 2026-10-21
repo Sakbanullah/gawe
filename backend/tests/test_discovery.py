@@ -806,6 +806,133 @@ def test_updated_content_refreshes_job_summary_columns(
     assert job["market"] == "indonesia"
 
 
+def test_legacy_job_without_apply_url_is_backfilled_without_a_new_version(
+    setup_client, csrf, monkeypatch, connection
+) -> None:
+    """A row stored before the adapter fix gets the URL on the next fetch.
+
+    Same payload and same content hash: no new posting version, same job_id.
+    """
+    _confirm(setup_client, csrf)
+    source = _create_source(
+        setup_client, csrf, monkeypatch, company="Acme", board="acme", ats="ashby"
+    )
+    fetcher = _Fetcher({"api.ashbyhq.com": ASHBY})
+    _use(setup_client, fetcher, monkeypatch)
+
+    def run_once() -> None:
+        response = setup_client.post(
+            "/api/discovery/runs", headers=csrf, json={"source_ids": [source["source_id"]]}
+        )
+        assert response.status_code == 202, response.json()
+
+    def job_row() -> dict:
+        return connection.execute(
+            "SELECT job_id, apply_url FROM job WHERE source_id = ? AND source_job_id = 'ash-3001'",
+            (source["source_id"],),
+        ).fetchone()
+
+    def version_count() -> int:
+        return connection.execute(
+            "SELECT COUNT(*) AS n FROM job_posting_version WHERE job_id = ?",
+            (job_row()["job_id"],),
+        ).fetchone()["n"]
+
+    run_once()
+    assert job_row()["apply_url"] == "https://jobs.ashbyhq.com/acme/ash-3001/application"
+    job_id = job_row()["job_id"]
+    assert version_count() == 1
+
+    # Emulate a row written before the adapter supplied apply_url.
+    connection.execute("UPDATE job SET apply_url = NULL WHERE job_id = ?", (job_id,))
+
+    run_once()
+    assert job_row()["apply_url"] == "https://jobs.ashbyhq.com/acme/ash-3001/application"
+    assert job_row()["job_id"] == job_id
+    assert version_count() == 1
+
+
+def test_stored_apply_url_survives_a_snapshot_without_it(
+    setup_client, csrf, monkeypatch, connection
+) -> None:
+    """A source that stops sending applyUrl must not erase the stored URL."""
+    _confirm(setup_client, csrf)
+    source = _create_source(
+        setup_client, csrf, monkeypatch, company="Acme", board="acme", ats="ashby"
+    )
+    fetcher = _Fetcher({"api.ashbyhq.com": ASHBY})
+    _use(setup_client, fetcher, monkeypatch)
+
+    def run_once() -> None:
+        response = setup_client.post(
+            "/api/discovery/runs", headers=csrf, json={"source_ids": [source["source_id"]]}
+        )
+        assert response.status_code == 202, response.json()
+
+    def job_row() -> dict:
+        return connection.execute(
+            "SELECT job_id, apply_url FROM job WHERE source_id = ? AND source_job_id = 'ash-3001'",
+            (source["source_id"],),
+        ).fetchone()
+
+    run_once()
+    stored = job_row()["apply_url"]
+    assert stored
+
+    payload = json.loads(ASHBY)
+    payload["jobs"][0].pop("applyUrl")
+    fetcher.responses = {"api.ashbyhq.com": json.dumps(payload)}
+
+    run_once()
+    assert job_row()["apply_url"] == stored
+    versions = connection.execute(
+        "SELECT COUNT(*) AS n FROM job_posting_version WHERE job_id = ?",
+        (job_row()["job_id"],),
+    ).fetchone()["n"]
+    assert versions == 1
+
+
+def test_content_change_without_apply_url_keeps_the_stored_one(
+    setup_client, csrf, monkeypatch, connection
+) -> None:
+    """The new-version path must not overwrite a valid URL with NULL either."""
+    _confirm(setup_client, csrf)
+    source = _create_source(
+        setup_client, csrf, monkeypatch, company="Acme", board="acme", ats="ashby"
+    )
+    fetcher = _Fetcher({"api.ashbyhq.com": ASHBY})
+    _use(setup_client, fetcher, monkeypatch)
+
+    def run_once() -> None:
+        response = setup_client.post(
+            "/api/discovery/runs", headers=csrf, json={"source_ids": [source["source_id"]]}
+        )
+        assert response.status_code == 202, response.json()
+
+    run_once()
+    stored = connection.execute(
+        "SELECT job_id, apply_url FROM job WHERE source_id = ? AND source_job_id = 'ash-3001'",
+        (source["source_id"],),
+    ).fetchone()["apply_url"]
+    assert stored
+
+    payload = json.loads(ASHBY)
+    payload["jobs"][0]["title"] = "Senior Frontend Engineer"
+    payload["jobs"][0].pop("applyUrl")
+    fetcher.responses = {"api.ashbyhq.com": json.dumps(payload)}
+
+    run_once()
+    row = connection.execute(
+        "SELECT j.job_id, j.apply_url, j.title, COUNT(v.job_posting_version_id) AS versions "
+        "FROM job j JOIN job_posting_version v ON v.job_id = j.job_id "
+        "WHERE j.source_id = ? AND j.source_job_id = 'ash-3001' GROUP BY j.job_id",
+        (source["source_id"],),
+    ).fetchone()
+    assert row["title"] == "Senior Frontend Engineer"
+    assert row["versions"] == 2
+    assert row["apply_url"] == stored
+
+
 def test_overview_reflects_latest_discovery_run(
     setup_client, csrf, monkeypatch
 ) -> None:

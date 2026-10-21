@@ -2,6 +2,11 @@
 
 Docs: https://developers.greenhouse.io/job-board.html
 One request per board token. ``content`` is HTML escaped twice (verified quirk).
+
+The Job Board API has no separate apply endpoint: ``absolute_url`` is the
+official posting page and the application form is rendered on it. Apply reuses
+that URL instead of inventing one, and ``normalize`` still rejects a non-https
+or credential-bearing value.
 """
 
 from __future__ import annotations
@@ -44,12 +49,14 @@ def parse(body: str, source: dict) -> ParsedJobs:
             skipped += 1
             continue
         try:
+            posting_url = str(item.get("absolute_url") or "")
             jobs.append(
                 RawJob(
                     source_job_id=str(item["id"]),
                     title=str(item.get("title") or ""),
-                    canonical_url=str(item.get("absolute_url") or ""),
+                    canonical_url=posting_url,
                     description_html=html.unescape(html.unescape(item.get("content") or "")),
+                    apply_url=posting_url or None,
                     location_raw=(item.get("location") or {}).get("name"),
                 )
             )

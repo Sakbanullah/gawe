@@ -114,6 +114,21 @@ def test_greenhouse_content_is_unescaped_twice() -> None:
     assert "<p>" not in record["description_text"]
 
 
+def test_greenhouse_apply_url_is_the_official_posting_page() -> None:
+    """The Job Board API has no separate apply endpoint; the form is on the page."""
+    jobs = ADAPTERS["greenhouse"].parse(_fixture("greenhouse_board.json"), SOURCES["greenhouse"])
+    record = normalize(jobs[0], SOURCES["greenhouse"], "2026-10-20T00:00:00Z")
+    assert record["apply_url"] == "https://boards.greenhouse.io/acme/jobs/1001"
+    assert record["apply_url"] == record["canonical_url"]
+    assert record["apply_url_status"] == "available"
+
+
+def test_greenhouse_apply_url_is_never_invented() -> None:
+    body = '{"jobs": [{"id": 1, "title": "Engineer", "content": "<p>Work.</p>"}]}'
+    jobs = ADAPTERS["greenhouse"].parse(body, SOURCES["greenhouse"])
+    assert jobs[0].apply_url is None
+
+
 def test_ashby_skips_unlisted_records() -> None:
     jobs = ADAPTERS["ashby"].parse(_fixture("ashby_job_board.json"), SOURCES["ashby"])
     assert [job.source_job_id for job in jobs] == ["ash-3001"]
