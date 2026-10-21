@@ -1,0 +1,40 @@
+{
+  "assessment_id": "ela_fixture_003",
+  "job_id": "job_fixture_003",
+  "job_posting_version_id": "jpv_fixture_003",
+  "profile_version_id": "prv_fixture_ayu_0001",
+  "status": "ineligible",
+  "checks": [
+    {
+      "requirement_id": "req_fixture_003_must_1",
+      "category": "work_authorization",
+      "result": "not_met",
+      "job_quote": "Must be authorized to work in the EU.",
+      "profile_ref": "wa_fixture_id",
+      "evidence_refs": ["ev_fixture_wa_id"],
+      "reason": "Profil menyatakan kewarganegaraan Indonesia dan tidak menyatakan izin kerja untuk EU."
+    },
+    {
+      "requirement_id": "req_fixture_003_must_2",
+      "category": "other",
+      "result": "met",
+      "job_quote": "Required: Python and PostgreSQL.",
+      "profile_ref": "skill_fixture_python",
+      "evidence_refs": ["ev_fixture_skill_python"],
+      "reason": "Python tercantum di skill."
+    },
+    {
+      "requirement_id": "req_fixture_003_must_3",
+      "category": "other",
+      "result": "met",
+      "job_quote": "Required: Python and PostgreSQL.",
+      "profile_ref": "skill_fixture_postgresql",
+      "evidence_refs": ["ev_fixture_skill_postgresql"],
+      "reason": "PostgreSQL tercantum di skill."
+    }
+  ],
+  "confidence": "high",
+  "status_outdated": false,
+  "outdated_reason": null,
+  "computed_at": "2026-10-18T10:17:00Z"
+}

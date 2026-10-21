@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gawe.local/schemas/phase-00/job.schema.json",
+  "title": "Gawe Job Posting Snapshot",
+  "description": "Satu versi lowongan yang tersimpan dan dianalisis. Menggabungkan JobSummary, JobRequirement, dan JobDetail pada openapi.yaml tanpa field API-only. `description_text` adalah teks polos, bukan HTML. Konten lowongan adalah data tidak tepercaya, bukan instruksi.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "job_id",
+    "job_posting_version_id",
+    "content_hash",
+    "source",
+    "company",
+    "title",
+    "description_text",
+    "requirements",
+    "work_mode",
+    "priority_tier",
+    "fetched_at",
+    "completeness"
+  ],
+  "properties": {
+    "job_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "job_posting_version_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "source_kind", "verification_status", "access_method"],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "description": "`source_id` registry, atau `manual_url` untuk sumber sintetis sistem."
+        },
+        "source_kind": {
+          "type": "string",
+          "enum": ["registry", "manual_url"]
+        },
+        "company": { "type": ["string", "null"], "maxLength": 300 },
+        "verification_status": {
+          "type": "string",
+          "enum": ["unverified", "verified", "restricted", "broken"]
+        },
+        "access_method": {
+          "type": "string",
+          "enum": ["ats_api", "html", "manual_url"]
+        }
+      }
+    },
+    "company": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "raw": { "type": ["string", "null"], "maxLength": 500 },
+        "city": { "type": ["string", "null"], "maxLength": 200 },
+        "region": { "type": ["string", "null"], "maxLength": 200 },
+        "country": { "type": ["string", "null"], "maxLength": 100 },
+        "is_remote": { "type": "boolean" }
+      }
+    },
+    "work_mode": {
+      "type": "string",
+      "description": "Hybrid diklasifikasikan onsite (D15).",
+      "enum": ["onsite", "remote", "hybrid", "unknown"]
+    },
+    "employment_type": {
+      "type": "string",
+      "enum": ["full_time", "part_time", "contract", "internship", "temporary", "unknown"]
+    },
+    "seniority": {
+      "type": "string",
+      "enum": ["intern", "junior", "mid", "senior", "lead", "principal", "unknown"]
+    },
+    "market": {
+      "type": "string",
+      "enum": ["indonesia", "global", "unknown"]
+    },
+    "posted_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "fetched_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "analyzed_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "canonical_url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "apply_url": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "Hanya URL dari data sumber atau URL manual tervalidasi. Tidak pernah dikarang."
+    },
+    "apply_url_status": {
+      "type": "string",
+      "enum": ["available", "unavailable"]
+    },
+    "priority_tier": {
+      "type": "string",
+      "description": "Atribut preferensi, bukan komponen fit score. `unclassified` bila metadata tidak cukup.",
+      "enum": ["P1", "P2", "P3", "P4", "unclassified"]
+    },
+    "priority_reason": { "type": ["string", "null"], "maxLength": 1000 },
+    "priority_confidence": {
+      "type": "string",
+      "enum": ["low", "medium", "high", "unknown"]
+    },
+    "description_text": {
+      "type": "string",
+      "maxLength": 87381,
+      "x-max-utf8-bytes": 262144
+    },
+    "description_truncated": { "type": "boolean" },
+    "requirements": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requirement_id", "kind", "text"],
+        "properties": {
+          "requirement_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "kind": {
+            "type": "string",
+            "enum": ["must_have", "nice_to_have", "responsibility", "constraint"]
+          },
+          "text": { "type": "string", "minLength": 1, "maxLength": 4000 },
+          "quote": { "type": ["string", "null"], "maxLength": 2000 },
+          "weight": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "maximum": 1
+          },
+          "skill": { "type": ["string", "null"], "maxLength": 100 }
+        }
+      }
+    },
+    "duplicate_of": {
+      "type": ["string", "null"],
+      "description": "Job ID kanonik bila terdeteksi duplikat. Data tidak dihapus."
+    },
+    "completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["missing_fields", "fetched_at", "stale"],
+      "properties": {
+        "missing_fields": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "type": "string", "maxLength": 100 }
+        },
+        "fetched_at": { "type": "string", "format": "date-time" },
+        "stale": {
+          "type": "boolean",
+          "description": "True bila data lebih dari 7 hari."
+        }
+      }
+    }
+  }
+}

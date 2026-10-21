@@ -1,0 +1,250 @@
+{
+  "schema_version": 1,
+  "profile_id": "prf_fixture_ayu",
+  "profile_version_id": "prv_fixture_ayu_0001",
+  "master_cv_id": "mcv_fixture_ayu",
+  "derived_from_profile_version_id": null,
+  "version": 1,
+  "status": "confirmed",
+  "personal": {
+    "full_name": "Ayu Pratama",
+    "email": "ayu.pratama@example.com",
+    "phone": "+62 21 0000 0000",
+    "location": "Jakarta, Indonesia",
+    "links": ["https://example.com/in/ayu-pratama"]
+  },
+  "education": [
+    {
+      "id": "edu_fixture_001",
+      "institution": "Universitas Contoh",
+      "degree": "Bachelor of Computer Science",
+      "field": "Computer Science",
+      "start": "2016-08",
+      "end": "2020-02",
+      "evidence": ["ev_fixture_edu_001"]
+    }
+  ],
+  "experience": [
+    {
+      "id": "exp_fixture_001",
+      "company": "PT Contoh Teknologi",
+      "title": "Senior Backend Engineer",
+      "location": "Jakarta",
+      "start": "2022-07",
+      "end": null,
+      "bullets": [
+        {
+          "id": "exp_fixture_001_b1",
+          "text": "Led migration of billing service to PostgreSQL, reducing p99 latency from 850 ms to 220 ms.",
+          "evidence": ["ev_fixture_exp_001_b1"],
+          "skills": ["PostgreSQL", "Python"]
+        },
+        {
+          "id": "exp_fixture_001_b2",
+          "text": "Built idempotent payment retry pipeline processing 1.2 million requests per day.",
+          "evidence": ["ev_fixture_exp_001_b2"],
+          "skills": ["Python"]
+        }
+      ]
+    },
+    {
+      "id": "exp_fixture_002",
+      "company": "PT Contoh Digital",
+      "title": "Backend Engineer",
+      "location": "Jakarta",
+      "start": "2020-03",
+      "end": "2022-06",
+      "bullets": [
+        {
+          "id": "exp_fixture_002_b1",
+          "text": "Implemented internal ledger service in Python and FastAPI.",
+          "evidence": ["ev_fixture_exp_002_b1"],
+          "skills": ["Python", "FastAPI"]
+        }
+      ]
+    }
+  ],
+  "skills": [
+    {
+      "id": "skill_fixture_python",
+      "name": "Python",
+      "proficiency": null,
+      "evidence": ["ev_fixture_skill_python"]
+    },
+    {
+      "id": "skill_fixture_fastapi",
+      "name": "FastAPI",
+      "proficiency": null,
+      "evidence": ["ev_fixture_skill_fastapi"]
+    },
+    {
+      "id": "skill_fixture_postgresql",
+      "name": "PostgreSQL",
+      "proficiency": null,
+      "evidence": ["ev_fixture_skill_postgresql"]
+    }
+  ],
+  "projects": [
+    {
+      "id": "prj_fixture_001",
+      "name": "Rekonsiliasi Otomatis",
+      "role": null,
+      "technologies": ["Python"],
+      "description": "Designed reconciliation job that matches 50,000 transactions per run.",
+      "start": "2023",
+      "end": "2023",
+      "evidence": ["ev_fixture_prj_001"]
+    }
+  ],
+  "certifications": [
+    {
+      "id": "cert_fixture_001",
+      "name": "AWS Certified Developer – Associate",
+      "issuer": "Amazon Web Services",
+      "date": "2023-04",
+      "evidence": ["ev_fixture_cert_001"]
+    }
+  ],
+  "languages": [
+    {
+      "id": "lang_fixture_id",
+      "language": "Indonesian",
+      "level": "native",
+      "evidence": ["ev_fixture_lang_id"]
+    },
+    {
+      "id": "lang_fixture_en",
+      "language": "English",
+      "level": "professional working proficiency",
+      "evidence": ["ev_fixture_lang_en"]
+    }
+  ],
+  "awards": [],
+  "work_authorization": [
+    {
+      "id": "wa_fixture_id",
+      "country": "Indonesia",
+      "status": "citizen",
+      "notes": "No work permit for other countries stated.",
+      "source": "document",
+      "evidence": ["ev_fixture_wa_id"]
+    }
+  ],
+  "work_preferences": {
+    "relocation": "conditional",
+    "relocation_notes": "Depends on visa sponsorship.",
+    "preferred_locations": ["Jakarta"],
+    "work_modes": ["remote", "hybrid"]
+  },
+  "evidence_index": {
+    "ev_fixture_edu_001": {
+      "evidence_id": "ev_fixture_edu_001",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 2, "section": "education", "block_id": "edu_1", "char_start": 0, "char_end": 62},
+      "quote": "Universitas Contoh, Bachelor of Computer Science, 2016-08 - 2020-02",
+      "declared_at": null
+    },
+    "ev_fixture_exp_001_b1": {
+      "evidence_id": "ev_fixture_exp_001_b1",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 1, "section": "experience", "block_id": "exp_1_b1", "char_start": 120, "char_end": 232},
+      "quote": "Led migration of billing service to PostgreSQL, reducing p99 latency from 850 ms to 220 ms.",
+      "declared_at": null
+    },
+    "ev_fixture_exp_001_b2": {
+      "evidence_id": "ev_fixture_exp_001_b2",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 1, "section": "experience", "block_id": "exp_1_b2", "char_start": 240, "char_end": 333},
+      "quote": "Built idempotent payment retry pipeline processing 1.2 million requests per day.",
+      "declared_at": null
+    },
+    "ev_fixture_exp_002_b1": {
+      "evidence_id": "ev_fixture_exp_002_b1",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 1, "section": "experience", "block_id": "exp_2_b1", "char_start": 400, "char_end": 464},
+      "quote": "Implemented internal ledger service in Python and FastAPI.",
+      "declared_at": null
+    },
+    "ev_fixture_skill_python": {
+      "evidence_id": "ev_fixture_skill_python",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 2, "section": "skills", "block_id": "skills_1", "char_start": 0, "char_end": 58},
+      "quote": "Python, FastAPI, PostgreSQL, Redis, Docker",
+      "declared_at": null
+    },
+    "ev_fixture_skill_fastapi": {
+      "evidence_id": "ev_fixture_skill_fastapi",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 2, "section": "skills", "block_id": "skills_1", "char_start": 0, "char_end": 58},
+      "quote": "Python, FastAPI, PostgreSQL, Redis, Docker",
+      "declared_at": null
+    },
+    "ev_fixture_skill_postgresql": {
+      "evidence_id": "ev_fixture_skill_postgresql",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 2, "section": "skills", "block_id": "skills_1", "char_start": 0, "char_end": 58},
+      "quote": "Python, FastAPI, PostgreSQL, Redis, Docker",
+      "declared_at": null
+    },
+    "ev_fixture_prj_001": {
+      "evidence_id": "ev_fixture_prj_001",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 2, "section": "projects", "block_id": "prj_1", "char_start": 0, "char_end": 95},
+      "quote": "Designed reconciliation job that matches 50,000 transactions per run.",
+      "declared_at": null
+    },
+    "ev_fixture_cert_001": {
+      "evidence_id": "ev_fixture_cert_001",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 2, "section": "certifications", "block_id": "cert_1", "char_start": 0, "char_end": 52},
+      "quote": "AWS Certified Developer - Associate, 2023-04",
+      "declared_at": null
+    },
+    "ev_fixture_lang_id": {
+      "evidence_id": "ev_fixture_lang_id",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 2, "section": "languages", "block_id": "lang_1", "char_start": 0, "char_end": 24},
+      "quote": "Indonesian, native",
+      "declared_at": null
+    },
+    "ev_fixture_lang_en": {
+      "evidence_id": "ev_fixture_lang_en",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 2, "section": "languages", "block_id": "lang_2", "char_start": 26, "char_end": 68},
+      "quote": "English, professional working proficiency",
+      "declared_at": null
+    },
+    "ev_fixture_wa_id": {
+      "evidence_id": "ev_fixture_wa_id",
+      "source": "cv",
+      "doc_id": "doc_fixture_001",
+      "locator": {"page": 2, "section": "work_authorization", "block_id": "wa_1", "char_start": 0, "char_end": 25},
+      "quote": "Indonesia, citizen",
+      "declared_at": null
+    },
+    "ev_fixture_relocation": {
+      "evidence_id": "ev_fixture_relocation",
+      "source": "user_declaration",
+      "doc_id": null,
+      "locator": null,
+      "quote": "Open to relocation depending on visa sponsorship.",
+      "declared_at": "2026-10-19T09:00:00Z"
+    }
+  },
+  "conflicts": [],
+  "active": true,
+  "confirmed_at": "2026-10-19T09:05:00Z",
+  "created_at": "2026-10-19T08:55:00Z",
+  "updated_at": "2026-10-19T09:05:00Z"
+}

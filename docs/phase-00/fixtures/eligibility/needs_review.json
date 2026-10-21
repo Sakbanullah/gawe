@@ -1,0 +1,31 @@
+{
+  "assessment_id": "ela_fixture_002",
+  "job_id": "job_fixture_002",
+  "job_posting_version_id": "jpv_fixture_002",
+  "profile_version_id": "prv_fixture_ayu_0001",
+  "status": "needs_review",
+  "checks": [
+    {
+      "requirement_id": "req_fixture_002_must_1",
+      "category": "other",
+      "result": "met",
+      "job_quote": "Wajib menguasai Python.",
+      "profile_ref": "skill_fixture_python",
+      "evidence_refs": ["ev_fixture_skill_python"],
+      "reason": "Python tercantum di skill dan pengalaman."
+    },
+    {
+      "requirement_id": "req_fixture_002_must_2",
+      "category": "other",
+      "result": "unknown",
+      "job_quote": "Kandidat harus dapat bergabung dalam dua minggu.",
+      "profile_ref": null,
+      "evidence_refs": [],
+      "reason": "Profil belum menyatakan ketersediaan tanggal mulai."
+    }
+  ],
+  "confidence": "medium",
+  "status_outdated": false,
+  "outdated_reason": null,
+  "computed_at": "2026-10-18T10:16:00Z"
+}

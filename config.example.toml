@@ -55,5 +55,9 @@ job_cache_days = 90
 log_days = 30
 diagnostics_days = 7
 
+[discovery]                      # batas aman untuk run manual
+max_workers = 3                  # 1-8; jumlah fetch paralel
+max_run_seconds = 600            # 30-3600; sisa sumber ditandai run_timeout
+
 [frontend]
 dist_dir = "frontend/dist"

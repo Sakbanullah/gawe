@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gawe.local/schemas/phase-00/eligibility.schema.json",
+  "title": "Gawe Eligibility Assessment",
+  "description": "Hasil eligibility gate. Selaras dengan components.schemas.EligibilityAssessment pada openapi.yaml. Tidak memuat fit_score dan tidak memakai priority_tier. Setiap check wajib membawa kutipan lowongan dan alasan.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "assessment_id",
+    "job_id",
+    "job_posting_version_id",
+    "profile_version_id",
+    "status",
+    "checks",
+    "confidence",
+    "status_outdated",
+    "computed_at"
+  ],
+  "properties": {
+    "assessment_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "job_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "job_posting_version_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "profile_version_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "status": {
+      "type": "string",
+      "enum": ["eligible", "ineligible", "needs_review"]
+    },
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["requirement_id", "category", "result", "job_quote", "reason"],
+        "properties": {
+          "requirement_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "category": {
+            "type": "string",
+            "enum": [
+              "work_authorization",
+              "location",
+              "experience",
+              "education",
+              "certification",
+              "language",
+              "timezone",
+              "travel",
+              "other"
+            ]
+          },
+          "result": {
+            "type": "string",
+            "enum": ["met", "not_met", "unknown"]
+          },
+          "job_quote": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "profile_ref": {
+            "type": ["string", "null"],
+            "maxLength": 200,
+            "description": "Referensi field/deklarasi profil, misalnya `wa_...`."
+          },
+          "evidence_refs": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "string", "pattern": "^ev_[A-Za-z0-9_-]+$" }
+          },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      }
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "status_outdated": { "type": "boolean" },
+    "outdated_reason": { "type": ["string", "null"], "maxLength": 1000 },
+    "computed_at": { "type": "string", "format": "date-time" }
+  }
+}

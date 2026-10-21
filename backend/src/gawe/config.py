@@ -120,6 +120,13 @@ class RetentionConfig(BaseModel):
     diagnostics_days: int = Field(default=7, ge=1)
 
 
+class DiscoveryConfig(BaseModel):
+    """Bounded parallelism for discovery runs."""
+
+    max_workers: int = Field(default=3, ge=1, le=8)
+    max_run_seconds: int = Field(default=600, ge=30, le=3600)
+
+
 class FrontendConfig(BaseModel):
     dist_dir: str = "frontend/dist"
 
@@ -131,6 +138,7 @@ class Config(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
+    discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     frontend: FrontendConfig = Field(default_factory=FrontendConfig)
     source_path: Path | None = None
     root_dir: Path = Field(default_factory=Path.cwd)

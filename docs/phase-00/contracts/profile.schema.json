@@ -1,0 +1,395 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gawe.local/schemas/phase-00/profile.schema.json",
+  "title": "Gawe Profile Version",
+  "description": "Satu versi profil kandidat. Bentuk mengikuti PLAN.md §4.1 'Struktur profil (ringkas)' dan Evidence di API-CONTRACTS.md §4.12. Setiap fakta dari CV wajib membawa minimal satu evidence_id. Field kosong tetap kosong, bukan ditebak. `proficiency` dan `level` sengaja tidak memakai enum tertutup: kosakata level belum ditetapkan.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "profile_id",
+    "profile_version_id",
+    "master_cv_id",
+    "version",
+    "status",
+    "personal",
+    "education",
+    "experience",
+    "skills",
+    "projects",
+    "certifications",
+    "languages",
+    "awards",
+    "work_authorization",
+    "work_preferences",
+    "evidence_index",
+    "conflicts",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "profile_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "profile_version_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "master_cv_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "derived_from_profile_version_id": {
+      "type": ["string", "null"],
+      "description": "Versi sumber untuk draft hasil koreksi versi confirmed."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "in_review", "confirmed", "superseded"]
+    },
+    "personal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["full_name", "email", "phone", "location", "links"],
+      "properties": {
+        "full_name": {
+          "type": ["string", "null"],
+          "maxLength": 200
+        },
+        "email": {
+          "type": ["string", "null"],
+          "format": "email",
+          "maxLength": 320
+        },
+        "phone": {
+          "type": ["string", "null"],
+          "maxLength": 50
+        },
+        "location": {
+          "type": ["string", "null"],
+          "maxLength": 200
+        },
+        "links": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2000
+          }
+        }
+      }
+    },
+    "education": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "institution", "evidence"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "institution": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "degree": { "type": ["string", "null"], "maxLength": 300 },
+          "field": { "type": ["string", "null"], "maxLength": 300 },
+          "start": { "$ref": "#/$defs/date_partial" },
+          "end": { "$ref": "#/$defs/date_partial" },
+          "evidence": { "$ref": "#/$defs/evidence_refs" }
+        }
+      }
+    },
+    "experience": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "company", "title", "bullets"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "company": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "location": { "type": ["string", "null"], "maxLength": 200 },
+          "start": { "$ref": "#/$defs/date_partial" },
+          "end": { "$ref": "#/$defs/date_partial" },
+          "bullets": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "text", "evidence"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "text": { "type": "string", "minLength": 1, "maxLength": 2000 },
+                "evidence": { "$ref": "#/$defs/evidence_refs" },
+                "skills": {
+                  "type": "array",
+                  "maxItems": 50,
+                  "items": { "type": "string", "maxLength": 100 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "maxItems": 300,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "evidence"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "proficiency": {
+            "type": ["string", "null"],
+            "maxLength": 50,
+            "description": "Hanya diisi bila sumber menyebut level. Kosakata level belum ditetapkan (OPEN)."
+          },
+          "evidence": { "$ref": "#/$defs/evidence_refs" }
+        }
+      }
+    },
+    "projects": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "evidence"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "role": { "type": ["string", "null"], "maxLength": 200 },
+          "technologies": {
+            "type": "array",
+            "maxItems": 50,
+            "items": { "type": "string", "maxLength": 100 }
+          },
+          "description": { "type": ["string", "null"], "maxLength": 2000 },
+          "start": { "$ref": "#/$defs/date_partial" },
+          "end": { "$ref": "#/$defs/date_partial" },
+          "evidence": { "$ref": "#/$defs/evidence_refs" }
+        }
+      }
+    },
+    "certifications": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "evidence"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "issuer": { "type": ["string", "null"], "maxLength": 300 },
+          "date": { "$ref": "#/$defs/date_partial" },
+          "evidence": { "$ref": "#/$defs/evidence_refs" }
+        }
+      }
+    },
+    "languages": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "language", "evidence"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "language": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "level": {
+            "type": ["string", "null"],
+            "maxLength": 50,
+            "description": "Hanya diisi bila sumber menyebut level. Kosakata level belum ditetapkan (OPEN)."
+          },
+          "evidence": { "$ref": "#/$defs/evidence_refs" }
+        }
+      }
+    },
+    "awards": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "evidence"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "issuer": { "type": ["string", "null"], "maxLength": 300 },
+          "date": { "$ref": "#/$defs/date_partial" },
+          "evidence": { "$ref": "#/$defs/evidence_refs" }
+        }
+      }
+    },
+    "work_authorization": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "country", "status", "source", "evidence"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "country": { "type": "string", "minLength": 2, "maxLength": 100 },
+          "status": {
+            "type": "string",
+            "enum": ["citizen", "permit", "requires_sponsorship", "unknown"]
+          },
+          "notes": { "type": ["string", "null"], "maxLength": 2000 },
+          "source": {
+            "type": "string",
+            "enum": ["document", "user_declaration"]
+          },
+          "evidence": { "$ref": "#/$defs/evidence_refs" }
+        }
+      }
+    },
+    "work_preferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["relocation", "relocation_notes", "preferred_locations", "work_modes"],
+      "properties": {
+        "relocation": {
+          "type": "string",
+          "enum": ["yes", "no", "conditional", "unknown"]
+        },
+        "relocation_notes": { "type": ["string", "null"], "maxLength": 2000 },
+        "preferred_locations": {
+          "type": "array",
+          "maxItems": 50,
+          "items": { "type": "string", "maxLength": 200 }
+        },
+        "work_modes": {
+          "type": "array",
+          "maxItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["onsite", "remote", "hybrid"]
+          }
+        }
+      }
+    },
+    "evidence_index": {
+      "type": "object",
+      "maxProperties": 5000,
+      "additionalProperties": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["conflict_id", "path", "candidates"],
+        "properties": {
+          "conflict_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "path": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "candidates": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["value", "evidence"],
+              "properties": {
+                "value": {},
+                "evidence": { "$ref": "#/$defs/evidence_refs" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "confirmed_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "date_partial": {
+      "type": ["string", "null"],
+      "pattern": "^([0-9]{4}|[0-9]{4}-(0[1-9]|1[0-2]))$",
+      "description": "YYYY atau YYYY-MM. Tidak ada tanggal yang dikarang."
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "pattern": "^ev_[A-Za-z0-9_-]+$"
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "source", "quote"],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "pattern": "^ev_[A-Za-z0-9_-]+$"
+        },
+        "source": {
+          "type": "string",
+          "enum": ["cv", "user_declaration"]
+        },
+        "doc_id": {
+          "type": ["string", "null"],
+          "maxLength": 64
+        },
+        "locator": {
+          "type": ["object", "null"],
+          "description": "Null untuk deklarasi pengguna yang tidak berasal dari dokumen.",
+          "additionalProperties": false,
+          "properties": {
+            "page": { "type": ["integer", "null"], "minimum": 1 },
+            "section": { "type": ["string", "null"], "maxLength": 200 },
+            "block_id": { "type": ["string", "null"], "maxLength": 100 },
+            "char_start": { "type": ["integer", "null"], "minimum": 0 },
+            "char_end": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        },
+        "quote": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "declared_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

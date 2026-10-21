@@ -36,6 +36,15 @@ class FetchResponse:
     status_code: int
     body: str
     final_url: str
+    truncated: bool = False
+    content_type: str | None = None
+
+
+def _is_json_content_type(value: str | None) -> bool:
+    if not value:
+        return True
+    media_type = value.split(";", 1)[0].strip().lower()
+    return media_type == "application/json" or media_type.endswith("+json") or media_type == "text/json"
 
 
 class HostRateLimiter:
@@ -94,10 +103,18 @@ def http_fetch(url: str, allowed_hosts: frozenset[str]) -> FetchResponse:
             body = response.read(MAX_RESPONSE_BYTES + 1)
             if len(body) > MAX_RESPONSE_BYTES:
                 raise FetchError("response_too_large", "Respons sumber melebihi 5 MB.", retryable=False)
+            content_type = response.headers.get("Content-Type")
+            if not _is_json_content_type(content_type):
+                raise FetchError(
+                    "source_unavailable",
+                    f"Sumber mengembalikan content type tidak didukung: {content_type}.",
+                    retryable=False,
+                )
             return FetchResponse(
                 status_code=response.status,
                 body=body.decode("utf-8", errors="replace"),
                 final_url=response.geturl(),
+                content_type=content_type,
             )
     except urllib.error.HTTPError as exc:
         if exc.code in (403, 429):

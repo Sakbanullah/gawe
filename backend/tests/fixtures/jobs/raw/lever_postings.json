@@ -1,0 +1,27 @@
+[
+  {
+    "id": "lev-2001",
+    "text": "Data Engineer",
+    "categories": {
+      "location": "Remote - APAC",
+      "commitment": "Full-time",
+      "team": "Data"
+    },
+    "descriptionPlain": "Build data pipelines.",
+    "description": "<div>Build data pipelines with Python.</div>",
+    "createdAt": 1760000000000,
+    "hostedUrl": "https://jobs.lever.co/acme/lev-2001",
+    "applyUrl": "https://jobs.lever.co/acme/lev-2001/apply"
+  },
+  {
+    "id": "lev-2002",
+    "text": "Office Manager",
+    "categories": {
+      "location": "Jakarta, Indonesia",
+      "commitment": "Contract"
+    },
+    "description": "<div>Run the Jakarta office.</div>",
+    "createdAt": 1759000000000,
+    "hostedUrl": "https://jobs.lever.co/acme/lev-2002"
+  }
+]

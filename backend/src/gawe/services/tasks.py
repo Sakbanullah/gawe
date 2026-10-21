@@ -15,6 +15,13 @@ from ..master_cv import new_id, now_iso
 MAX_ATTEMPTS = 3
 
 
+def _iso_before(seconds: int) -> str:
+    from datetime import datetime, timedelta, timezone
+
+    stamp = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    return stamp.isoformat().replace("+00:00", "Z")
+
+
 def _progress(stages: list[str]) -> dict:
     return {
         "current_stage": stages[0] if stages else None,
@@ -108,6 +115,38 @@ class TaskStore:
             "ORDER BY created_at DESC LIMIT 1"
         ).fetchone()
         return self._to_task(row) if row else None
+
+    def heartbeat(self, task_id: str) -> None:
+        """Bump updated_at so a long run is not mistaken for a stale one."""
+        with self._connection:
+            self._connection.execute(
+                "UPDATE task SET updated_at = ? WHERE task_id = ?", (now_iso(), task_id)
+            )
+
+    def reap_stale(self, *, exclude: set[str], older_than_s: int) -> list[str]:
+        """Fail discovery tasks whose heartbeat stopped and that no live run owns."""
+        cutoff = _iso_before(older_than_s)
+        rows = self._connection.execute(
+            "SELECT task_id, updated_at FROM task "
+            "WHERE type = 'discovery' AND status IN ('queued','processing')"
+        ).fetchall()
+        stale = [
+            row["task_id"]
+            for row in rows
+            if row["task_id"] not in exclude and (row["updated_at"] or "") < cutoff
+        ]
+        error = {
+            "code": "stale_run",
+            "message": "Run discovery berhenti sebelum selesai.",
+            "stage": "fetch",
+            "retryable": True,
+            "run_id": None,
+            "request_id": None,
+            "details": [],
+        }
+        for task_id in stale:
+            self.finish(task_id, "failed", error=error)
+        return stale
 
     def fail(self, task_id: str, code: str, message: str, stage: str) -> dict:
         error = {

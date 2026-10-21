@@ -1,0 +1,68 @@
+{
+  "job_id": "job_fixture_003",
+  "job_posting_version_id": "jpv_fixture_003",
+  "content_hash": "3333333333333333333333333333333333333333333333333333333333333333",
+  "source": {
+    "source_id": "manual_url",
+    "source_kind": "manual_url",
+    "company": null,
+    "verification_status": "verified",
+    "access_method": "manual_url"
+  },
+  "company": "Contoh Europe GmbH",
+  "title": "Backend Engineer",
+  "location": {
+    "raw": "Berlin, Germany (onsite)",
+    "city": "Berlin",
+    "region": null,
+    "country": "Germany",
+    "is_remote": false
+  },
+  "work_mode": "onsite",
+  "employment_type": "full_time",
+  "seniority": "mid",
+  "market": "global",
+  "posted_at": "2026-10-08T00:00:00Z",
+  "fetched_at": "2026-10-18T10:10:00Z",
+  "analyzed_at": "2026-10-18T10:12:00Z",
+  "canonical_url": "https://example.de/jobs/backend-engineer-berlin",
+  "apply_url": "https://example.de/jobs/backend-engineer-berlin/apply",
+  "apply_url_status": "available",
+  "priority_tier": "P1",
+  "priority_reason": "Global onsite di Berlin.",
+  "priority_confidence": "high",
+  "description_text": "Backend Engineer in Berlin. Must be authorized to work in the EU. Required: Python and PostgreSQL. German language is not required.",
+  "description_truncated": false,
+  "requirements": [
+    {
+      "requirement_id": "req_fixture_003_must_1",
+      "kind": "must_have",
+      "text": "Must be authorized to work in the EU",
+      "quote": "Must be authorized to work in the EU.",
+      "skill": null,
+      "weight": null
+    },
+    {
+      "requirement_id": "req_fixture_003_must_2",
+      "kind": "must_have",
+      "text": "Python",
+      "quote": "Required: Python and PostgreSQL.",
+      "skill": "Python",
+      "weight": null
+    },
+    {
+      "requirement_id": "req_fixture_003_must_3",
+      "kind": "must_have",
+      "text": "PostgreSQL",
+      "quote": "Required: Python and PostgreSQL.",
+      "skill": "PostgreSQL",
+      "weight": null
+    }
+  ],
+  "duplicate_of": null,
+  "completeness": {
+    "missing_fields": [],
+    "fetched_at": "2026-10-18T10:10:00Z",
+    "stale": false
+  }
+}

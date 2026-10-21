@@ -4,16 +4,25 @@ import {
   ApiError,
   confirmProfile,
   correctProfile,
+  createApplication,
   createSource,
+  getApplication,
   getConsent,
+  getDocumentFindings,
+  getDocumentVersion,
   getMasterCv,
+  getMatch,
   getOverview,
   getProfileVersion,
   getTask,
   grantConsent,
+  listApplications,
   listDiscoveryRuns,
+  listMatches,
   listProfiles,
   listSources,
+  overrideMatchTier,
+  rerunApplicationAnalysis,
   retryTask,
   revokeConsent,
   rollbackProfile,
@@ -21,6 +30,11 @@ import {
   startExtraction,
   updateSource,
   uploadMasterCv,
+  approveDocumentVersion,
+  createDocumentRevision,
+  generateDocuments,
+  runDocumentReview,
+  type MatchQuery,
 } from "./apiClient";
 
 export function useOverview() {
@@ -147,5 +161,127 @@ export function useRetryTask() {
   return useSetupMutation(
     (args: { taskId: string; scope?: "all" | "failed_sources" }) =>
       retryTask(args.taskId, args.scope ?? "failed_sources"),
+  );
+}
+
+export function useMatches(query: MatchQuery) {
+  return useQuery({
+    queryKey: ["matches", query],
+    queryFn: () => listMatches(query),
+  });
+}
+
+export function useMatchDetail(jobId: string | null) {
+  return useQuery({
+    queryKey: ["match", jobId],
+    queryFn: () => getMatch(jobId as string),
+    enabled: jobId !== null,
+  });
+}
+
+export function useOverrideMatchTier() {
+  return useSetupMutation(
+    (args: {
+      jobId: string;
+      tier: "P1" | "P2" | "P3" | "P4" | "unclassified" | null;
+      reason: string | null;
+    }) => overrideMatchTier(args.jobId, { tier: args.tier, reason: args.reason }),
+  );
+}
+
+export function useApplications() {
+  return useQuery({ queryKey: ["applications"], queryFn: listApplications });
+}
+
+export function useApplication(applicationId: string | undefined) {
+  return useQuery({
+    queryKey: ["application", applicationId],
+    queryFn: () => getApplication(applicationId as string),
+    enabled: Boolean(applicationId),
+  });
+}
+
+export function useCreateApplication() {
+  return useSetupMutation((jobId: string) => createApplication(jobId));
+}
+
+export function useRerunAnalysis() {
+  return useSetupMutation((applicationId: string) =>
+    rerunApplicationAnalysis(applicationId, { reason: "user_requested" }),
+  );
+}
+
+export function useGenerateDocuments() {
+  return useSetupMutation(
+    (args: {
+      applicationId: string;
+      kinds: ("cv" | "cover_letter")[];
+      language: "en" | "id";
+    }) =>
+      generateDocuments(args.applicationId, {
+        kinds: args.kinds,
+        language: args.language,
+      }),
+  );
+}
+
+export function useDocumentVersion(applicationId: string, documentVersionId: string | null) {
+  return useQuery({
+    queryKey: ["document", applicationId, documentVersionId],
+    queryFn: () =>
+      getDocumentVersion(applicationId, documentVersionId as string),
+    enabled: Boolean(applicationId && documentVersionId),
+  });
+}
+
+export function useDocumentFindings(
+  applicationId: string,
+  documentVersionId: string | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["document-findings", applicationId, documentVersionId],
+    queryFn: () => getDocumentFindings(applicationId, documentVersionId as string),
+    enabled: Boolean(applicationId && documentVersionId && enabled),
+  });
+}
+
+export function useCreateDocumentRevision() {
+  return useSetupMutation(
+    (args: {
+      applicationId: string;
+      documentVersionId: string;
+      baseContentHash: string;
+      path: string;
+      value: unknown;
+    }) =>
+      createDocumentRevision(args.applicationId, args.documentVersionId, {
+        base_content_hash: args.baseContentHash,
+        edits: [{ path: args.path, value: args.value }],
+      }),
+  );
+}
+
+export function useRunDocumentReview() {
+  return useSetupMutation(
+    (args: { applicationId: string; documentVersionId: string }) =>
+      runDocumentReview(args.applicationId, args.documentVersionId),
+  );
+}
+
+export function useApproveDocument() {
+  return useSetupMutation(
+    (args: {
+      applicationId: string;
+      documentVersionId: string;
+      contentHash: string;
+      decision: "approved" | "rejected" | "changes_requested";
+      note?: string | null;
+    }) =>
+      approveDocumentVersion(args.applicationId, args.documentVersionId, {
+        decision: args.decision,
+        content_hash: args.contentHash,
+        note: args.note ?? undefined,
+      }),
   );
 }

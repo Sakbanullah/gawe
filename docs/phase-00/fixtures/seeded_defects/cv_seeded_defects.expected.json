@@ -1,0 +1,84 @@
+{
+  "fixture": "cv_seeded_defects.md",
+  "profile_fixture": "profiles/profile_confirmed.json",
+  "note": "Ekspektasi regression reviewer Phase 3. Bukan acceptance Phase 0.",
+  "expected_findings": [
+    {
+      "defect": "fabrikasi metrik",
+      "quote": "processing 4.8 million requests per day",
+      "expected_severity": "blocker",
+      "expected_category": "factuality",
+      "evidence": "Profil mencatat 1.2 million requests per day."
+    },
+    {
+      "defect": "tanggal diubah",
+      "quote": "2021-01 - present",
+      "expected_severity": "blocker",
+      "expected_category": "factuality",
+      "evidence": "Profil mencatat 2022-07 - present."
+    },
+    {
+      "defect": "jabatan dinaikkan",
+      "quote": "Principal Backend Engineer",
+      "expected_severity": "blocker",
+      "expected_category": "factuality",
+      "evidence": "Profil mencatat Senior Backend Engineer."
+    },
+    {
+      "defect": "klaim tim tanpa bukti",
+      "quote": "Managed a team of 12 engineers across three countries.",
+      "expected_severity": "major",
+      "expected_category": "factuality",
+      "evidence": "Profil mencatat mentoring tiga engineer, bukan mengelola tim lintas negara."
+    },
+    {
+      "defect": "klaim kepemilikan arsitektur tanpa bukti",
+      "quote": "Owned company-wide architecture decisions.",
+      "expected_severity": "major",
+      "expected_category": "exaggeration",
+      "evidence": "Tidak ada evidence untuk keputusan arsitektur lintas perusahaan."
+    },
+    {
+      "defect": "klaim expert tanpa bukti",
+      "quote": "Expert backend engineer with 10 years of experience",
+      "expected_severity": "major",
+      "expected_category": "exaggeration",
+      "evidence": "Profil tidak menyatakan level expert maupun 10 tahun pengalaman."
+    },
+    {
+      "defect": "tabel layout ATS",
+      "quote": "| Backend | Data | Cloud |",
+      "expected_severity": "major",
+      "expected_category": "ats",
+      "evidence": "Aturan CV: satu kolom, tanpa tabel layout."
+    },
+    {
+      "defect": "CV tiga halaman",
+      "quote": "Page 3 of 3",
+      "expected_severity": "major",
+      "expected_category": "format",
+      "evidence": "Batas CV maksimal 2 halaman."
+    },
+    {
+      "defect": "gelar diubah tanggalnya",
+      "quote": "2015-08 - 2019-02",
+      "expected_severity": "blocker",
+      "expected_category": "factuality",
+      "evidence": "Profil mencatat 2016-08 - 2020-02."
+    },
+    {
+      "defect": "sertifikasi tidak ada di profil",
+      "quote": "AWS Certified Solutions Architect - Professional, 2024-01",
+      "expected_severity": "blocker",
+      "expected_category": "factuality",
+      "evidence": "Profil hanya mencatat AWS Certified Developer - Associate, 2023-04."
+    },
+    {
+      "defect": "kewarganegaraan ganda tidak ada di profil",
+      "quote": "Citizen of Indonesia and the European Union.",
+      "expected_severity": "blocker",
+      "expected_category": "factuality",
+      "evidence": "Profil hanya menyatakan kewarganegaraan Indonesia."
+    }
+  ]
+}

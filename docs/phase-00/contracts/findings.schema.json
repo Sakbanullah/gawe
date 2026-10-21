@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gawe.local/schemas/phase-00/findings.schema.json",
+  "title": "Gawe Reviewer Findings Report",
+  "description": "Laporan findings reviewer. Selaras dengan components.schemas.FindingsReport pada openapi.yaml. Findings tidak dihapus oleh approval. Kriteria lulus: 0 blocker, 0 major. Maksimum 3 siklus review (awal + 2 revisi).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["document_version_id", "profile_version_id", "verdict", "findings"],
+  "properties": {
+    "document_version_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "profile_version_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "review_run_id": { "type": ["string", "null"], "maxLength": 64 },
+    "cycle": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 3
+    },
+    "verdict": {
+      "type": "string",
+      "enum": ["pass", "changes_required", "unresolved", "review_unavailable"]
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "severity", "category", "quote", "problem"],
+        "properties": {
+          "finding_id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "severity": {
+            "type": "string",
+            "enum": ["blocker", "major", "minor", "nit"]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "factuality",
+              "relevance",
+              "exaggeration",
+              "language",
+              "ats",
+              "consistency",
+              "format",
+              "priority",
+              "eligibility"
+            ]
+          },
+          "location": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "doc": {
+                "type": "string",
+                "enum": ["cv", "cover_letter"]
+              },
+              "section": { "type": ["string", "null"], "maxLength": 100 },
+              "bullet_id": { "type": ["string", "null"], "maxLength": 100 }
+            }
+          },
+          "quote": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "problem": { "type": "string", "minLength": 1, "maxLength": 2000 },
+          "evidence_refs": {
+            "type": "array",
+            "maxItems": 100,
+            "items": { "type": "string", "pattern": "^ev_[A-Za-z0-9_-]+$" }
+          },
+          "suggested_fix": { "type": ["string", "null"], "maxLength": 2000 },
+          "auto_fixable": { "type": "boolean" },
+          "status": {
+            "type": "string",
+            "enum": ["open", "resolved", "accepted"]
+          }
+        }
+      }
+    },
+    "reviewed_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  }
+}

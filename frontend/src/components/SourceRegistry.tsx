@@ -16,6 +16,7 @@ import {
 } from "@mantine/core";
 
 import type { SourceRegistryEntry } from "../app/apiClient";
+import { ApiError } from "../app/apiClient";
 import { useCreateSource, useSources, useUpdateSource } from "../app/queries";
 
 const MARKETS = [
@@ -50,6 +51,13 @@ function errorText(error: unknown): string | null {
   return error instanceof Error ? error.message : null;
 }
 
+function fieldError(error: unknown, field: string): string | undefined {
+  if (!(error instanceof ApiError)) {
+    return undefined;
+  }
+  return error.details.find((detail) => detail.field === field)?.message;
+}
+
 function CreateSourceForm() {
   const create = useCreateSource();
   const [company, setCompany] = useState("");
@@ -61,6 +69,12 @@ function CreateSourceForm() {
 
   const ready = company.trim().length > 0 && careersUrl.trim().length > 0;
 
+  const resetError = () => {
+    if (create.error) {
+      create.reset();
+    }
+  };
+
   return (
     <Stack gap="xs">
       <Text fw={500}>Tambah sumber</Text>
@@ -71,23 +85,50 @@ function CreateSourceForm() {
         <TextInput
           label="Perusahaan"
           value={company}
-          onChange={(event) => setCompany(event.currentTarget.value)}
+          error={fieldError(create.error, "company")}
+          onChange={(event) => {
+            resetError();
+            setCompany(event.currentTarget.value);
+          }}
         />
         <TextInput
           label="Careers URL"
           placeholder="https://boards.greenhouse.io/..."
           value={careersUrl}
-          onChange={(event) => setCareersUrl(event.currentTarget.value)}
+          error={fieldError(create.error, "careers_url")}
+          onChange={(event) => {
+            resetError();
+            setCareersUrl(event.currentTarget.value);
+          }}
         />
       </Group>
       <Group grow>
-        <Select label="Market" data={MARKETS} value={market} onChange={(value) => setMarket(value ?? "global")} />
-        <Select label="ATS" data={ATS} value={ats} onChange={(value) => setAts(value ?? "unknown")} />
+        <Select
+          label="Market"
+          data={MARKETS}
+          value={market}
+          onChange={(value) => {
+            resetError();
+            setMarket(value ?? "global");
+          }}
+        />
+        <Select
+          label="ATS"
+          data={ATS}
+          value={ats}
+          onChange={(value) => {
+            resetError();
+            setAts(value ?? "unknown");
+          }}
+        />
         <Select
           label="Akses"
           data={ACCESS}
           value={accessMethod}
-          onChange={(value) => setAccessMethod(value ?? "ats_api")}
+          onChange={(value) => {
+            resetError();
+            setAccessMethod(value ?? "ats_api");
+          }}
         />
       </Group>
       <Textarea
@@ -95,7 +136,10 @@ function CreateSourceForm() {
         autosize
         minRows={2}
         value={tosNotes}
-        onChange={(event) => setTosNotes(event.currentTarget.value)}
+        onChange={(event) => {
+          resetError();
+          setTosNotes(event.currentTarget.value);
+        }}
       />
       {create.error ? <Alert color="red">{errorText(create.error)}</Alert> : null}
       <Group>
@@ -130,9 +174,21 @@ function EditSourceModal({
   const update = useUpdateSource();
   const [company, setCompany] = useState(source.company);
   const [careersUrl, setCareersUrl] = useState(source.careers_url);
+  const [market, setMarket] = useState<string>(source.market);
+  const [ats, setAts] = useState<string>(source.ats);
+  const [accessMethod, setAccessMethod] = useState<string>(source.access_method);
   const [verification, setVerification] = useState<string>(source.verification_status);
   const [enabled, setEnabled] = useState(source.enabled);
   const [tosNotes, setTosNotes] = useState(source.tos_notes ?? "");
+  const [dismissed, setDismissed] = useState(false);
+  const error = dismissed ? null : update.error;
+
+  const resetError = () => {
+    setDismissed(true);
+    if (update.error) {
+      update.reset();
+    }
+  };
 
   return (
     <Modal opened onClose={onClose} title={`Edit ${source.company}`}>
@@ -140,53 +196,106 @@ function EditSourceModal({
         <TextInput
           label="Perusahaan"
           value={company}
-          onChange={(event) => setCompany(event.currentTarget.value)}
+          error={fieldError(error, "company")}
+          onChange={(event) => {
+            resetError();
+            setCompany(event.currentTarget.value);
+          }}
         />
         <TextInput
           label="Careers URL"
           value={careersUrl}
-          onChange={(event) => setCareersUrl(event.currentTarget.value)}
+          error={fieldError(error, "careers_url")}
+          onChange={(event) => {
+            resetError();
+            setCareersUrl(event.currentTarget.value);
+          }}
         />
+        <Group grow>
+          <Select
+            label="Market"
+            data={MARKETS}
+            value={market}
+            error={fieldError(error, "market")}
+            onChange={(value) => {
+              resetError();
+              setMarket(value ?? "global");
+            }}
+          />
+          <Select
+            label="ATS"
+            data={ATS}
+            value={ats}
+            error={fieldError(error, "ats")}
+            onChange={(value) => {
+              resetError();
+              setAts(value ?? "unknown");
+            }}
+          />
+          <Select
+            label="Akses"
+            data={ACCESS}
+            value={accessMethod}
+            error={fieldError(error, "access_method")}
+            onChange={(value) => {
+              resetError();
+              setAccessMethod(value ?? "ats_api");
+            }}
+          />
+        </Group>
         <Select
           label="Status verifikasi"
           data={VERIFICATION}
           value={verification}
-          onChange={(value) => setVerification(value ?? "unverified")}
+          onChange={(value) => {
+            resetError();
+            setVerification(value ?? "unverified");
+          }}
         />
         <Switch
           label="Aktif"
           checked={enabled}
-          onChange={(event) => setEnabled(event.currentTarget.checked)}
+          onChange={(event) => {
+            resetError();
+            setEnabled(event.currentTarget.checked);
+          }}
         />
         <Textarea
           label="Catatan ToS"
           autosize
           minRows={2}
           value={tosNotes}
-          onChange={(event) => setTosNotes(event.currentTarget.value)}
+          onChange={(event) => {
+            resetError();
+            setTosNotes(event.currentTarget.value);
+          }}
         />
-        {update.error ? <Alert color="red">{errorText(update.error)}</Alert> : null}
+        {error ? <Alert color="red">{errorText(error)}</Alert> : null}
         <Group justify="flex-end">
           <Button variant="light" onClick={onClose}>
             Batal
           </Button>
           <Button
             loading={update.isPending}
-            onClick={() =>
+            onClick={() => {
+              setDismissed(false);
               update.mutate(
                 {
                   sourceId: source.source_id,
                   body: {
                     company: company.trim(),
                     careers_url: careersUrl.trim(),
+                    market: market as "indonesia" | "global",
+                    ats: ats as SourceRegistryEntry["ats"],
+                    access_method: accessMethod as "ats_api" | "html",
                     verification_status: verification as SourceRegistryEntry["verification_status"],
                     enabled,
                     tos_notes: tosNotes.trim(),
                   },
                 },
                 { onSuccess: onClose },
-              )
-            }
+              );
+            }}
           >
             Simpan
           </Button>
@@ -278,7 +387,6 @@ export function SourceRegistry({ editable = false }: { editable?: boolean }) {
         )}
         {update.error ? <Alert color="red">{errorText(update.error)}</Alert> : null}
         {editable ? <CreateSourceForm /> : null}
-        {update.error ? <Alert color="red">{errorText(update.error)}</Alert> : null}
         {editing ? <EditSourceModal source={editing} onClose={() => setEditing(null)} /> : null}
       </Stack>
     </Card>

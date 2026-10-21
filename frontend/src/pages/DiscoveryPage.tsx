@@ -44,6 +44,13 @@ function RunCard({
   retryError: unknown;
   onRetry: () => void;
 }) {
+  const partialData = run.sources.filter(
+    (source) =>
+      (source.stats?.truncated ?? 0) > 0 ||
+      (source.stats?.stale ?? 0) > 0 ||
+      (source.stats?.skipped ?? 0) > 0 ||
+      (source.stats?.invalid ?? 0) > 0,
+  );
   return (
     <Card withBorder>
       <Stack gap="sm">
@@ -63,8 +70,36 @@ function RunCard({
           </Alert>
         ) : null}
 
+        {run.error ? (
+          <Alert color="yellow" title="Analisis tidak selesai">
+            {run.error.message}
+          </Alert>
+        ) : null}
+
+        {partialData.length > 0 ? (
+          <Alert color="orange" title="Data sumber tidak lengkap">
+            <Stack gap="xs">
+              {partialData.map((source) => (
+                <Text key={source.source_id} size="sm">
+                  {source.company}:{" "}
+                  {[
+                    source.stats?.truncated
+                      ? `${source.stats.truncated} deskripsi dipotong`
+                      : null,
+                    source.stats?.stale ? `${source.stats.stale} data basi` : null,
+                    source.stats?.skipped ? `${source.stats.skipped} record dilewati` : null,
+                    source.stats?.invalid ? `${source.stats.invalid} record invalid` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </Text>
+              ))}
+            </Stack>
+          </Alert>
+        ) : null}
+
         <Text size="sm">
-          Diambil {run.counts.fetched ?? 0} · baru {run.counts.new_jobs ?? 0} · duplikat{" "}
+          Diambil {run.counts.fetched ?? 0} · baru {run.counts.new_jobs ?? 0} · sudah ada{" "}
           {run.counts.duplicates ?? 0}
         </Text>
 
@@ -75,7 +110,7 @@ function RunCard({
               <Table.Th>Status</Table.Th>
               <Table.Th>Diambil</Table.Th>
               <Table.Th>Baru</Table.Th>
-              <Table.Th>Duplikat</Table.Th>
+              <Table.Th>Sudah ada</Table.Th>
               <Table.Th>Terakhir</Table.Th>
               <Table.Th>Error</Table.Th>
             </Table.Tr>

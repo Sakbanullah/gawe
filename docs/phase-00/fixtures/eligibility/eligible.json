@@ -1,0 +1,40 @@
+{
+  "assessment_id": "ela_fixture_001",
+  "job_id": "job_fixture_001",
+  "job_posting_version_id": "jpv_fixture_001",
+  "profile_version_id": "prv_fixture_ayu_0001",
+  "status": "eligible",
+  "checks": [
+    {
+      "requirement_id": "req_fixture_001_must_1",
+      "category": "experience",
+      "result": "met",
+      "job_quote": "Required: 5+ years backend experience",
+      "profile_ref": "exp_fixture_001",
+      "evidence_refs": ["ev_fixture_exp_001_b1", "ev_fixture_exp_001_b2"],
+      "reason": "Profil mencatat pengalaman backend sejak 2020-03."
+    },
+    {
+      "requirement_id": "req_fixture_001_must_2",
+      "category": "other",
+      "result": "met",
+      "job_quote": "strong Python, PostgreSQL",
+      "profile_ref": "skill_fixture_python",
+      "evidence_refs": ["ev_fixture_skill_python"],
+      "reason": "Python tercantum di skill dan dipakai di dua pengalaman."
+    },
+    {
+      "requirement_id": "req_fixture_001_must_3",
+      "category": "other",
+      "result": "met",
+      "job_quote": "strong Python, PostgreSQL",
+      "profile_ref": "skill_fixture_postgresql",
+      "evidence_refs": ["ev_fixture_skill_postgresql", "ev_fixture_exp_001_b1"],
+      "reason": "PostgreSQL tercantum di skill dan migrasi billing."
+    }
+  ],
+  "confidence": "high",
+  "status_outdated": false,
+  "outdated_reason": null,
+  "computed_at": "2026-10-18T10:15:00Z"
+}

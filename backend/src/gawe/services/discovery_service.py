@@ -11,22 +11,57 @@ from __future__ import annotations
 
 import hashlib
 import json
-from concurrent.futures import ThreadPoolExecutor
+import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass
 
 from ..db.repo import Connection
 from ..jobs import ADAPTERS
+from ..jobs.dedupe import link_duplicate
 from ..jobs.fetch import FetchError, FetchResponse, HostRateLimiter, fetch_source
 from ..jobs.sources.base import AdapterError, InvalidJob, RawJob, normalize
 from ..jobs.sources.registry import FETCHABLE, SourceError, SourceRegistry
 from ..master_cv import new_id, now_iso
 from ..master_cv.store import MasterCvError
 from ..profile.store import ProfileStore
+from .assessment_service import AssessmentService
 from .tasks import MAX_ATTEMPTS, TaskStore
 
 RUN_STAGES = ["fetch"]
 DEFAULT_WORKERS = 3
+DEFAULT_MAX_RUN_S = 600
+logger = logging.getLogger(__name__)
 
+# A snapshot is trusted for closing absent jobs only when most records parsed
+# into a normalisable job. Above this ratio the payload is treated as suspect.
+MAX_INVALID_RATIO = 0.5
+
+# D-B approved: a discovery task is stale when its heartbeat stops for this
+# long. Heartbeats fire once per persisted source, so a run blocked inside one
+# slow fetch can still be reaped; raise this if long single fetches are expected.
+STALE_AFTER_S = 600
+
+# Named MySQL lock serialises run creation across connections and processes.
+# GET_LOCK/RELEASE_LOCK are connection-scoped; DiscoveryService owns exactly one
+# physical connection, so both calls use the same session.
+DISCOVERY_LOCK = "gawe_discovery_run"
+
+_ACTIVE_LOCK = threading.Lock()
+# shortcut: in-process only. A single-user local server runs one process, so a
+# live run always appears here; add a shared lease if multiple workers arrive.
+_ACTIVE_TASKS: set[str] = set()
+
+
+def _mark_active(task_id: str) -> None:
+    with _ACTIVE_LOCK:
+        _ACTIVE_TASKS.add(task_id)
+
+
+def _clear_active(task_id: str) -> None:
+    with _ACTIVE_LOCK:
+        _ACTIVE_TASKS.discard(task_id)
 
 
 @dataclass
@@ -34,6 +69,7 @@ class _SourceResult:
     source: dict
     response: FetchResponse | None = None
     jobs: list[RawJob] | None = None
+    skipped: int = 0
     error: FetchError | None = None
 
 
@@ -47,6 +83,7 @@ class DiscoveryService:
         fetcher=None,
         limiter: HostRateLimiter | None = None,
         max_workers: int = DEFAULT_WORKERS,
+        max_run_seconds: int = DEFAULT_MAX_RUN_S,
     ) -> None:
         self._connection = connection
         self._profiles = profile_store
@@ -55,6 +92,7 @@ class DiscoveryService:
         self._fetcher = fetcher
         self._limiter = limiter or HostRateLimiter()
         self._max_workers = max_workers
+        self._max_run_seconds = max_run_seconds
 
     def start_run(
         self,
@@ -72,120 +110,303 @@ class DiscoveryService:
                 "profile_version_id bukan profil confirmed yang aktif.",
                 409,
             )
-        active = self._tasks.active_discovery()
-        if active is not None:
+        self._reap_stale()
+        if not self._acquire_lock():
+            active = self._tasks.active_discovery()
             raise MasterCvError(
                 "task_already_running",
                 "Sudah ada run discovery aktif.",
                 409,
+                active_task_id=active["task_id"] if active else None,
             )
-        sources = self._select_sources(source_ids)
-        if not sources:
-            raise SourceError(
-                "no_enabled_sources",
-                "Tidak ada sumber verified dan enabled untuk dijalankan.",
-                409,
-            )
-
-        task = self._tasks.create(
-            "discovery",
-            RUN_STAGES,
-            attempt=attempt,
-            retried_from_task_id=retried_from_task_id,
-        )
-        retry_counts = retry_counts or {}
-        run_id = new_id("run")
-        started_at = now_iso()
-        fetchable: list[dict] = []
-        with self._connection:
-            self._connection.execute(
-                "INSERT INTO discovery_run (run_id, task_id, profile_version_id, status, "
-                "counts_json, error_json, started_at, finished_at) "
-                "VALUES (?, ?, ?, 'processing', '{}', NULL, ?, NULL)",
-                (run_id, task["task_id"], profile["profile_version_id"], started_at),
-            )
-            for source in sources:
-                reason = _skip_reason(source)
-                if reason is None:
-                    fetchable.append(source)
-                self._connection.execute(
-                    "INSERT INTO discovery_run_source (run_id, source_id, company, status, "
-                    "fetched_count, accepted_count, duplicate_count, retry_count, "
-                    "last_attempt_at, error_json) VALUES (?, ?, ?, ?, 0, 0, 0, ?, NULL, ?)",
-                    (
-                        run_id,
-                        source["source_id"],
-                        source["company"],
-                        "queued" if reason is None else "skipped",
-                        retry_counts.get(source["source_id"], 0),
-                        None if reason is None else json.dumps(reason),
-                    ),
+        task_id: str | None = None
+        run_id: str | None = None
+        try:
+            active = self._tasks.active_discovery()
+            if active is not None:
+                raise MasterCvError(
+                    "task_already_running",
+                    "Sudah ada run discovery aktif.",
+                    409,
+                    active_task_id=active["task_id"],
+                )
+            sources = self._select_sources(source_ids)
+            if not sources:
+                raise SourceError(
+                    "no_enabled_sources",
+                    "Tidak ada sumber verified dan enabled untuk dijalankan.",
+                    409,
                 )
 
-        self._tasks.start_stage(task["task_id"], "fetch")
-        results = self._fetch_all(fetchable)
-        self._tasks.finish_stage(task["task_id"], "fetch")
-        counts = {"fetched": 0, "new_jobs": 0, "duplicates": 0}
-        failed = 0
-        succeeded = 0
-        for result in results:
-            outcome = self._persist_source(run_id, result)
-            counts["fetched"] += outcome["fetched"]
-            counts["new_jobs"] += outcome["accepted"]
-            counts["duplicates"] += outcome["duplicates"]
-            if outcome["status"] == "failed":
-                failed += 1
-            elif outcome["status"] == "completed":
-                succeeded += 1
+            retry_counts = retry_counts or {}
+            run_id = new_id("run")
+            started_at = now_iso()
+            fetchable: list[dict] = []
+            # One transaction: a failure here leaves neither task nor run behind.
+            with self._connection:
+                task = self._tasks.create(
+                    "discovery",
+                    RUN_STAGES,
+                    attempt=attempt,
+                    retried_from_task_id=retried_from_task_id,
+                )
+                task_id = task["task_id"]
+                self._connection.execute(
+                    "INSERT INTO discovery_run (run_id, task_id, profile_version_id, status, "
+                    "counts_json, error_json, started_at, finished_at) "
+                    "VALUES (?, ?, ?, 'processing', '{}', NULL, ?, NULL)",
+                    (run_id, task_id, profile["profile_version_id"], started_at),
+                )
+                for source in sources:
+                    reason = _skip_reason(source)
+                    if reason is None:
+                        fetchable.append(source)
+                    self._connection.execute(
+                        "INSERT INTO discovery_run_source (run_id, source_id, company, status, "
+                        "fetched_count, accepted_count, duplicate_count, retry_count, "
+                        "last_attempt_at, error_json) VALUES (?, ?, ?, ?, 0, 0, 0, ?, NULL, ?)",
+                        (
+                            run_id,
+                            source["source_id"],
+                            source["company"],
+                            "queued" if reason is None else "skipped",
+                            retry_counts.get(source["source_id"], 0),
+                            None if reason is None else json.dumps(reason),
+                        ),
+                    )
+            _mark_active(task_id)
 
-        status = _aggregate_status(succeeded, failed)
-        finished_at = now_iso()
-        full_counts = {
-            **counts,
-            "eligible": 0,
-            "needs_review": 0,
-            "ineligible": 0,
-            "fit_computed": 0,
-        }
-        with self._connection:
-            self._connection.execute(
-                "UPDATE discovery_run SET status = ?, counts_json = ?, finished_at = ? "
-                "WHERE run_id = ?",
-                (status, json.dumps(full_counts), finished_at, run_id),
-            )
-        result_payload = {
-            "run_id": run_id,
-            "profile_version_id": profile["profile_version_id"],
-            "counts": full_counts,
-        }
-        if status == "failed":
-            retryable = any(result.error and result.error.retryable for result in results)
-            self._tasks.finish(
-                task["task_id"],
-                status,
-                result=result_payload,
-                error={
-                    "code": "discovery_failed",
-                    "message": "Semua sumber gagal diambil.",
-                    "stage": "fetch",
-                    "retryable": retryable,
-                    "run_id": run_id,
+            self._tasks.start_stage(task_id, "fetch")
+            results = self._fetch_all(fetchable)
+            self._tasks.finish_stage(task_id, "fetch")
+            counts = {"fetched": 0, "new_jobs": 0, "duplicates": 0}
+            failed = 0
+            succeeded = 0
+            for result in results:
+                try:
+                    outcome = self._persist_source(run_id, result)
+                except Exception:
+                    outcome = self._fail_source(run_id, result)
+                self._tasks.heartbeat(task_id)
+                counts["fetched"] += outcome["fetched"]
+                counts["new_jobs"] += outcome["accepted"]
+                counts["duplicates"] += outcome["duplicates"]
+                if outcome["status"] == "failed":
+                    failed += 1
+                elif outcome["status"] == "completed":
+                    succeeded += 1
+
+            status = _aggregate_status(succeeded, failed)
+            finished_at = now_iso()
+            assessment, assessment_error = self._assess(profile)
+            if assessment_error is not None:
+                # Fetched data is stored, but the run is not fully done.
+                assessment_error = {**assessment_error, "run_id": run_id}
+                if status == "completed":
+                    status = "partial"
+            full_counts = {
+                **counts,
+                "eligible": assessment["eligible"],
+                "needs_review": assessment["needs_review"],
+                "ineligible": assessment["ineligible"],
+                "fit_computed": assessment["eligible"],
+            }
+            with self._connection:
+                self._connection.execute(
+                    "UPDATE discovery_run SET status = ?, counts_json = ?, "
+                    "error_json = COALESCE(error_json, ?), finished_at = ? WHERE run_id = ?",
+                    (
+                        status,
+                        json.dumps(full_counts),
+                        json.dumps(assessment_error) if assessment_error else None,
+                        finished_at,
+                        run_id,
+                    ),
+                )
+            result_payload = {
+                "run_id": run_id,
+                "profile_version_id": profile["profile_version_id"],
+                "counts": full_counts,
+            }
+            if status == "failed":
+                retryable = any(result.error and result.error.retryable for result in results)
+                self._tasks.finish(
+                    task_id,
+                    status,
+                    result=result_payload,
+                    error={
+                        "code": "discovery_failed",
+                        "message": "Semua sumber gagal diambil.",
+                        "stage": "fetch",
+                        "retryable": retryable,
+                        "run_id": run_id,
+                        "request_id": None,
+                        "details": [],
+                    },
+                )
+            else:
+                self._tasks.finish(
+                    task_id, status, result=result_payload, error=assessment_error
+                )
+            return self.get_run(run_id)
+        except BaseException:
+            if task_id is not None and run_id is not None:
+                self._fail_run(run_id, task_id)
+            raise
+        finally:
+            if task_id is not None:
+                _clear_active(task_id)
+            self._release_lock()
+
+    def _assess(self, profile: dict) -> tuple[dict, dict | None]:
+        """Assess new jobs after the fetch stage.
+
+        A failure here must not lose the fetch evidence, but it must also not be
+        hidden: the caller reports ``assessment_failed`` on the run.
+        """
+        try:
+            result = AssessmentService(self._connection, self._profiles).assess_pending()
+            AssessmentService(self._connection, self._profiles).recompute_ranking()
+            return result, None
+        except Exception as exc:
+            # Metadata only: no description, profile, or document content in logs.
+            logger.warning("assessment failed: %s", type(exc).__name__)
+            return (
+                {"eligible": 0, "needs_review": 0, "ineligible": 0},
+                {
+                    "code": "assessment_failed",
+                    "message": "Lowongan tersimpan tetapi analisis eligibility/fit gagal.",
+                    "stage": "eligibility",
+                    # No failed source to retry: the fetch data is already stored.
+                    "retryable": False,
+                    "run_id": None,
                     "request_id": None,
                     "details": [],
                 },
             )
-        else:
-            self._tasks.finish(task["task_id"], status, result=result_payload)
-        return self.get_run(run_id)
+
+    def _acquire_lock(self) -> bool:
+        row = self._connection.execute(
+            "SELECT GET_LOCK(?, 0) AS acquired", (DISCOVERY_LOCK,)
+        ).fetchone()
+        return bool(row and row["acquired"] == 1)
+
+    def _release_lock(self) -> None:
+        try:
+            self._connection.execute("SELECT RELEASE_LOCK(?)", (DISCOVERY_LOCK,))
+        except Exception:
+            # A broken connection drops its own locks server-side.
+            return
+
+    def _fail_source(self, run_id: str, result: _SourceResult) -> dict:
+        error = _error_payload(
+            FetchError("source_error", "Sumber gagal diproses.", retryable=True), run_id
+        )
+        try:
+            self._store_fetch(
+                run_id,
+                result.source["source_id"],
+                result.response,
+                result.response.body if result.response else "",
+                error,
+            )
+            self._update_source_progress(
+                run_id,
+                result.source["source_id"],
+                status="failed",
+                fetched=0,
+                accepted=0,
+                duplicates=0,
+                error=error,
+                close_skipped=None,
+                stats=None,
+            )
+        except Exception:
+            # The outer lifecycle handler fails the whole run if the DB is gone.
+            pass
+        return {"status": "failed", "fetched": 0, "accepted": 0, "duplicates": 0}
+
+    def _fail_run(self, run_id: str, task_id: str) -> None:
+        """Fail an unfinished run and its task; never overwrite a final status."""
+        timestamp = now_iso()
+        error = {
+            "code": "internal_error",
+            "message": "Run discovery gagal karena kesalahan internal.",
+            "stage": "fetch",
+            "retryable": True,
+            "run_id": run_id,
+            "request_id": None,
+            "details": [],
+        }
+        try:
+            run = self._connection.execute(
+                "SELECT status, counts_json FROM discovery_run WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            task = self._tasks.get(task_id)
+            if task is not None and task["status"] in {"queued", "processing"}:
+                if run is not None and run["status"] in {"completed", "partial"}:
+                    # The run finished; keep the task in the same direction.
+                    self._tasks.finish(
+                        task_id,
+                        run["status"],
+                        result={
+                            "run_id": run_id,
+                            "counts": json.loads(run["counts_json"] or "{}"),
+                        },
+                    )
+                    return
+                self._tasks.finish(task_id, "failed", error=error)
+            with self._connection:
+                self._connection.execute(
+                    "UPDATE discovery_run SET status = 'failed', error_json = ?, finished_at = ? "
+                    "WHERE run_id = ? AND status = 'processing'",
+                    (json.dumps(error), timestamp, run_id),
+                )
+                self._connection.execute(
+                    "UPDATE discovery_run_source SET status = 'failed', error_json = ?, "
+                    "last_attempt_at = ? WHERE run_id = ? AND status IN ('queued', 'processing')",
+                    (json.dumps(error), timestamp, run_id),
+                )
+        except Exception:
+            # A broken connection must not mask the original failure.
+            return
+
+    def _reap_stale(self) -> None:
+        """Fail discovery tasks whose heartbeat stopped and that no live run owns."""
+        with _ACTIVE_LOCK:
+            active = set(_ACTIVE_TASKS)
+        stale = self._tasks.reap_stale(exclude=active, older_than_s=STALE_AFTER_S)
+        if not stale:
+            return
+        error = {
+            "code": "stale_run",
+            "message": "Run discovery berhenti sebelum selesai.",
+            "stage": "fetch",
+            "retryable": True,
+            "run_id": None,
+            "request_id": None,
+            "details": [],
+        }
+        placeholders = ", ".join("?" for _ in stale)
+        with self._connection:
+            self._connection.execute(
+                f"UPDATE discovery_run SET status = 'failed', error_json = ?, finished_at = ? "
+                f"WHERE status = 'processing' AND task_id IN ({placeholders})",
+                (json.dumps(error), now_iso(), *stale),
+            )
 
     def retry(
         self,
         task_id: str,
         *,
-        scope: str = "failed_sources",
+        scope: str | None = None,
         source_ids: list[str] | None = None,
     ) -> dict:
-        """Repeat failed or partial sources; successful results stay untouched."""
+        """Repeat failed or partial sources; successful results stay untouched.
+
+        ``scope=None`` is the default and means "failed sources only". ``all``
+        must be requested explicitly and then repeats every source of the run.
+        """
         task = self._tasks.get(task_id)
         if task is None:
             raise MasterCvError("not_found", "Task tidak ditemukan.", 404)
@@ -202,7 +423,7 @@ class DiscoveryService:
         if run is None:
             raise MasterCvError("task_not_retryable", "Run discovery tidak ditemukan.", 409)
         candidates = run["sources"]
-        if scope == "failed_sources":
+        if scope in {None, "failed_sources"}:
             candidates = [
                 item
                 for item in candidates
@@ -238,7 +459,11 @@ class DiscoveryService:
             return self._registry.enabled_verified()
         selected: list[dict] = []
         missing: list[str] = []
+        seen: set[str] = set()
         for source_id in source_ids:
+            if source_id in seen:
+                continue
+            seen.add(source_id)
             record = self._registry.get(source_id)
             if record is None:
                 missing.append(source_id)
@@ -253,21 +478,60 @@ class DiscoveryService:
     def _fetch_all(self, sources: list[dict]) -> list[_SourceResult]:
         if not sources:
             return []
+        deadline = time.monotonic() + self._max_run_seconds
         results: list[_SourceResult] = []
-        with ThreadPoolExecutor(max_workers=self._max_workers) as pool:
-            futures = [pool.submit(self._fetch_one, source) for source in sources]
-            for future in futures:
-                results.append(future.result())
+        pool = ThreadPoolExecutor(max_workers=self._max_workers)
+        try:
+            futures = [(pool.submit(self._fetch_one, source), source) for source in sources]
+            for future, source in futures:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    results.append(_timeout_result(source))
+                    continue
+                try:
+                    results.append(future.result(timeout=remaining))
+                except FuturesTimeout:
+                    results.append(_timeout_result(source))
+                except Exception:
+                    results.append(
+                        _SourceResult(
+                            source=source,
+                            error=FetchError(
+                                "source_error", "Sumber gagal diambil.", retryable=True
+                            ),
+                        )
+                    )
+        finally:
+            # A source still blocked in a fetch is abandoned; its own HTTP
+            # timeout bounds it, and the run must not wait past the deadline.
+            pool.shutdown(wait=False, cancel_futures=True)
         return results
 
     def _fetch_one(self, source: dict) -> _SourceResult:
-        adapter = ADAPTERS[source["ats"]]
+        adapter = ADAPTERS.get(source["ats"])
+        if adapter is None:
+            return _SourceResult(
+                source=source,
+                error=FetchError(
+                    "source_unsupported", "Adapter ATS belum tersedia.", retryable=False
+                ),
+            )
         try:
             response = fetch_source(
                 source, adapter, fetcher=self._fetcher, limiter=self._limiter
             )
         except FetchError as exc:
             return _SourceResult(source=source, error=exc)
+        except AdapterError as exc:
+            return _SourceResult(
+                source=source,
+                error=FetchError("source_unavailable", str(exc), retryable=False),
+            )
+        except Exception:
+            return _SourceResult(
+                source=source,
+                error=FetchError("source_error", "Sumber gagal diambil.", retryable=True),
+            )
         try:
             jobs = adapter.parse(response.body, source)
         except AdapterError as exc:
@@ -276,7 +540,15 @@ class DiscoveryService:
                 response=response,
                 error=FetchError("source_parse_failed", str(exc), retryable=False),
             )
-        return _SourceResult(source=source, response=response, jobs=jobs)
+        except Exception:
+            return _SourceResult(
+                source=source,
+                response=response,
+                error=FetchError("source_error", "Payload sumber tidak dapat dibaca.", retryable=False),
+            )
+        return _SourceResult(
+            source=source, response=response, jobs=jobs, skipped=jobs.skipped
+        )
 
     def _persist_source(self, run_id: str, result: _SourceResult) -> dict:
         source = result.source
@@ -288,7 +560,7 @@ class DiscoveryService:
             self._store_fetch(run_id, source["source_id"], result.response, raw, error)
             self._update_source_progress(
                 run_id, source["source_id"], status="failed", fetched=0, accepted=0,
-                duplicates=0, error=error,
+                duplicates=0, error=error, close_skipped=None, stats=None,
             )
             return {"status": "failed", "fetched": 0, "accepted": 0, "duplicates": 0}
 
@@ -296,25 +568,46 @@ class DiscoveryService:
         self._store_fetch(run_id, source["source_id"], result.response, raw, None)
         raw_sha = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         fetched = 0
+        invalid = 0
         accepted = 0
         duplicates = 0
+        truncated = 0
+        stale = 0
         seen: set[str] = set()
         for raw_job in result.jobs or []:
             fetched += 1
             try:
                 record = normalize(raw_job, source, fetched_at)
             except InvalidJob:
+                invalid += 1
                 continue
             seen.add(record["source_job_id"])
-            created = self._store_job(record, raw_sha, fetched_at)
+            if record["description_truncated"]:
+                truncated += 1
+            if record["completeness"]["stale"]:
+                stale += 1
+            created, job_id = self._store_job(record, raw_sha, fetched_at)
             if created:
                 accepted += 1
             else:
                 duplicates += 1
-        closed = self._close_missing(source["source_id"], seen, fetched_at)
+            # Cross-source duplicates are recorded in duplicate_of; duplicate_count
+            # keeps its documented meaning of "already seen on this source".
+            link_duplicate(self._connection, job_id, record)
+        close_skipped = _close_decision(fetched, invalid, seen, result.response)
+        closed = 0 if close_skipped else self._close_missing(
+            source["source_id"], seen, fetched_at
+        )
+        stats = {
+            "skipped": result.skipped,
+            "invalid": invalid,
+            "truncated": truncated,
+            "stale": stale,
+        }
         self._update_source_progress(
             run_id, source["source_id"], status="completed", fetched=fetched,
             accepted=accepted, duplicates=duplicates, error=None,
+            close_skipped=close_skipped, stats=stats,
         )
         return {
             "status": "completed",
@@ -322,6 +615,8 @@ class DiscoveryService:
             "accepted": accepted,
             "duplicates": duplicates,
             "closed": closed,
+            "close_skipped": close_skipped,
+            "stats": stats,
         }
 
     def _store_fetch(
@@ -336,7 +631,8 @@ class DiscoveryService:
         with self._connection:
             self._connection.execute(
                 "INSERT INTO source_fetch (fetch_id, run_id, source_id, status, http_status, "
-                "fetched_at, raw_sha256, raw_json, error_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "fetched_at, raw_sha256, raw_json, error_json, final_url) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     new_id("fet"),
                     run_id,
@@ -347,30 +643,70 @@ class DiscoveryService:
                     raw_sha,
                     raw,
                     json.dumps(error) if error else None,
+                    response.final_url if response else None,
                 ),
             )
 
-    def _store_job(self, record: dict, raw_sha: str, fetched_at: str) -> bool:
+    def _store_job(self, record: dict, raw_sha: str, fetched_at: str) -> tuple[bool, str]:
         existing = self._connection.execute(
             "SELECT job_id, latest_version_id FROM job WHERE source_id = ? AND source_job_id = ?",
             (record["source_id"], record["source_job_id"]),
         ).fetchone()
         if existing is not None:
             version = self._connection.execute(
-                "SELECT content_hash FROM job_posting_version WHERE job_id = ? "
-                "ORDER BY created_at DESC LIMIT 1",
-                (existing["job_id"],),
+                "SELECT job_posting_version_id, content_hash FROM job_posting_version "
+                "WHERE job_id = ? AND content_hash = ?",
+                (existing["job_id"], record["content_hash"]),
             ).fetchone()
-            latest = existing["latest_version_id"]
-            if version is None or version["content_hash"] != record["content_hash"]:
-                latest = self._insert_version(existing["job_id"], record, raw_sha, fetched_at)
-            with self._connection:
-                self._connection.execute(
-                    "UPDATE job SET fetched_at = ?, latest_version_id = ?, status = 'open', "
-                    "updated_at = ? WHERE job_id = ?",
-                    (fetched_at, latest, now_iso(), existing["job_id"]),
+            timestamp = now_iso()
+            if version is None:
+                latest = self._insert_version(
+                    existing["job_id"], record, raw_sha, fetched_at
                 )
-            return False
+                with self._connection:
+                    self._connection.execute(
+                        "UPDATE job SET canonical_url = ?, apply_url = ?, company = ?, "
+                        "title = ?, location_json = ?, work_mode = ?, employment_type = ?, "
+                        "seniority = ?, market = ?, posted_at = ?, fetched_at = ?, "
+                        "last_seen_at = ?, latest_version_id = ?, description_truncated = ?, "
+                        "stale = ?, fingerprint = ?, status = 'open', updated_at = ? "
+                        "WHERE job_id = ?",
+                        (
+                            record["canonical_url"],
+                            record["apply_url"],
+                            record["company"],
+                            record["title"],
+                            json.dumps(record["location"], ensure_ascii=False),
+                            record["work_mode"],
+                            record["employment_type"],
+                            record["seniority"],
+                            record["market"],
+                            record["posted_at"],
+                            fetched_at,
+                            fetched_at,
+                            latest,
+                            1 if record["description_truncated"] else 0,
+                            1 if record["completeness"]["stale"] else 0,
+                            record["fingerprint"],
+                            timestamp,
+                            existing["job_id"],
+                        ),
+                    )
+            else:
+                with self._connection:
+                    self._connection.execute(
+                        "UPDATE job SET fetched_at = ?, last_seen_at = ?, "
+                        "latest_version_id = ?, status = 'open', updated_at = ? "
+                        "WHERE job_id = ?",
+                        (
+                            fetched_at,
+                            fetched_at,
+                            version["job_posting_version_id"],
+                            timestamp,
+                            existing["job_id"],
+                        ),
+                    )
+            return False, existing["job_id"]
 
         job_id = new_id("job")
         timestamp = now_iso()
@@ -378,9 +714,11 @@ class DiscoveryService:
             self._connection.execute(
                 "INSERT INTO job (job_id, source_id, source_job_id, canonical_url, apply_url, "
                 "company, title, location_json, work_mode, employment_type, seniority, market, "
-                "posted_at, fetched_at, status, duplicate_of, latest_version_id, "
-                "completeness_json, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, NULL, ?, ?, ?)",
+                "posted_at, fetched_at, status, duplicate_of, fingerprint, latest_version_id, "
+                "description_truncated, stale, completeness_json, created_at, updated_at, "
+                "last_seen_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, ?, NULL, ?, ?, "
+                "?, ?, ?, ?)",
                 (
                     job_id,
                     record["source_id"],
@@ -396,9 +734,13 @@ class DiscoveryService:
                     record["market"],
                     record["posted_at"],
                     fetched_at,
+                    record["fingerprint"],
+                    1 if record["description_truncated"] else 0,
+                    1 if record["completeness"]["stale"] else 0,
                     json.dumps(record["completeness"], ensure_ascii=False),
                     timestamp,
                     timestamp,
+                    fetched_at,
                 ),
             )
         version_id = self._insert_version(job_id, record, raw_sha, fetched_at)
@@ -406,7 +748,7 @@ class DiscoveryService:
             self._connection.execute(
                 "UPDATE job SET latest_version_id = ? WHERE job_id = ?", (version_id, job_id)
             )
-        return True
+        return True, job_id
 
     def _close_missing(self, source_id: str, seen: set[str], timestamp: str) -> int:
         """Mark jobs absent from a successful fetch as closed; never delete them."""
@@ -455,12 +797,14 @@ class DiscoveryService:
         accepted: int,
         duplicates: int,
         error: dict | None,
+        close_skipped: dict | None,
+        stats: dict | None,
     ) -> None:
         with self._connection:
             self._connection.execute(
                 "UPDATE discovery_run_source SET status = ?, fetched_count = ?, "
-                "accepted_count = ?, duplicate_count = ?, last_attempt_at = ?, error_json = ? "
-                "WHERE run_id = ? AND source_id = ?",
+                "accepted_count = ?, duplicate_count = ?, last_attempt_at = ?, error_json = ?, "
+                "close_skipped_json = ?, stats_json = ? WHERE run_id = ? AND source_id = ?",
                 (
                     status,
                     fetched,
@@ -468,6 +812,8 @@ class DiscoveryService:
                     duplicates,
                     now_iso(),
                     json.dumps(error) if error else None,
+                    json.dumps(close_skipped) if close_skipped else None,
+                    json.dumps(stats) if stats else None,
                     run_id,
                     source_id,
                 ),
@@ -482,23 +828,50 @@ class DiscoveryService:
         return self._to_run(row)
 
     def list_runs(self, limit: int = 50, cursor: str | None = None) -> tuple[list[dict], str | None]:
-        rows = self._connection.execute(
-            "SELECT * FROM discovery_run ORDER BY started_at DESC, run_id DESC"
-        ).fetchall()
-        runs = [self._to_run(row) for row in rows]
+        """Keyset pagination on (started_at, run_id); sources load in one query."""
+        params: list = []
+        where = ""
         if cursor:
-            runs = [run for run in runs if run["run_id"] < cursor]
-        page = runs[:limit]
-        return page, page[-1]["run_id"] if len(runs) > limit and page else None
-
-    def _to_run(self, row: dict) -> dict:
-        sources = [
-            _to_progress(item)
+            anchor = self._connection.execute(
+                "SELECT started_at, run_id FROM discovery_run WHERE run_id = ?", (cursor,)
+            ).fetchone()
+            if anchor is None:
+                return [], None
+            where = "WHERE started_at < ? OR (started_at = ? AND run_id < ?)"
+            params = [anchor["started_at"], anchor["started_at"], anchor["run_id"]]
+        rows = self._connection.execute(
+            f"SELECT * FROM discovery_run {where} "
+            "ORDER BY started_at DESC, run_id DESC LIMIT ?",
+            (*params, limit + 1),
+        ).fetchall()
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        run_ids = [row["run_id"] for row in page]
+        sources: dict[str, list[dict]] = {run_id: [] for run_id in run_ids}
+        if run_ids:
+            placeholders = ", ".join("?" for _ in run_ids)
             for item in self._connection.execute(
-                "SELECT * FROM discovery_run_source WHERE run_id = ? ORDER BY company",
-                (row["run_id"],),
-            ).fetchall()
-        ]
+                f"SELECT * FROM discovery_run_source WHERE run_id IN ({placeholders}) "
+                "ORDER BY company",
+                run_ids,
+            ).fetchall():
+                sources[item["run_id"]].append(_to_progress(item))
+        runs = [self._to_run(row, sources[row["run_id"]]) for row in page]
+        return runs, (page[-1]["run_id"] if has_more else None)
+
+    def job_total(self) -> int:
+        row = self._connection.execute("SELECT COUNT(*) AS total FROM job").fetchone()
+        return int(row["total"]) if row else 0
+
+    def _to_run(self, row: dict, sources: list[dict] | None = None) -> dict:
+        if sources is None:
+            sources = [
+                _to_progress(item)
+                for item in self._connection.execute(
+                    "SELECT * FROM discovery_run_source WHERE run_id = ? ORDER BY company",
+                    (row["run_id"],),
+                ).fetchall()
+            ]
         return {
             "run_id": row["run_id"],
             "task_id": row["task_id"],
@@ -512,16 +885,45 @@ class DiscoveryService:
         }
 
 
+def _close_decision(
+    fetched: int, invalid: int, seen: set[str], response: FetchResponse | None
+) -> dict | None:
+    """Return a diagnosis when this snapshot must not close absent jobs."""
+    if response is not None and response.truncated:
+        return _skip_error("payload_truncated", "Payload sumber terindikasi terpotong.")
+    if fetched == 0:
+        return _skip_error("empty_snapshot", "Snapshot tidak memuat record.")
+    if not seen:
+        return _skip_error(
+            "all_records_invalid", "Semua record gagal dinormalisasi."
+        )
+    if invalid / fetched > MAX_INVALID_RATIO:
+        return _skip_error(
+            "invalid_ratio_high",
+            f"Rasio record invalid melebihi {MAX_INVALID_RATIO:.0%}.",
+        )
+    return None
+
+
 def _skip_reason(source: dict) -> dict | None:
     if not source["enabled"]:
         return _skip_error("source_not_verified", "Sumber nonaktif.")
     if source["verification_status"] != FETCHABLE:
         return _skip_error("source_not_verified", "Sumber belum diverifikasi.")
-    if source["ats"] not in ADAPTERS:
-        return _skip_error("source_unsupported", "Adapter ATS belum tersedia.")
     if source["access_method"] != "ats_api":
         return _skip_error("source_unsupported", "Adapter HTML belum tersedia.")
+    if source["ats"] not in ADAPTERS:
+        return _skip_error("source_unsupported", "Adapter ATS belum tersedia.")
     return None
+
+
+def _timeout_result(source: dict) -> _SourceResult:
+    return _SourceResult(
+        source=source,
+        error=FetchError(
+            "run_timeout", "Batas durasi run discovery tercapai.", retryable=True
+        ),
+    )
 
 
 def _skip_error(code: str, message: str) -> dict:
@@ -567,4 +969,8 @@ def _to_progress(row: dict) -> dict:
         "retry_count": row["retry_count"],
         "last_attempt_at": row["last_attempt_at"],
         "error": json.loads(row["error_json"]) if row["error_json"] else None,
+        "close_skipped": (
+            json.loads(row["close_skipped_json"]) if row["close_skipped_json"] else None
+        ),
+        "stats": json.loads(row["stats_json"]) if row["stats_json"] else None,
     }

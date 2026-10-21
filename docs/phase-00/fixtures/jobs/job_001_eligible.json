@@ -1,0 +1,84 @@
+{
+  "job_id": "job_fixture_001",
+  "job_posting_version_id": "jpv_fixture_001",
+  "content_hash": "1111111111111111111111111111111111111111111111111111111111111111",
+  "source": {
+    "source_id": "manual_url",
+    "source_kind": "manual_url",
+    "company": null,
+    "verification_status": "verified",
+    "access_method": "manual_url"
+  },
+  "company": "Contoh Global",
+  "title": "Senior Backend Engineer",
+  "location": {
+    "raw": "Remote - worldwide",
+    "city": null,
+    "region": null,
+    "country": null,
+    "is_remote": true
+  },
+  "work_mode": "remote",
+  "employment_type": "full_time",
+  "seniority": "senior",
+  "market": "global",
+  "posted_at": "2026-10-10T00:00:00Z",
+  "fetched_at": "2026-10-18T10:00:00Z",
+  "analyzed_at": "2026-10-18T10:02:00Z",
+  "canonical_url": "https://example.com/jobs/senior-backend-engineer",
+  "apply_url": "https://example.com/jobs/senior-backend-engineer/apply",
+  "apply_url_status": "available",
+  "priority_tier": "P2",
+  "priority_reason": "Sumber menyatakan remote worldwide.",
+  "priority_confidence": "high",
+  "description_text": "We are hiring a Senior Backend Engineer. Remote - anywhere in the world. You will build payment services in Python. Required: 5+ years backend experience, strong Python, PostgreSQL. Preferred: FastAPI, experience with billing systems. You must be available to start within four weeks.",
+  "description_truncated": false,
+  "requirements": [
+    {
+      "requirement_id": "req_fixture_001_must_1",
+      "kind": "must_have",
+      "text": "5+ years backend experience",
+      "quote": "Required: 5+ years backend experience",
+      "skill": null,
+      "weight": null
+    },
+    {
+      "requirement_id": "req_fixture_001_must_2",
+      "kind": "must_have",
+      "text": "strong Python",
+      "quote": "strong Python, PostgreSQL",
+      "skill": "Python",
+      "weight": null
+    },
+    {
+      "requirement_id": "req_fixture_001_must_3",
+      "kind": "must_have",
+      "text": "PostgreSQL",
+      "quote": "strong Python, PostgreSQL",
+      "skill": "PostgreSQL",
+      "weight": null
+    },
+    {
+      "requirement_id": "req_fixture_001_nice_1",
+      "kind": "nice_to_have",
+      "text": "FastAPI",
+      "quote": "Preferred: FastAPI, experience with billing systems.",
+      "skill": "FastAPI",
+      "weight": null
+    },
+    {
+      "requirement_id": "req_fixture_001_nice_2",
+      "kind": "nice_to_have",
+      "text": "experience with billing systems",
+      "quote": "Preferred: FastAPI, experience with billing systems.",
+      "skill": null,
+      "weight": null
+    }
+  ],
+  "duplicate_of": null,
+  "completeness": {
+    "missing_fields": [],
+    "fetched_at": "2026-10-18T10:00:00Z",
+    "stale": false
+  }
+}

@@ -14,13 +14,25 @@ from starlette.concurrency import run_in_threadpool
 from .. import API_VERSION, __version__
 from ..config import Config, resolve_api_key
 from ..db import repo
+from ..jobs.fetch import HostRateLimiter
 from ..llm.client import LLMClient
 from ..llm.providers.openai_compatible import OpenAICompatibleProvider
 from ..llm.providers.synthetic import SyntheticExtractProvider
 from ..security import csrf
 from ..security.consent import ConsentStore
 from .errors import ApiError, error_payload, payload_for
-from .routes import discovery, overview, session, settings, setup, sources, tasks
+from .routes import (
+    applications,
+    discovery,
+    documents,
+    matches,
+    overview,
+    session,
+    settings,
+    setup,
+    sources,
+    tasks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +90,8 @@ def create_app(
     app.state.sessions = {}
     app.state.llm_client = llm_client or build_llm_client(config)
     app.state.discovery_fetcher = None
-    app.state.discovery_limiter = None
+    # One limiter per app: the per-host interval must survive across requests.
+    app.state.discovery_limiter = HostRateLimiter()
 
     @app.middleware("http")
     async def db_session(request: Request, call_next):
@@ -163,6 +176,9 @@ def create_app(
     app.include_router(settings.router)
     app.include_router(sources.router)
     app.include_router(discovery.router)
+    app.include_router(matches.router)
+    app.include_router(applications.router)
+    app.include_router(documents.router)
     app.include_router(tasks.router)
 
     dist = config.dist_dir

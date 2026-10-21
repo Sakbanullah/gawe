@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api")
 class RetryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    scope: Literal["all", "failed_sources"] = "all"
+    scope: Literal["all", "failed_sources"] | None = None
     source_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
@@ -46,7 +46,13 @@ def retry_task(
                 source_ids=payload.source_ids or None,
             )
         except MasterCvError as exc:
-            raise ApiError(exc.status_code, exc.code, exc.message, stage="fetch") from exc
+            raise ApiError(
+                exc.status_code,
+                exc.code,
+                exc.message,
+                stage="fetch",
+                active_task_id=exc.active_task_id,
+            ) from exc
         return {
             "task_id": run["task_id"],
             "type": "discovery",

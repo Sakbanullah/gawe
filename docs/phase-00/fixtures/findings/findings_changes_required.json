@@ -1,0 +1,42 @@
+{
+  "document_version_id": "docv_fixture_001",
+  "profile_version_id": "prv_fixture_ayu_0001",
+  "review_run_id": "rev_fixture_001",
+  "cycle": 1,
+  "verdict": "changes_required",
+  "findings": [
+    {
+      "finding_id": "f_fixture_001",
+      "severity": "blocker",
+      "category": "factuality",
+      "location": {
+        "doc": "cv",
+        "section": "experience",
+        "bullet_id": "exp_fixture_001_b2"
+      },
+      "quote": "processing 4.8 million requests per day",
+      "problem": "Angka tidak ada di evidence. Profil mencatat 1.2 million requests per day.",
+      "evidence_refs": ["ev_fixture_exp_001_b2"],
+      "suggested_fix": "Gunakan angka dari evidence: 1.2 million requests per day.",
+      "auto_fixable": true,
+      "status": "open"
+    },
+    {
+      "finding_id": "f_fixture_002",
+      "severity": "major",
+      "category": "ats",
+      "location": {
+        "doc": "cv",
+        "section": "skills",
+        "bullet_id": null
+      },
+      "quote": "Skills presented in a two-column table",
+      "problem": "Tabel layout merusak keterbacaan ATS. Aturan: satu kolom, tanpa tabel layout.",
+      "evidence_refs": [],
+      "suggested_fix": "Ubah menjadi daftar satu kolom.",
+      "auto_fixable": true,
+      "status": "open"
+    }
+  ],
+  "reviewed_at": "2026-10-18T11:00:00Z"
+}

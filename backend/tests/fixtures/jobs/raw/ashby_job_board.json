@@ -1,0 +1,29 @@
+{
+  "jobs": [
+    {
+      "id": "ash-3001",
+      "title": "Frontend Engineer",
+      "location": "Jakarta, Indonesia",
+      "department": "Engineering",
+      "descriptionHtml": "<p>Build UI with React.</p>",
+      "publishedAt": "2026-10-01T00:00:00.000Z",
+      "employmentType": "FullTime",
+      "workplaceType": "Hybrid",
+      "isListed": true,
+      "isRemote": false,
+      "jobUrl": "https://jobs.ashbyhq.com/acme/ash-3001",
+      "applyUrl": "https://jobs.ashbyhq.com/acme/ash-3001/application"
+    },
+    {
+      "id": "ash-3002",
+      "title": "Unlisted Role",
+      "location": "Remote - Worldwide",
+      "descriptionHtml": "<p>Should not be stored.</p>",
+      "employmentType": "FullTime",
+      "workplaceType": "Remote",
+      "isListed": false,
+      "isRemote": true,
+      "jobUrl": "https://jobs.ashbyhq.com/acme/ash-3002"
+    }
+  ]
+}

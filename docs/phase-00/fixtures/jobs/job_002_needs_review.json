@@ -1,0 +1,68 @@
+{
+  "job_id": "job_fixture_002",
+  "job_posting_version_id": "jpv_fixture_002",
+  "content_hash": "2222222222222222222222222222222222222222222222222222222222222222",
+  "source": {
+    "source_id": "manual_url",
+    "source_kind": "manual_url",
+    "company": null,
+    "verification_status": "verified",
+    "access_method": "manual_url"
+  },
+  "company": "PT Contoh Nusantara",
+  "title": "Backend Engineer",
+  "location": {
+    "raw": "Jakarta, Indonesia (remote)",
+    "city": "Jakarta",
+    "region": "DKI Jakarta",
+    "country": "Indonesia",
+    "is_remote": true
+  },
+  "work_mode": "remote",
+  "employment_type": "full_time",
+  "seniority": "mid",
+  "market": "indonesia",
+  "posted_at": "2026-10-12T00:00:00Z",
+  "fetched_at": "2026-10-18T10:05:00Z",
+  "analyzed_at": "2026-10-18T10:07:00Z",
+  "canonical_url": "https://example.co.id/lowongan/backend-engineer",
+  "apply_url": "https://example.co.id/lowongan/backend-engineer/lamar",
+  "apply_url_status": "available",
+  "priority_tier": "P3",
+  "priority_reason": "Remote dengan lokasi Jakarta, Indonesia.",
+  "priority_confidence": "high",
+  "description_text": "Kami mencari Backend Engineer untuk tim pembayaran. Remote dari Indonesia. Wajib menguasai Python. Kandidat harus dapat bergabung dalam dua minggu. Nilai tambah: pengalaman PostgreSQL.",
+  "description_truncated": false,
+  "requirements": [
+    {
+      "requirement_id": "req_fixture_002_must_1",
+      "kind": "must_have",
+      "text": "Wajib menguasai Python",
+      "quote": "Wajib menguasai Python.",
+      "skill": "Python",
+      "weight": null
+    },
+    {
+      "requirement_id": "req_fixture_002_must_2",
+      "kind": "must_have",
+      "text": "Dapat bergabung dalam dua minggu",
+      "quote": "Kandidat harus dapat bergabung dalam dua minggu.",
+      "skill": null,
+      "weight": null
+    },
+    {
+      "requirement_id": "req_fixture_002_nice_1",
+      "kind": "nice_to_have",
+      "text": "Pengalaman PostgreSQL",
+      "quote": "Nilai tambah: pengalaman PostgreSQL.",
+      "skill": "PostgreSQL",
+      "weight": null
+    }
+  ],
+  "duplicate_of": null,
+  "completeness": {
+    "missing_fields": [],
+    "fetched_at": "2026-10-18T10:05:00Z",
+    "stale": false
+  }
+}

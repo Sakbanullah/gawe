@@ -44,7 +44,9 @@ class SourceUpdateRequest(BaseModel):
 
 
 def _api_error(exc: SourceError) -> ApiError:
-    return ApiError(exc.status_code, exc.code, exc.message, stage="validation")
+    return ApiError(
+        exc.status_code, exc.code, exc.message, stage="validation", details=exc.details
+    )
 
 
 @router.get("")

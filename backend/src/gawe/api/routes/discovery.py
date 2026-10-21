@@ -47,8 +47,18 @@ def start_discovery_run(request: Request, body: DiscoveryRunCreateRequest | None
             source_ids=payload.source_ids or None,
             profile_version_id=payload.profile_version_id,
         )
-    except (MasterCvError, SourceError) as exc:
-        raise ApiError(exc.status_code, exc.code, exc.message, stage="fetch") from exc
+    except MasterCvError as exc:
+        raise ApiError(
+            exc.status_code,
+            exc.code,
+            exc.message,
+            stage="fetch",
+            active_task_id=exc.active_task_id,
+        ) from exc
+    except SourceError as exc:
+        raise ApiError(
+            exc.status_code, exc.code, exc.message, stage="fetch", details=exc.details
+        ) from exc
     return {
         "task_id": run["task_id"],
         "type": "discovery",

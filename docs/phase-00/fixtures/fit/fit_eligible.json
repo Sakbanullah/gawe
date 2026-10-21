@@ -1,0 +1,63 @@
+{
+  "assessment_id": "fita_fixture_001",
+  "job_posting_version_id": "jpv_fixture_001",
+  "profile_version_id": "prv_fixture_ayu_0001",
+  "fit_score": 88,
+  "verdict": "strong",
+  "confidence": "high",
+  "components": [
+    {
+      "name": "must_coverage",
+      "weight": 0.6,
+      "value": 1.0,
+      "contribution": 60.0,
+      "requirement_ids": [
+        "req_fixture_001_must_1",
+        "req_fixture_001_must_2",
+        "req_fixture_001_must_3"
+      ],
+      "evidence_ids": [
+        "ev_fixture_exp_001_b1",
+        "ev_fixture_exp_001_b2",
+        "ev_fixture_skill_python",
+        "ev_fixture_skill_postgresql"
+      ]
+    },
+    {
+      "name": "nice_coverage",
+      "weight": 0.15,
+      "value": 0.5,
+      "contribution": 7.5,
+      "requirement_ids": [
+        "req_fixture_001_nice_1",
+        "req_fixture_001_nice_2"
+      ],
+      "evidence_ids": [
+        "ev_fixture_skill_fastapi",
+        "ev_fixture_exp_001_b1"
+      ]
+    },
+    {
+      "name": "experience_fit",
+      "weight": 0.25,
+      "value": 0.8,
+      "contribution": 20.0,
+      "requirement_ids": [],
+      "evidence_ids": [
+        "ev_fixture_exp_001_b1",
+        "ev_fixture_exp_001_b2",
+        "ev_fixture_exp_002_b1"
+      ]
+    }
+  ],
+  "gaps": [
+    {
+      "requirement_id": "req_fixture_001_nice_2",
+      "description": "Pengalaman billing tercatat sebagian; tidak ada bukti sistem billing skala besar selain migrasi layanan.",
+      "evidence_ids": ["ev_fixture_exp_001_b1"]
+    }
+  ],
+  "status_outdated": false,
+  "outdated_reason": null,
+  "computed_at": "2026-10-18T10:18:00Z"
+}

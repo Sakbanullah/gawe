@@ -3,21 +3,30 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from ...db.repo import Connection
 from ...master_cv import new_id, now_iso
 from ...security.url_guard import UnsafeUrl, validate_url
+from .. import ADAPTERS
 
 FETCHABLE = "verified"
 VERIFICATION = {"unverified", "verified", "restricted", "broken"}
 
 
 class SourceError(Exception):
-    def __init__(self, code: str, message: str, status_code: int = 409) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int = 409,
+        details: list[dict[str, Any]] | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.details = details or []
 
 
 def _validate_url(url: str) -> str:
@@ -26,6 +35,43 @@ def _validate_url(url: str) -> str:
     except UnsafeUrl as exc:
         raise SourceError("url_rejected", f"careers_url ditolak: {exc}.", 400) from exc
 
+
+def _validate_ats(ats: str, access_method: str, careers_url: str) -> None:
+    """Reject an ATS/host pair that no adapter can ever fetch.
+
+    HTML sources may be stored unverified without an adapter (D-C), but an
+    ``ats_api`` source must resolve to a real adapter and the matching host.
+    """
+    if access_method != "ats_api":
+        return
+    adapter = ADAPTERS.get(ats)
+    if adapter is None:
+        raise SourceError(
+            "validation_failed",
+            "ATS tidak tersedia untuk akses API.",
+            400,
+            details=[
+                {
+                    "field": "careers_url",
+                    "code": "ats_unavailable",
+                    "message": "ATS harus salah satu dari: " + ", ".join(sorted(ADAPTERS)),
+                }
+            ],
+        )
+    host = (urlsplit(careers_url).hostname or "").lower()
+    if host not in adapter.CAREER_HOSTS:
+        raise SourceError(
+            "validation_failed",
+            "Host careers_url tidak cocok dengan ATS.",
+            400,
+            details=[
+                {
+                    "field": "careers_url",
+                    "code": "ats_host_mismatch",
+                    "message": f"Host harus salah satu dari: {', '.join(adapter.CAREER_HOSTS)}",
+                }
+            ],
+        )
 
 class SourceRegistry:
     def __init__(self, connection: Connection) -> None:
@@ -79,6 +125,7 @@ class SourceRegistry:
 
     def create(self, data: dict) -> dict:
         careers_url = _validate_url(data["careers_url"])
+        _validate_ats(data["ats"], data["access_method"], careers_url)
         if data.get("enabled"):
             raise SourceError(
                 "source_not_verified",
@@ -114,6 +161,11 @@ class SourceRegistry:
         fields = {name: value for name, value in changes.items() if value is not None}
         if "careers_url" in fields:
             fields["careers_url"] = _validate_url(fields["careers_url"])
+        _validate_ats(
+            fields.get("ats", current["ats"]),
+            fields.get("access_method", current["access_method"]),
+            fields.get("careers_url", current["careers_url"]),
+        )
         resulting_enabled = bool(fields.get("enabled", current["enabled"]))
         resulting_status = fields.get("verification_status", current["verification_status"])
         if "verification_status" in fields and fields["verification_status"] not in VERIFICATION:

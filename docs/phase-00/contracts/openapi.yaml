@@ -1,0 +1,4399 @@
+openapi: 3.1.0
+info:
+  title: Gawe Local API
+  version: 0.1.0-draft
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+  description: |
+    Draft kontrak API Phase 0 untuk aplikasi lokal Gawe.
+
+    Status: DRAFT. Belum disetujui. C4 (endpoint API) tetap OPEN sampai seluruh
+    item `docs/source-of-truth/API-CONTRACTS.md` §6 disetujui pengguna.
+
+    Aturan normatif:
+    - Backend adalah sumber kebenaran untuk eligibility, fit score, ranking,
+      approval, status, dan nama file final.
+    - Semua request dan response JSON kecuali unduhan file.
+    - Request yang mengubah state wajib menyertakan `X-CSRF-Token` yang cocok
+      dengan cookie `gawe_csrf` dan terikat ke session `gawe_session`.
+    - Error memakai envelope `{ "error": { ... } }` dan tidak memuat PII,
+      isi dokumen, prompt, respons model, path filesystem, atau secret.
+    - Tidak ada endpoint submit lamaran otomatis.
+    - Nilai otoritatif (eligibility, fit, ranking, approval, status, nama file)
+      hanya dihitung backend. Field tersebut read-only dari sisi klien.
+
+    Asumsi kontrak yang menunggu persetujuan:
+    - Tanpa streaming (SSE/WebSocket) dan tanpa cancel task di v1. Progress dibaca
+      lewat polling `GET /api/tasks/{task_id}` dengan interval minimum 1 detik;
+      `Retry-After` boleh disertakan. Retry dibatasi 3 attempt untuk error transien.
+    - `Idempotency-Key` adalah cache replay teknis 24 jam. Ini bukan kebijakan
+      retensi data pengguna; D10 tetap OPEN dan terpisah.
+    - Tidak ada rate limiting lokal pada API v1 dan tidak ada response `429` pada
+      API v1. Rate limit provider dilaporkan sebagai error task
+      (`provider_rate_limited`) dengan `retryable: true` dan `retry_after_seconds`,
+      bukan sebagai status HTTP.
+    - `Origin` diperiksa sebagai pertahanan tambahan CSRF (lihat `SECURITY.md` §5).
+    - Teks dan versi consent diterbitkan server; klien tidak memilih `text_version`.
+    - Status task API adalah superset internal dari status proses produk. Pemetaan
+      ke status UI ada di `API-CONTRACTS.md` §4.1.
+    - D6 (mesin PDF) OPEN. Kontrak tidak menetapkan mesin PDF tertentu dan tidak
+      menjamin satu mesin tersedia.
+servers:
+  - url: /
+    description: |
+      Base URL relatif terhadap origin runtime. Klien memakai origin tempat UI
+      disajikan, atau origin API runtime `http://127.0.0.1:<port>`. Bind wajib
+      `127.0.0.1`. Port final belum ditetapkan (OPEN); `8000` hanya contoh
+      dokumentasi, bukan persyaratan kontrak.
+tags:
+  - name: Session
+    description: Session lokal dan token CSRF.
+  - name: Overview
+    description: Ringkasan status, aktivitas, dan next action.
+  - name: Setup
+    description: Master CV, ekstraksi, profil, konfirmasi, dan rollback versi.
+  - name: Discovery
+    description: Run discovery dan status per sumber.
+  - name: Matches
+    description: Daftar job, filter/sort, dan detail job.
+  - name: Applications
+    description: Workspace per lowongan, analisis, eligibility, dan fit.
+  - name: Documents
+    description: Versi dokumen, revisi, review, dan approval per versi.
+  - name: Export
+    description: Ekspor versi approved dan unduhan file final.
+  - name: Settings
+    description: Provider/model, consent, preferensi, source registry, retensi, toolchain.
+  - name: Tasks
+    description: Status, progress, dan retry background task in-process.
+security: []
+paths:
+  /api/session:
+    get:
+      tags: [Session]
+      operationId: getSession
+      summary: Ambil session lokal dan token CSRF
+      description: |
+        Menetapkan cookie `gawe_session` (HttpOnly, SameSite=Strict, Path=/) dan
+        `gawe_csrf` (non-HttpOnly, SameSite=Strict, Path=/). Response memuat token
+        yang harus dikirim pada header `X-CSRF-Token` untuk setiap request mutasi.
+        Tidak ada autentikasi multi-user (D20 OPEN; default tanpa auth).
+      responses:
+        '200':
+          description: |
+            Session aktif. Response menetapkan dua cookie lewat `Set-Cookie`:
+            `gawe_session` (HttpOnly) dan `gawe_csrf` (dibaca klien). `Secure` tidak
+            dipakai karena HTTP localhost.
+          headers:
+            Set-Cookie:
+              description: |
+                Dua nilai `Set-Cookie` pada satu response: `gawe_session` dan
+                `gawe_csrf`. Keduanya `SameSite=Strict`, `Path=/`.
+              schema:
+                type: array
+                items:
+                  type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/overview:
+    get:
+      tags: [Overview]
+      operationId: getOverview
+      summary: Ringkasan status dan next action
+      description: |
+        Semua nilai dihitung backend. Frontend hanya menampilkan. `next_action`
+        adalah rekomendasi backend, bukan aturan bisnis yang dihitung ulang klien.
+      responses:
+        '200':
+          description: Ringkasan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Overview'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/overview/activity:
+    get:
+      tags: [Overview]
+      operationId: listActivity
+      summary: Daftar aktivitas terbaru
+      description: Metadata aktivitas tanpa isi dokumen dan tanpa PII.
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: application_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Daftar aktivitas.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/setup/master-cv:
+    get:
+      tags: [Setup]
+      operationId: getMasterCv
+      summary: Master CV aktif
+      responses:
+        '200':
+          description: Master CV record.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MasterCv'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Setup]
+      operationId: uploadMasterCv
+      summary: Unggah Master CV
+      description: |
+        Menerima `multipart/form-data` field `file`. Validasi: ekstensi
+        (`.pdf`, `.docx`, `.txt`, `.md`), MIME, magic bytes, ukuran <= 20 MB,
+        PDF <= 50 halaman, PDF terenkripsi ditolak, cek zip bomb DOCX.
+        Gagal validasi tidak menulis sebagian.
+
+        Master CV immutable dan content-addressed. Unggah file dengan `sha256`
+        yang sama mengembalikan record yang sudah ada dengan HTTP 200 dan
+        `deduplicated: true`; tidak menimpa dan tidak membuat versi baru.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: |
+                    Satu file: `.pdf`, `.docx`, `.txt`, atau `.md`. Bagian file
+                    memakai `application/octet-stream`; tipe sebenarnya divalidasi
+                    backend dari ekstensi, MIME, dan magic bytes.
+      responses:
+        '200':
+          description: File identik sudah ada. Tidak ada Master CV baru.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MasterCvUploadResult'
+        '201':
+          description: |
+            Master CV baru tersimpan. Bila sudah ada Master CV aktif, Master CV
+            sebelumnya menjadi `superseded` dan tetap tersimpan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MasterCvUploadResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/setup/master-cv/file:
+    get:
+      tags: [Setup]
+      operationId: downloadMasterCv
+      summary: Unduh file Master CV asli
+      description: |
+        Mengembalikan file asli dari penyimpanan content-addressed. Response tidak
+        memuat path filesystem. `Content-Disposition` memakai nama file asli yang
+        disanitasi.
+      responses:
+        '200':
+          description: File asli.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+            Content-Length:
+              description: Ukuran file dalam byte.
+              schema:
+                type: integer
+                minimum: 0
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+            text/plain:
+              schema:
+                type: string
+                format: binary
+            text/markdown:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/setup/master-cv/extractions:
+    post:
+      tags: [Setup]
+      operationId: startProfileExtraction
+      summary: Jalankan ekstraksi profil
+      description: |
+        Membuat background task `profile_extraction`. Task memakai provider yang
+        dikonfigurasi; bila provider belum dikonfigurasi atau consent cloud belum
+        diberikan, request ditolak sebelum task dibuat.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                language:
+                  type: string
+                  enum: [en, id]
+      responses:
+        '202':
+          description: Task dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/setup/profiles:
+    get:
+      tags: [Setup]
+      operationId: listProfileVersions
+      summary: Daftar versi profil
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Daftar versi profil.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/setup/profiles/{profile_version_id}:
+    get:
+      tags: [Setup]
+      operationId: getProfileVersion
+      summary: Detail versi profil
+      parameters:
+        - $ref: '#/components/parameters/ProfileVersionId'
+      responses:
+        '200':
+          description: Versi profil.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [Setup]
+      operationId: correctProfileVersion
+      summary: Kirim koreksi profil
+      description: |
+        Setiap koreksi dicatat sebagai `user_correction` dan tidak menimpa versi
+        mana pun.
+
+        - Versi `draft`/`in_review`: koreksi diterapkan pada versi itu, response
+          `200`.
+        - Versi `confirmed` atau `superseded`: backend membuat draft **baru**
+          (`status: draft`, `derived_from_profile_version_id` = versi target) dan
+          menerapkan koreksi di draft itu, response `201`. Versi confirmed tetap
+          immutable dan tetap menjadi profil aktif sampai draft baru dikonfirmasi.
+          Approval dokumen tidak berubah.
+
+        Draft hasil koreksi diedit dengan endpoint ini, direview, lalu dikonfirmasi
+        lewat `confirmProfileVersion`. Saat draft dikonfirmasi, versi confirmed
+        sebelumnya menjadi `superseded`. Analisis dan dokumen yang memakai versi
+        confirmed lama ditandai `outdated`; tidak ada regenerate otomatis.
+
+        `expected_version` wajib cocok; bila tidak, response 409 `version_conflict`.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProfileVersionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfileCorrectionRequest'
+      responses:
+        '200':
+          description: Versi draft/in_review setelah koreksi.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '201':
+          description: |
+            Draft baru dibuat dari versi confirmed/superseded dan dikoreksi. Versi
+            sumber tidak berubah.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/setup/profiles/{profile_version_id}/confirm:
+    post:
+      tags: [Setup]
+      operationId: confirmProfileVersion
+      summary: Konfirmasi versi profil
+      description: |
+        Mengaktifkan versi profil sebagai `confirmed` dan mencatat
+        `profile_version_id` pada audit. Ditolak bila masih ada konflik yang belum
+        diselesaikan (`profile_conflicts_unresolved`) atau versi sudah `superseded`.
+        Konfirmasi profil bukan consent provider dan bukan approval dokumen.
+
+        Bila sudah ada versi `confirmed` lain, versi itu menjadi `superseded` dan
+        tetap tersimpan. Eligibility, fit assessment, dan dokumen yang memakai versi
+        lama ditandai `outdated`; approval dan export record lama tetap sebagai
+        riwayat. Tidak ada analisis ulang, regenerate, atau ekspor otomatis.
+
+        Konfirmasi versi yang sudah aktif bersifat idempoten (`200`). Bila
+        `Idempotency-Key` dikirim dengan body identik dalam 24 jam, response pertama
+        diputar ulang dengan header `Idempotency-Replayed: true`.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ProfileVersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                note:
+                  type: string
+                  maxLength: 2000
+      responses:
+        '200':
+          description: Profil terkonfirmasi.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/setup/profile/rollback:
+    post:
+      tags: [Setup]
+      operationId: rollbackProfile
+      summary: Rollback ke versi confirmed sebelumnya
+      description: |
+        Memindahkan pointer profil aktif ke versi `confirmed` yang pernah aktif.
+        Tidak menghapus versi, tidak membuat versi baru, dan tidak mengubah isi
+        versi mana pun. Alasan wajib dicatat pada audit.
+
+        Koreksi setelah konfirmasi tidak memakai endpoint ini: koreksi membuat draft
+        baru turunan versi confirmed (lihat `correctProfileVersion`).
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [target_profile_version_id, reason]
+              properties:
+                target_profile_version_id:
+                  type: string
+                reason:
+                  type: string
+                  minLength: 3
+                  maxLength: 2000
+      responses:
+        '200':
+          description: Profil aktif setelah rollback.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/discovery/runs:
+    get:
+      tags: [Discovery]
+      operationId: listDiscoveryRuns
+      summary: Daftar run discovery
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Daftar run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryRunList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Discovery]
+      operationId: startDiscoveryRun
+      summary: Mulai run discovery
+      description: |
+        Ditolak bila profil belum `confirmed` (`profile_not_confirmed`) atau sudah
+        ada run discovery aktif (`task_already_running`, response memuat
+        `active_task_id`). `source_ids` kosong berarti semua sumber `enabled`.
+        Hasil parsial disimpan per sumber; kegagalan satu sumber tidak menghapus
+        hasil sumber lain.
+
+        Run berjalan sinkron di dalam request pada v1: respons `202` dikirim
+        setelah run selesai, dan status task sudah final saat diterima. Klien
+        tidak boleh memakai timeout lebih pendek dari `discovery.max_run_seconds`.
+        Sumber yang belum selesai saat batas itu tercapai ditandai `failed`
+        dengan `error.code: run_timeout` dan `retryable: true`.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiscoveryRunCreateRequest'
+      responses:
+        '202':
+          description: Task discovery dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/discovery/runs/{run_id}:
+    get:
+      tags: [Discovery]
+      operationId: getDiscoveryRun
+      summary: Detail run discovery
+      description: |
+        Status per sumber memakai `queued`, `processing`, `completed`, `partial`,
+        `failed`, atau `skipped`. Error per sumber aman dan tidak memuat konten
+        halaman.
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Detail run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiscoveryRun'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/matches:
+    get:
+      tags: [Matches]
+      operationId: listMatches
+      summary: Daftar job dengan ranking backend
+      description: |
+        Urutan default adalah ranking backend: fit-first, tier hanya tie-breaker di
+        dalam `tie_window`. Filter dan sort tampilan tidak mengubah skor,
+        eligibility, atau urutan ranking tersimpan.
+
+        `sort=ranking` memakai urutan ranking tersimpan. `sort=fit_score_desc`,
+        `posted_at_desc`, dan `priority_tier` hanya mengubah urutan tampilan dan
+        diberi label di UI. `priority_tier` bukan default.
+
+        `min_fit_score` adalah filter tampilan; jumlah yang tersembunyi dilaporkan
+        di `counts.hidden_by_min_fit_score`.
+
+        Cursor adalah kunci keyset, bukan offset: isinya `sort`, `ranking_run_id`,
+        kunci urut terakhir, dan `job_id` terakhir. Cursor yang tidak cocok dengan
+        `sort` atau `ranking_run_id` saat ini ditolak `400 validation_failed`
+        (`details[].field = "cursor"`).
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: eligibility
+          in: query
+          schema:
+            type: string
+            enum: [all, eligible, needs_review, ineligible]
+            default: all
+        - name: q
+          in: query
+          description: Pencarian teks pada judul, perusahaan, dan lokasi.
+          schema:
+            type: string
+            maxLength: 200
+        - name: tier
+          in: query
+          schema:
+            type: string
+            enum: [P1, P2, P3, P4, unclassified]
+        - name: source_id
+          in: query
+          schema:
+            type: string
+        - name: market
+          in: query
+          schema:
+            type: string
+            enum: [indonesia, global, unknown]
+        - name: work_mode
+          in: query
+          schema:
+            type: string
+            enum: [onsite, remote, hybrid, unknown]
+        - name: min_fit_score
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100
+            default: 0
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [ranking, fit_score_desc, posted_at_desc, priority_tier]
+            default: ranking
+      responses:
+        '200':
+          description: Daftar job teranking.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/matches/{job_id}:
+    get:
+      tags: [Matches]
+      operationId: getMatch
+      summary: Detail job untuk side panel
+      description: |
+        Mengembalikan job, eligibility, dan fit terbaru untuk profil aktif. Fit
+        hanya ada bila eligibility `eligible`. `apply_url` berasal dari backend;
+        klien tidak boleh menyusun URL sendiri.
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Detail job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/matches/{job_id}/tier:
+    patch:
+      tags: [Matches]
+      operationId: overrideMatchTier
+      summary: Koreksi priority tier untuk satu lowongan
+      description: |
+        Menyimpan koreksi tier pengguna beserta alasannya. Koreksi hanya menjadi
+        tie-breaker pada ranking berikutnya; `fit_score`, eligibility, dan
+        `ranking_run` yang sudah tersimpan tidak berubah. Kirim `tier: null`
+        untuk menghapus koreksi dan kembali ke hasil klasifikasi backend.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TierOverrideRequest'
+      responses:
+        '200':
+          description: Baris match setelah koreksi tier.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchItem'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications:
+    get:
+      tags: [Applications]
+      operationId: listApplications
+      summary: Daftar workspace aplikasi
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/ApplicationStatus'
+      responses:
+        '200':
+          description: Daftar workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Applications]
+      operationId: createApplication
+      summary: Buat workspace dari job atau URL manual
+      description: |
+        Menerima tepat satu dari `job_id` atau `url`. `url` divalidasi URL guard
+        backend: HTTPS, host publik, tanpa kredensial, redirect tervalidasi,
+        timeout 20 detik, maksimal 5 redirect, maksimal 5 MB. URL yang ditolak
+        menghasilkan 400 `url_rejected` dengan `details[].code` yang spesifik.
+
+        Ditolak `409 profile_not_confirmed` bila belum ada profil `confirmed`.
+        Workspace tidak dibuat dan tidak ada task. Ini gate produk: analisis dan
+        dokumen membutuhkan profil confirmed.
+
+        Job dari `url` dicatat dengan sumber sintetis sistem `source_id: manual_url`
+        (`source_kind: manual_url`). Pengguna tidak perlu membuat entri source
+        registry untuk memakai URL manual.
+
+        Satu application per `job_id`. Bila workspace sudah ada, response 200
+        dengan `deduplicated: true` dan task aktif bila ada. Task yang dijalankan:
+        fetch (bila `url`), simpan versi posting, requirement, eligibility, dan fit
+        bila `eligible`.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApplicationRequest'
+      responses:
+        '200':
+          description: Workspace sudah ada.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationCreated'
+        '201':
+          description: Workspace dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}:
+    get:
+      tags: [Applications]
+      operationId: getApplication
+      summary: Detail workspace aplikasi
+      description: |
+        `status` adalah proyeksi backend dari status dokumen dan proses. Frontend
+        tidak menghitung status. `next_action` dan `suggested_filenames` dihitung
+        backend.
+
+        `active_task_id` adalah task yang sedang berjalan untuk workspace ini, bila
+        ada. Setelah reload, UI memulihkan progress dengan membaca field ini lalu
+        polling `GET /api/tasks/{task_id}`. UI tidak menyimpan state task sendiri.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      responses:
+        '200':
+          description: Workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplicationWorkspace'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/job:
+    get:
+      tags: [Applications]
+      operationId: getApplicationJob
+      summary: Job dan versi deskripsi yang dianalisis
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      responses:
+        '200':
+          description: Detail job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/analysis:
+    post:
+      tags: [Applications]
+      operationId: rerunApplicationAnalysis
+      summary: Jalankan ulang analisis secara eksplisit
+      description: |
+        Dipakai setelah profil berubah, versi deskripsi berubah, atau pengguna
+        meminta analisis ulang. Penandaan `Outdated` tidak memicu analisis ulang
+        otomatis; endpoint ini adalah aksi eksplisit pengguna.
+
+        Ditolak `409 profile_not_confirmed` bila belum ada profil `confirmed`.
+        `profile_version_id` pada body opsional; bila dikirim harus menunjuk versi
+        `confirmed` yang aktif, selain itu `409 profile_version_mismatch`.
+
+        Satu task analisis aktif per `application_id`; permintaan kedua selama task
+        aktif ditolak `409 task_already_running` dengan `active_task_id`.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalysisRequest'
+      responses:
+        '202':
+          description: Task analisis dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/eligibility:
+    get:
+      tags: [Applications]
+      operationId: getEligibility
+      summary: Eligibility assessment terbaru
+      description: |
+        `needs_review` dan `ineligible` tidak membawa fit score. Penyelesaian
+        `needs_review` dilakukan dengan meninjau bukti dan, bila perlu,
+        memperbaiki profil sebagai versi baru lalu menjalankan ulang analisis.
+        Tidak ada endpoint yang menimpa status eligibility secara langsung.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      responses:
+        '200':
+          description: Eligibility assessment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EligibilityAssessment'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/fit:
+    get:
+      tags: [Applications]
+      operationId: getFitAssessment
+      summary: Fit assessment
+      description: Hanya tersedia untuk eligibility `eligible`.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      responses:
+        '200':
+          description: Fit assessment.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FitAssessment'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/documents:
+    get:
+      tags: [Documents]
+      operationId: listDocuments
+      summary: Daftar versi dokumen
+      description: |
+        Daftar versi dokumen untuk workspace, terbaru lebih dulu, dipaginasi dengan
+        aturan yang sama seperti daftar lain (`API-CONTRACTS.md` §4.8).
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Daftar versi dokumen.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentList'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Documents]
+      operationId: generateDocuments
+      summary: Hasilkan versi dokumen
+      description: |
+        Diblokir bila eligibility bukan `eligible` (`eligibility_not_eligible`,
+        `eligibility_needs_review`). Membuat background task
+        `document_generation`; versi baru selalu belum disetujui.
+
+        Task per application diserialisasi: bila ada task aktif untuk
+        `application_id` yang sama (tipe apa pun), permintaan ditolak
+        `409 task_already_running` dengan `active_task_id`. Response juga memuat
+        `active_task_id` pada body error agar UI dapat melanjutkan polling.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateDocumentsRequest'
+      responses:
+        '202':
+          description: Task generasi dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/documents/{document_version_id}:
+    get:
+      tags: [Documents]
+      operationId: getDocumentVersion
+      summary: Detail versi dokumen
+      description: |
+        `content` adalah struktur dokumen. Schema domain detail bukan bagian dari
+        deliverable ini dan tetap merujuk draft JSON Schema domain Phase 0.
+        `content_hash` adalah hash versi yang dipakai untuk approval dan ekspor.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/DocumentVersionId'
+      responses:
+        '200':
+          description: Versi dokumen.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentVersion'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/documents/{document_version_id}/revisions:
+    post:
+      tags: [Documents]
+      operationId: createDocumentRevision
+      summary: Buat versi baru dari edit pengguna
+      description: |
+        Edit tidak pernah menimpa versi lama. Endpoint membuat versi baru berstatus
+        `draft` atau `in_review` dengan `parent_document_version_id` dan
+        `content_hash` baru. Approval lama tetap tersimpan dan tidak berlaku untuk
+        versi baru.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/DocumentVersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DocumentRevisionRequest'
+      responses:
+        '201':
+          description: Versi baru.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/documents/{document_version_id}/regenerate:
+    post:
+      tags: [Documents]
+      operationId: regenerateDocument
+      summary: Regenerate versi dokumen
+      description: |
+        Membuat versi baru dari sumber dan profil terbaru. Versi lama tetap ada.
+        `base_content_hash` mencegah regenerate dari versi yang sudah berubah.
+
+        Task per application diserialisasi: task aktif lain untuk `application_id`
+        yang sama menghasilkan `409 task_already_running` dengan `active_task_id`.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/DocumentVersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [base_content_hash, reason]
+              properties:
+                base_content_hash:
+                  type: string
+                reason:
+                  type: string
+                  enum: [user_requested, review_changes, outdated_source]
+      responses:
+        '202':
+          description: Task regenerate dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/documents/{document_version_id}/review:
+    post:
+      tags: [Documents]
+      operationId: runDocumentReview
+      summary: Jalankan reviewer independen
+      description: |
+        Membuat background task `review`. Reviewer gagal menghasilkan status task
+        `failed` dengan kode `review_unavailable`; dokumen tidak siap untuk
+        approval. Approve pengguna tidak menghapus findings.
+
+        Task per application diserialisasi: task aktif lain untuk `application_id`
+        yang sama menghasilkan `409 task_already_running` dengan `active_task_id`.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/DocumentVersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Task review dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/documents/{document_version_id}/findings:
+    get:
+      tags: [Documents]
+      operationId: getDocumentFindings
+      summary: Findings reviewer
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/DocumentVersionId'
+      responses:
+        '200':
+          description: Findings report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FindingsReport'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/documents/{document_version_id}/approval:
+    post:
+      tags: [Documents]
+      operationId: approveDocumentVersion
+      summary: Setujui atau tolak versi dokumen
+      description: |
+        Approval terikat `document_version_id` + `content_hash`. Bila hash tidak
+        cocok, response 409 `approval_hash_mismatch`. CV dan cover letter disetujui
+        independen. Approval bersifat append-only; keputusan baru dicatat sebagai
+        record baru.
+
+        Gate review:
+        - Review belum selesai atau verdict belum final -> `409 review_not_completed`
+          (`retryable: false`). Ini konflik gate approval, bukan kegagalan layanan.
+        - Layanan reviewer tidak tersedia -> `503 review_unavailable`
+          (`retryable: true`). Tidak ada approval yang dicatat.
+
+        Replay: keputusan yang sama untuk `document_version_id` + `content_hash`
+        mengembalikan `200` dengan record approval yang sudah ada dan header
+        `Idempotency-Replayed: true`. Approval pertama mengembalikan `201`.
+
+        `rejected` dan `changes_requested` saat ini diterima sebagai nilai enum,
+        tetapi efek kontraknya belum dibedakan; lihat `API-CONTRACTS.md` §4.11.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/DocumentVersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalRequest'
+      responses:
+        '200':
+          description: |
+            Replay keputusan yang sama untuk versi + hash yang sama. Tidak ada
+            record baru.
+          headers:
+            Idempotency-Replayed:
+              description: Bernilai `true` untuk replay.
+              schema:
+                type: string
+                enum: ['true']
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRecord'
+        '201':
+          description: Approval record baru.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApprovalRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/applications/{application_id}/documents/{document_version_id}/pdf:
+    get:
+      tags: [Documents]
+      operationId: previewDocumentPdf
+      summary: Preview PDF versi dokumen
+      description: |
+        Preview PDF non-final untuk versi apa pun yang sudah dikompilasi. Ini bukan
+        ekspor dan tidak mencatat export record. File final hanya dari endpoint
+        ekspor versi approved.
+
+        `409 pdf_not_available` bila belum ada PDF untuk versi ini. `503
+        toolchain_unavailable` bila mesin PDF belum tersedia (D6 OPEN); kontrak
+        tidak menetapkan mesin PDF tertentu.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/DocumentVersionId'
+      responses:
+        '200':
+          description: PDF.
+          headers:
+            Content-Length:
+              description: Ukuran PDF dalam byte.
+              schema:
+                type: integer
+                minimum: 0
+            Content-Disposition:
+              description: Nama file preview yang disanitasi.
+              schema:
+                type: string
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/applications/{application_id}/exports:
+    get:
+      tags: [Export]
+      operationId: listExports
+      summary: Daftar export record
+      description: |
+        Daftar export record untuk workspace, terbaru lebih dulu. Dipaginasi dengan
+        aturan yang sama seperti daftar lain (`API-CONTRACTS.md` §4.8).
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Daftar export.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportList'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Export]
+      operationId: createExport
+      summary: Ekspor versi approved
+      description: |
+        Hanya versi `approved` dengan `content_hash` yang cocok. Nama file dihitung
+        backend; `filename` opsional hanya mengubah nama, bukan isi atau approval.
+        Response 202 dengan task `export`. `Exported` hanya tercatat setelah PDF
+        berhasil dibuat dan export record ditulis. Compile gagal menghasilkan
+        status `tex_only` atau `failed`, bukan `exported`.
+
+        Task per application diserialisasi: task aktif lain untuk `application_id`
+        yang sama menghasilkan `409 task_already_running` dengan `active_task_id`.
+
+        Bila mesin PDF belum tersedia (D6 OPEN) atau toolchain tidak dapat dipakai,
+        request ditolak `503 toolchain_unavailable` sebelum task dibuat.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExportRequest'
+      responses:
+        '202':
+          description: Task ekspor dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/applications/{application_id}/exports/{export_id}/download:
+    get:
+      tags: [Export]
+      operationId: downloadExport
+      summary: Unduh file final
+      description: |
+        Hanya mengembalikan file dari export record berstatus `exported`. Response
+        memakai nama file final dari backend dan menyertakan `Content-Length`.
+        Export record `tex_only` atau `failed` menghasilkan `409 export_not_ready`.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - name: export_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File PDF final.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+            Content-Length:
+              description: Ukuran file dalam byte.
+              schema:
+                type: integer
+                minimum: 0
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/tasks/{task_id}:
+    get:
+      tags: [Tasks]
+      operationId: getTask
+      summary: Status dan progress task
+      description: |
+        Polling dengan interval minimum 1 detik. Tidak ada streaming (SSE/WebSocket)
+        di v1. `percent` hanya diisi bila `total_units` diketahui; frontend tidak
+        boleh menghitung persentase sendiri. `Retry-After` boleh disertakan untuk
+        task yang masih berjalan.
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task.
+          headers:
+            Retry-After:
+              description: Saran interval polling dalam detik.
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/tasks/{task_id}/retry:
+    post:
+      tags: [Tasks]
+      operationId: retryTask
+      summary: Retry task atau sumber yang gagal
+      description: |
+        `scope` default untuk task `discovery` adalah `failed_sources`: hanya
+        sumber berstatus `failed` atau `partial` yang retryable yang diulang;
+        sumber yang berhasil tidak diulang dan hasilnya tidak dihapus.
+        `scope=all` mengulang seluruh task dan harus diminta eksplisit.
+
+        `scope=failed_sources` untuk tipe task lain ditolak `400 validation_failed`
+        dengan `details[].code: retry_scope_unsupported`. Retry membuat `task_id`
+        baru; task lama tetap dapat dibaca. Retry ditolak untuk task yang belum
+        selesai (`409 task_not_finished`) atau tidak `retryable`
+        (`409 task_not_retryable`). Maksimum 3 attempt untuk error transien.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                scope:
+                  type: string
+                  enum: [all, failed_sources]
+                  description: >-
+                    Default `failed_sources` untuk task `discovery`. `all` harus
+                    diminta eksplisit dan mengulang seluruh task.
+                source_ids:
+                  type: array
+                  description: Hanya berlaku untuk `scope=failed_sources`.
+                  items:
+                    type: string
+                  maxItems: 50
+      responses:
+        '202':
+          description: Task retry dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/settings:
+    get:
+      tags: [Settings]
+      operationId: getSettings
+      summary: Pengaturan aplikasi
+      description: |
+        Secret tidak pernah dikembalikan. `key_source` hanya menyebut sumber
+        (`keyring`, `env`, `missing`). `retention.provisional` selalu `true` sampai
+        D10 disetujui.
+
+        `retention.provisional` dan durasi retensi terpisah dari cache replay
+        `Idempotency-Key` 24 jam, yang merupakan mekanisme teknis dan bukan
+        kebijakan retensi data pengguna.
+
+        `toolchain` melaporkan status mesin PDF. D6 OPEN: tidak ada mesin PDF yang
+        diwajibkan kontrak dan ekspor PDF tidak dijanjikan sampai D6 diputuskan.
+      responses:
+        '200':
+          description: Pengaturan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Settings'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/settings/preferences:
+    get:
+      tags: [Settings]
+      operationId: getPreferences
+      summary: Preferensi pencarian
+      responses:
+        '200':
+          description: Preferensi.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchPreferences'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Settings]
+      operationId: updatePreferences
+      summary: Ganti preferensi pencarian
+      description: |
+        Mengganti seluruh preferensi. `ranking.primary` hanya `fit_score_desc`;
+        tier tidak boleh menjadi primary. Perubahan preferensi tidak mengubah fit
+        score yang sudah dihitung.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchPreferences'
+      responses:
+        '200':
+          description: Preferensi tersimpan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchPreferences'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/settings/provider:
+    get:
+      tags: [Settings]
+      operationId: getProviderSettings
+      summary: Konfigurasi provider dan role
+      description: |
+        Provider dan model adalah konfigurasi, bukan keputusan produk. Tidak ada
+        vendor/model default yang diasumsikan (D1 OPEN). API tidak menerima atau
+        mengembalikan API key; key disediakan lewat keyring/CLI.
+      responses:
+        '200':
+          description: Konfigurasi provider.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderSettings'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      tags: [Settings]
+      operationId: updateProviderSettings
+      summary: Ubah provider, model, atau mapping role
+      description: |
+        Perubahan provider, model pada salah satu role, atau cakupan data
+        menginvalidasi consent sebelumnya dan memerlukan consent baru sebelum
+        pengiriman data kandidat berikutnya. Perbandingan memakai `provider_id`,
+        `data_classes`, dan model per role yang tercatat pada consent terakhir.
+        Response memuat `consent_renewal_required`. Consent tetap independen dari
+        konfirmasi profil dan approval dokumen.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProviderUpdateRequest'
+      responses:
+        '200':
+          description: Konfigurasi tersimpan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderSettings'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/settings/consent:
+    get:
+      tags: [Settings]
+      operationId: getConsent
+      summary: Status consent
+      description: |
+        Consent terpisah dari konfirmasi profil dan approval dokumen. `required`
+        bernilai true bila provider cloud dikonfigurasi dan belum ada consent yang
+        berlaku untuk provider/cakupan/model role saat ini.
+
+        `required_text` adalah teks consent versi server yang harus ditampilkan
+        sebelum consent diberikan. Klien menampilkan teks itu dan tidak memilih
+        `text_version`.
+
+        `history` dibatasi: maksimum `history_limit` record terbaru, urut terbaru
+        lebih dulu. `history_truncated: true` berarti masih ada record lebih lama
+        yang tidak dikirim.
+      parameters:
+        - name: history_limit
+          in: query
+          description: Jumlah maksimum record riwayat consent yang dikembalikan.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Status consent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentStatus'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Settings]
+      operationId: grantConsent
+      summary: Berikan consent
+      description: |
+        Mencatat `consent_record` dengan jenis, cakupan, teks, waktu, dan provider.
+        `accepted` wajib `true`. Consent tidak memberi izin auto-submit atau
+        mengirim data ke provider selain yang tercantum pada `scope`.
+
+        `text_version` dan teks consent ditetapkan server dari teks consent aktif
+        saat request diterima. Klien tidak mengirim `text_version`; nilai yang
+        dikirim klien ditolak `400 validation_failed`.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsentCreateRequest'
+      responses:
+        '201':
+          description: Consent tercatat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/settings/consent/{consent_id}:
+    delete:
+      tags: [Settings]
+      operationId: revokeConsent
+      summary: Tarik consent
+      description: |
+        Menandai consent `revoked_at`. Record tidak dihapus agar dapat diaudit.
+        Setelah dicabut, pengiriman data ke provider ditolak sampai consent baru.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - name: consent_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Consent dicabut.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsentRecord'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/settings/sources:
+    get:
+      tags: [Settings]
+      operationId: listSources
+      summary: Daftar source registry
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: enabled
+          in: query
+          schema:
+            type: boolean
+        - name: verification_status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SourceVerificationStatus'
+      responses:
+        '200':
+          description: Daftar sumber.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceList'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags: [Settings]
+      operationId: createSource
+      summary: Tambah sumber
+      description: |
+        `careers_url` divalidasi URL guard. Sumber baru selalu
+        `verification_status: unverified` dan tidak boleh diaktifkan untuk fetch
+        otomatis tanpa review pengguna; `enabled: true` pada `unverified` ditolak
+        dengan 409 `source_not_verified`.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceCreateRequest'
+      responses:
+        '201':
+          description: Sumber dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceRegistryEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/settings/sources/{source_id}:
+    get:
+      tags: [Settings]
+      operationId: getSource
+      summary: Detail sumber
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+      responses:
+        '200':
+          description: Sumber.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceRegistryEntry'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    patch:
+      tags: [Settings]
+      operationId: updateSource
+      summary: Ubah atau nonaktifkan sumber
+      description: |
+        Menonaktifkan sumber memakai `enabled: false`; sumber tidak dihapus agar job
+        lama tetap dapat ditelusuri. Mengaktifkan sumber berstatus `broken` atau
+        `restricted` ditolak. Tidak ada endpoint hard delete pada v1.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/SourceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SourceUpdateRequest'
+      responses:
+        '200':
+          description: Sumber setelah perubahan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceRegistryEntry'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  securitySchemes:
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: |
+        Token dari `GET /api/session`. Wajib pada POST, PUT, PATCH, dan DELETE.
+        Nilai harus sama dengan cookie `gawe_csrf` dan terikat ke session.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: gawe_session
+      description: |
+        Cookie session lokal, HttpOnly, SameSite=Strict, Path=/. Tanpa autentikasi
+        multi-user. Tidak dikirim sebagai header manual.
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Jumlah item per halaman.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      description: Cursor opaque dari `page.next_cursor`.
+      schema:
+        type: string
+        maxLength: 512
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: |
+        Opsional. Bila dikirim, request dengan key dan body identik dalam 24 jam
+        mengembalikan response pertama dengan header `Idempotency-Replayed: true`.
+        Key sama dengan body berbeda menghasilkan 409 `idempotency_conflict`.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+    ApplicationId:
+      name: application_id
+      in: path
+      required: true
+      schema:
+        type: string
+    ProfileVersionId:
+      name: profile_version_id
+      in: path
+      required: true
+      schema:
+        type: string
+    DocumentVersionId:
+      name: document_version_id
+      in: path
+      required: true
+      schema:
+        type: string
+    SourceId:
+      name: source_id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Request tidak valid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: CSRF token tidak valid atau tidak ada.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource tidak ditemukan.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: Konflik state, gate, versi, atau duplikasi.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PayloadTooLarge:
+      description: |
+        Ukuran request melebihi batas. JSON body > 1 MiB atau unggah file > 20 MB.
+        Kode error `payload_too_large`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnsupportedMediaType:
+      description: Tipe file atau body tidak didukung.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: |
+        Layanan eksternal yang dibutuhkan tidak tersedia (reviewer atau toolchain
+        PDF). Kode error `review_unavailable` atau `toolchain_unavailable`; lihat
+        `retryable` pada body.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Error internal tanpa detail sensitif.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    ErrorCode:
+      type: string
+      description: Kode error stabil. Nilai baru hanya ditambahkan, tidak diubah.
+      enum:
+        - validation_failed
+        - not_found
+        - csrf_invalid
+        - conflict
+        - version_conflict
+        - idempotency_conflict
+        - task_already_running
+        - task_not_retryable
+        - task_not_finished
+        - profile_not_confirmed
+        - profile_conflicts_unresolved
+        - profile_version_mismatch
+        - eligibility_not_eligible
+        - eligibility_needs_review
+        - assessment_failed
+        - fit_not_available
+        - document_not_approved
+        - approval_hash_mismatch
+        - approval_superseded
+        - export_not_ready
+        - pdf_not_available
+        - review_unavailable
+        - review_not_completed
+        - compile_failed
+        - toolchain_unavailable
+        - provider_not_configured
+        - provider_unavailable
+        - provider_rate_limited
+        - consent_required
+        - url_rejected
+        - source_not_verified
+        - source_restricted
+        - source_unavailable
+        - source_unsupported
+        - source_error
+        - source_parse_failed
+        - response_too_large
+        - run_timeout
+        - stale_run
+        - no_enabled_sources
+        - retry_scope_unsupported
+        - ats_unavailable
+        - ats_host_mismatch
+        - duplicate_source
+        - unsupported_media_type
+        - payload_too_large
+        - internal_error
+
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        field:
+          type: [string, 'null']
+          description: Nama field request. Bukan path filesystem.
+        code:
+          type: string
+          description: Kode spesifik yang stabil, misalnya `file_too_large`.
+        message:
+          type: string
+          maxLength: 500
+
+    Error:
+      type: object
+      required: [code, message, retryable]
+      properties:
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+          maxLength: 500
+          description: Pesan aman untuk ditampilkan. Tanpa PII, isi dokumen, prompt, path, atau secret.
+        stage:
+          type: [string, 'null']
+          description: Tahap asal error, misalnya `upload`, `fetch`, `eligibility`, `compile`.
+        retryable:
+          type: boolean
+        run_id:
+          type: [string, 'null']
+        request_id:
+          type: [string, 'null']
+        active_task_id:
+          type: [string, 'null']
+          description: |
+            Diisi untuk `task_already_running`: task yang masih aktif pada
+            application yang sama. Klien melanjutkan polling task itu.
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+          maxItems: 50
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/Error'
+
+    PageInfo:
+      type: object
+      required: [limit, next_cursor, has_more]
+      properties:
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 200
+        next_cursor:
+          type: [string, 'null']
+        has_more:
+          type: boolean
+
+    Session:
+      type: object
+      required: [session_id, csrf_token, csrf_header, expires_at]
+      properties:
+        session_id:
+          type: string
+        csrf_token:
+          type: string
+        csrf_header:
+          type: string
+          enum: [X-CSRF-Token]
+        expires_at:
+          type: string
+          format: date-time
+
+    TaskStatus:
+      type: string
+      description: |
+        Status proses internal API. Superset dari status proses/UI di
+        `PRODUCT.md` §5.7; pemetaan resmi ada di `API-CONTRACTS.md` §4.1.
+        `needs_review` berarti task selesai tetapi menunggu tindakan manusia, bukan
+        kegagalan. `partial` hanya untuk discovery multi-sumber. `Not started`
+        adalah status turunan saat belum ada task dan tidak dikirim sebagai nilai
+        `Task.status`.
+      enum: [queued, processing, needs_review, completed, partial, failed]
+
+    TaskType:
+      type: string
+      enum: [profile_extraction, discovery, analysis, document_generation, review, export]
+
+    TaskStage:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, skipped, failed]
+        started_at:
+          type: [string, 'null']
+          format: date-time
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+
+    TaskProgress:
+      type: object
+      required: [stages]
+      properties:
+        current_stage:
+          type: [string, 'null']
+        completed_units:
+          type: integer
+          minimum: 0
+        total_units:
+          type: [integer, 'null']
+          minimum: 0
+        percent:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 100
+          description: Hanya diisi bila `total_units` diketahui. Frontend tidak menghitung sendiri.
+        stages:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/TaskStage'
+
+    SourceProgressStatus:
+      type: string
+      enum: [queued, processing, completed, partial, failed, skipped]
+
+    SourceProgress:
+      type: object
+      required: [source_id, company, status, fetched_count, accepted_count, duplicate_count, retry_count]
+      properties:
+        source_id:
+          type: string
+        company:
+          type: string
+        status:
+          $ref: '#/components/schemas/SourceProgressStatus'
+        fetched_count:
+          type: integer
+          minimum: 0
+        accepted_count:
+          type: integer
+          minimum: 0
+        duplicate_count:
+          type: integer
+          minimum: 0
+          description: |
+            Jumlah record yang sudah ada sebelumnya pada sumber yang sama,
+            termasuk saat kontennya berubah. Bukan deduplikasi lintas sumber.
+        retry_count:
+          type: integer
+          minimum: 0
+        stats:
+          oneOf:
+            - $ref: '#/components/schemas/SourceProgressStats'
+            - type: 'null'
+        close_skipped:
+          oneOf:
+            - $ref: '#/components/schemas/Error'
+            - type: 'null'
+          description: |
+            Alasan snapshot tidak dipakai untuk menutup lowongan yang tidak terlihat.
+            `null` berarti penutupan dijalankan.
+        last_attempt_at:
+          type: [string, 'null']
+          format: date-time
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/Error'
+            - type: 'null'
+
+    SourceProgressStats:
+      type: object
+      description: |
+        Diagnosis per sumber. `skipped` adalah record payload yang dibuang adapter
+        sebelum normalisasi; `invalid` gagal normalisasi; `truncated` deskripsinya
+        dipotong; `stale` datanya ditandai basi.
+      required: [skipped, invalid, truncated, stale]
+      properties:
+        skipped:
+          type: integer
+          minimum: 0
+        invalid:
+          type: integer
+          minimum: 0
+        truncated:
+          type: integer
+          minimum: 0
+        stale:
+          type: integer
+          minimum: 0
+
+    RetryInfo:
+      type: object
+      required: [retryable, attempt, max_attempts]
+      properties:
+        retryable:
+          type: boolean
+        attempt:
+          type: integer
+          minimum: 1
+        max_attempts:
+          type: integer
+          minimum: 1
+        retry_after_seconds:
+          type: [integer, 'null']
+          minimum: 0
+        retried_from_task_id:
+          type: [string, 'null']
+
+    TaskResult:
+      type: object
+      properties:
+        application_id:
+          type: [string, 'null']
+        run_id:
+          type: [string, 'null']
+        profile_version_id:
+          type: [string, 'null']
+        document_version_ids:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+        export_ids:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+
+    Task:
+      type: object
+      required: [task_id, type, status, progress, retry, sources, created_at, updated_at]
+      properties:
+        task_id:
+          type: string
+        type:
+          $ref: '#/components/schemas/TaskType'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        application_id:
+          type: [string, 'null']
+        progress:
+          $ref: '#/components/schemas/TaskProgress'
+        sources:
+          type: array
+          description: Kosong untuk task non-discovery.
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/SourceProgress'
+        retry:
+          $ref: '#/components/schemas/RetryInfo'
+        result:
+          oneOf:
+            - $ref: '#/components/schemas/TaskResult'
+            - type: 'null'
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/Error'
+            - type: 'null'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+
+    TaskCreated:
+      type: object
+      required: [task_id, type, status]
+      properties:
+        task_id:
+          type: string
+        type:
+          $ref: '#/components/schemas/TaskType'
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        application_id:
+          type: [string, 'null']
+        run_id:
+          type: [string, 'null']
+        extraction_run_id:
+          type: [string, 'null']
+
+    Evidence:
+      type: object
+      description: |
+        Kutipan sumber untuk satu fakta. `locator` hanya berisi penanda dokumen,
+        bukan path filesystem. `quote` adalah teks sumber yang ditampilkan apa adanya
+        sebagai teks, bukan HTML.
+      required: [evidence_id, source, quote]
+      properties:
+        evidence_id:
+          type: string
+        source:
+          type: string
+          enum: [cv, user_declaration]
+        doc_id:
+          type: [string, 'null']
+        locator:
+          type: object
+          additionalProperties: true
+          properties:
+            page:
+              type: [integer, 'null']
+              minimum: 1
+            section:
+              type: [string, 'null']
+            block_id:
+              type: [string, 'null']
+            char_start:
+              type: [integer, 'null']
+              minimum: 0
+            char_end:
+              type: [integer, 'null']
+              minimum: 0
+        quote:
+          type: string
+          maxLength: 2000
+        declared_at:
+          type: [string, 'null']
+          format: date-time
+
+    MasterCvStatus:
+      type: string
+      description: |
+        Siklus hidup Master CV. Transisi yang valid:
+        `uploaded` -> `extracted` (ekstraksi selesai), `extracted` -> `confirmed`
+        (profil diturunkan dan dikonfirmasi), `uploaded`/`extracted`/`confirmed`
+        -> `superseded` (Master CV baru diunggah). `superseded` terminal dan
+        read-only. Tidak ada transisi balik ke `uploaded`; tidak ada hard delete.
+        Master CV tidak pernah ditimpa.
+      enum: [uploaded, extracted, confirmed, superseded]
+
+    MasterCv:
+      type: object
+      description: |
+        Record Master CV. Master CV immutable dan content-addressed. Unggah file
+        berbeda membuat Master CV baru; Master CV sebelumnya menjadi `superseded`
+        dan tetap tersimpan. Efek penggantian:
+        - Profil confirmed lama tetap `confirmed` sampai draft baru dikonfirmasi;
+          profil baru harus diturunkan dari Master CV baru.
+        - Eligibility, fit assessment, dan dokumen turunan yang memakai profil lama
+          ditandai `outdated`, bukan dianggap current.
+        - Approval dan export record lama dipertahankan sebagai riwayat; file final
+          yang sudah tercatat tidak berubah.
+        - Tidak ada analisis ulang, regenerate, atau ekspor otomatis.
+      required: [master_cv_id, original_file, status, uploaded_at]
+      properties:
+        master_cv_id:
+          type: string
+        original_file:
+          type: object
+          required: [sha256, filename, mime, size_bytes, uploaded_at]
+          properties:
+            sha256:
+              type: string
+              pattern: '^[a-f0-9]{64}$'
+            filename:
+              type: string
+              maxLength: 255
+              description: Nama asli yang disanitasi. Bukan path.
+            mime:
+              type: string
+            size_bytes:
+              type: integer
+              minimum: 0
+              maximum: 20971520
+            page_count:
+              type: [integer, 'null']
+              minimum: 1
+              maximum: 50
+            uploaded_at:
+              type: string
+              format: date-time
+        status:
+          $ref: '#/components/schemas/MasterCvStatus'
+        active_profile_version_id:
+          type: [string, 'null']
+        extraction_task_id:
+          type: [string, 'null']
+        deduplicated:
+          type: boolean
+          description: |
+            Hanya ada pada response unggah (`MasterCvUploadResult`). Tidak dikirim
+            pada `GET /api/setup/master-cv` atau representasi lain.
+        uploaded_at:
+          type: string
+          format: date-time
+
+    MasterCvUploadResult:
+      description: |
+        Response unggah Master CV. Satu-satunya representasi yang memuat
+        `deduplicated`.
+      allOf:
+        - $ref: '#/components/schemas/MasterCv'
+        - type: object
+          required: [deduplicated]
+          properties:
+            deduplicated:
+              type: boolean
+
+    ProfileStatus:
+      type: string
+      description: |
+        `draft` dapat dikoreksi. `in_review` menunggu review pengguna. `confirmed`
+        immutable dan dapat menjadi profil aktif. `superseded` menandai versi
+        confirmed lama setelah versi lain dikonfirmasi; isinya tetap tersimpan.
+        Tidak ada rollback destruktif: rollback hanya memindahkan pointer aktif.
+      enum: [draft, in_review, confirmed, superseded]
+
+    ProfileSummary:
+      type: object
+      required: [profile_id, profile_version_id, master_cv_id, version, status, created_at]
+      properties:
+        profile_id:
+          type: string
+        profile_version_id:
+          type: string
+        master_cv_id:
+          type: string
+        derived_from_profile_version_id:
+          type: [string, 'null']
+          description: Versi sumber untuk draft hasil koreksi versi confirmed.
+        version:
+          type: integer
+          minimum: 1
+        status:
+          $ref: '#/components/schemas/ProfileStatus'
+        active:
+          type: boolean
+        confirmed_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProfileVersion:
+      type: object
+      description: |
+        `content` memuat bagian profil (personal, education, experience, skills,
+        projects, certifications, languages, awards, work_authorization,
+        work_preferences). Schema domain detail adalah deliverable terpisah dan tidak
+        diduplikasi di sini. Setiap fakta CV membawa `evidence` berisi `evidence_id`.
+      required: [profile_id, profile_version_id, master_cv_id, version, status, schema_version, content, evidence_index, conflicts, created_at]
+      properties:
+        profile_id:
+          type: string
+        profile_version_id:
+          type: string
+        master_cv_id:
+          type: string
+        derived_from_profile_version_id:
+          type: [string, 'null']
+          description: Versi sumber untuk draft hasil koreksi versi confirmed.
+        version:
+          type: integer
+          minimum: 1
+        status:
+          $ref: '#/components/schemas/ProfileStatus'
+        schema_version:
+          type: string
+        content:
+          type: object
+          additionalProperties: true
+        evidence_index:
+          type: object
+          description: Map `evidence_id` ke objek Evidence.
+          maxProperties: 5000
+          additionalProperties:
+            $ref: '#/components/schemas/Evidence'
+        conflicts:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [conflict_id, path, candidates]
+            properties:
+              conflict_id:
+                type: string
+              path:
+                type: string
+              candidates:
+                type: array
+                maxItems: 50
+                items:
+                  type: object
+                  additionalProperties: true
+        active:
+          type: boolean
+        confirmed_at:
+          type: [string, 'null']
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ProfileList:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ProfileSummary'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    ProfileCorrectionRequest:
+      type: object
+      required: [expected_version, corrections]
+      additionalProperties: false
+      properties:
+        expected_version:
+          type: integer
+          minimum: 1
+        corrections:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            required: [path, value]
+            properties:
+              path:
+                type: string
+                description: Path field profil, misalnya `work_authorization.eu`.
+                maxLength: 200
+              value: {}
+              reason:
+                type: string
+                maxLength: 2000
+
+    SearchPreferences:
+      type: object
+      additionalProperties: false
+      required: [keywords, exclude_keywords, target_markets, locations, work_modes, seniority, employment_types, max_age_days, min_fit_score, ranking, sources, include_ineligible_in_view]
+      properties:
+        keywords:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+          maxItems: 50
+        exclude_keywords:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+          maxItems: 50
+        target_markets:
+          type: array
+          items:
+            type: string
+            enum: [indonesia, global]
+        locations:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+          maxItems: 50
+        work_modes:
+          type: array
+          items:
+            type: string
+            enum: [onsite, remote, hybrid]
+        seniority:
+          type: array
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/Seniority'
+        employment_types:
+          type: array
+          maxItems: 6
+          items:
+            $ref: '#/components/schemas/EmploymentType'
+        max_age_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+        min_fit_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        ranking:
+          $ref: '#/components/schemas/RankingPreference'
+        sources:
+          type: array
+          items:
+            type: string
+          maxItems: 200
+        include_ineligible_in_view:
+          type: boolean
+
+    RankingPreference:
+      type: object
+      required: [primary, tie_breaker, tie_window]
+      properties:
+        primary:
+          type: string
+          enum: [fit_score_desc]
+        tie_breaker:
+          type: array
+          items:
+            type: string
+            enum: [priority_tier, posted_at_desc, job_id]
+          minItems: 1
+          maxItems: 3
+        tie_window:
+          type: integer
+          minimum: 0
+          maximum: 20
+
+    SourceVerificationStatus:
+      type: string
+      enum: [unverified, verified, restricted, broken]
+
+    SourceAccessMethod:
+      type: string
+      description: |
+        `manual_url` adalah sumber sintetis sistem (`source_id: manual_url`), bukan
+        entri registry yang dibuat pengguna. Entri registry buatan pengguna memakai
+        `UserManagedAccessMethod`.
+      enum: [ats_api, html, manual_url]
+
+    UserManagedAccessMethod:
+      type: string
+      description: |
+        Metode akses yang boleh dipilih pengguna saat membuat/mengubah entri source
+        registry. `manual_url` tidak termasuk karena dikelola sistem.
+      enum: [ats_api, html]
+
+    SourceAts:
+      type: string
+      enum: [greenhouse, lever, ashby, unknown]
+
+    SourceMarket:
+      type: string
+      enum: [indonesia, global]
+
+    SourceRegistryEntry:
+      type: object
+      description: |
+        Entri source registry yang dikelola pengguna. Sumber sintetis `manual_url`
+        tidak muncul di sini dan tidak dapat dibuat/diubah lewat endpoint registry.
+      required: [source_id, company, market, careers_url, access_method, ats, verification_status, enabled, created_at, updated_at]
+      properties:
+        source_id:
+          type: string
+        company:
+          type: string
+          maxLength: 200
+        market:
+          $ref: '#/components/schemas/SourceMarket'
+        careers_url:
+          type: string
+          format: uri
+          description: HTTPS, host publik, tanpa kredensial.
+        access_method:
+          $ref: '#/components/schemas/SourceAccessMethod'
+        ats:
+          $ref: '#/components/schemas/SourceAts'
+        verification_status:
+          $ref: '#/components/schemas/SourceVerificationStatus'
+        tos_notes:
+          type: [string, 'null']
+          maxLength: 2000
+        last_checked_at:
+          type: [string, 'null']
+          format: date-time
+        enabled:
+          type: boolean
+        job_count:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SourceCreateRequest:
+      type: object
+      required: [company, market, careers_url, access_method, ats]
+      additionalProperties: false
+      properties:
+        company:
+          type: string
+          minLength: 1
+          maxLength: 200
+        market:
+          $ref: '#/components/schemas/SourceMarket'
+        careers_url:
+          type: string
+          format: uri
+        access_method:
+          $ref: '#/components/schemas/UserManagedAccessMethod'
+        ats:
+          $ref: '#/components/schemas/SourceAts'
+        tos_notes:
+          type: string
+          maxLength: 2000
+        enabled:
+          type: boolean
+          default: false
+
+    SourceUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        company:
+          type: string
+          minLength: 1
+          maxLength: 200
+        market:
+          $ref: '#/components/schemas/SourceMarket'
+        careers_url:
+          type: string
+          format: uri
+        access_method:
+          $ref: '#/components/schemas/UserManagedAccessMethod'
+        ats:
+          $ref: '#/components/schemas/SourceAts'
+        verification_status:
+          $ref: '#/components/schemas/SourceVerificationStatus'
+        tos_notes:
+          type: string
+          maxLength: 2000
+        enabled:
+          type: boolean
+
+    SourceList:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/SourceRegistryEntry'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    DiscoveryRunCreateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        source_ids:
+          type: array
+          items:
+            type: string
+          maxItems: 200
+        profile_version_id:
+          type: string
+          description: Bila dikirim, harus sama dengan profil aktif confirmed.
+
+    DiscoveryCounts:
+      type: object
+      properties:
+        fetched:
+          type: integer
+          minimum: 0
+        new_jobs:
+          type: integer
+          minimum: 0
+        duplicates:
+          type: integer
+          minimum: 0
+        eligible:
+          type: integer
+          minimum: 0
+        needs_review:
+          type: integer
+          minimum: 0
+        ineligible:
+          type: integer
+          minimum: 0
+        fit_computed:
+          type: integer
+          minimum: 0
+
+    DiscoveryRun:
+      type: object
+      required: [run_id, task_id, status, profile_version_id, sources, counts, started_at]
+      properties:
+        run_id:
+          type: string
+        task_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/TaskStatus'
+        profile_version_id:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceProgress'
+        counts:
+          $ref: '#/components/schemas/DiscoveryCounts'
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/Error'
+            - type: 'null'
+
+    DiscoveryRunList:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/DiscoveryRun'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    EmploymentType:
+      type: string
+      description: |
+        Kosakata tertutup. Nilai yang tidak dikenali sumber dipetakan ke `unknown`,
+        tidak diteruskan sebagai string bebas.
+      enum: [full_time, part_time, contract, internship, temporary, unknown]
+
+    Seniority:
+      type: string
+      description: |
+        Kosakata tertutup. Nilai yang tidak dikenali sumber dipetakan ke `unknown`,
+        tidak diteruskan sebagai string bebas.
+      enum: [intern, junior, mid, senior, lead, principal, unknown]
+
+    PriorityTier:
+      type: string
+      enum: [P1, P2, P3, P4, unclassified]
+
+    WorkMode:
+      type: string
+      enum: [onsite, remote, hybrid, unknown]
+
+    JobLocation:
+      type: object
+      properties:
+        raw:
+          type: [string, 'null']
+          maxLength: 500
+        city:
+          type: [string, 'null']
+        region:
+          type: [string, 'null']
+        country:
+          type: [string, 'null']
+        is_remote:
+          type: boolean
+
+    JobCompleteness:
+      type: object
+      properties:
+        missing_fields:
+          type: array
+          items:
+            type: string
+        fetched_at:
+          type: string
+          format: date-time
+        stale:
+          type: boolean
+          description: True bila data lebih dari 7 hari.
+
+    JobSummary:
+      type: object
+      required: [job_id, job_posting_version_id, source_id, company, title, work_mode, priority_tier, fetched_at, apply_url_status]
+      properties:
+        job_id:
+          type: string
+        job_posting_version_id:
+          type: string
+        source_id:
+          type: string
+          description: |
+            `source_id` registry, atau `manual_url` untuk sumber sintetis sistem
+            yang dipakai job dari URL manual.
+        company:
+          type: string
+        title:
+          type: string
+        location:
+          $ref: '#/components/schemas/JobLocation'
+        work_mode:
+          $ref: '#/components/schemas/WorkMode'
+        employment_type:
+          $ref: '#/components/schemas/EmploymentType'
+        seniority:
+          $ref: '#/components/schemas/Seniority'
+        market:
+          type: string
+          enum: [indonesia, global, unknown]
+        posted_at:
+          type: [string, 'null']
+          format: date-time
+        fetched_at:
+          type: string
+          format: date-time
+        canonical_url:
+          type: string
+          format: uri
+        apply_url:
+          type: [string, 'null']
+          format: uri
+          description: Hanya URL dari data sumber atau URL manual tervalidasi. Read-only.
+        apply_url_status:
+          type: string
+          enum: [available, unavailable]
+        priority_tier:
+          $ref: '#/components/schemas/PriorityTier'
+        priority_reason:
+          type: [string, 'null']
+        priority_confidence:
+          type: string
+          enum: [low, medium, high, unknown]
+        duplicate_of:
+          type: [string, 'null']
+        completeness:
+          $ref: '#/components/schemas/JobCompleteness'
+
+    JobRequirement:
+      type: object
+      required: [requirement_id, kind, text]
+      properties:
+        requirement_id:
+          type: string
+        kind:
+          type: string
+          enum: [must_have, nice_to_have, responsibility, constraint]
+        text:
+          type: string
+          maxLength: 4000
+        quote:
+          type: [string, 'null']
+          maxLength: 2000
+
+    JobDetail:
+      type: object
+      description: |
+        `description_text` dikirim sebagai teks, bukan HTML. Klien merender sebagai
+        teks. `description_truncated` true bila teks melebihi batas kontrak.
+
+        Batas `description_text` adalah 262144 byte UTF-8, bukan 262144 karakter.
+        `maxLength: 87381` adalah batas karakter konservatif (262144 / 3) agar
+        representasi UTF-8 tidak pernah melewati batas byte. Backend memotong pada
+        batas byte dan mengisi `description_truncated: true`.
+      required: [job, description_text, description_truncated, requirements, source]
+      properties:
+        job:
+          $ref: '#/components/schemas/JobSummary'
+        description_text:
+          type: string
+          maxLength: 87381
+          x-max-utf8-bytes: 262144
+        description_truncated:
+          type: boolean
+        requirements:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/JobRequirement'
+        source:
+          type: object
+          required: [source_id, source_kind, company, verification_status, access_method]
+          properties:
+            source_id:
+              type: string
+              description: '`source_id` registry atau `manual_url`.'
+            source_kind:
+              type: string
+              enum: [registry, manual_url]
+              description: |
+                `manual_url` menandai sumber sintetis sistem, bukan entri source
+                registry yang dikelola pengguna.
+            company:
+              type: [string, 'null']
+              description: Null untuk sumber `manual_url` bila perusahaan tidak diketahui.
+            verification_status:
+              $ref: '#/components/schemas/SourceVerificationStatus'
+            access_method:
+              $ref: '#/components/schemas/SourceAccessMethod'
+
+    EligibilityStatus:
+      type: string
+      enum: [eligible, ineligible, needs_review]
+
+    EligibilityCheck:
+      type: object
+      required: [requirement_id, category, result, job_quote, reason]
+      properties:
+        requirement_id:
+          type: string
+        category:
+          type: string
+          enum: [work_authorization, location, experience, education, certification, language, timezone, travel, other]
+        result:
+          type: string
+          enum: [met, not_met, unknown]
+        job_quote:
+          type: string
+          maxLength: 2000
+        profile_ref:
+          type: [string, 'null']
+          description: Referensi field/deklarasi profil, misalnya `wa_...`.
+        evidence_refs:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+        reason:
+          type: string
+          maxLength: 2000
+
+    EligibilityAssessment:
+      type: object
+      required: [assessment_id, job_id, job_posting_version_id, profile_version_id, status, checks, confidence, status_outdated, computed_at]
+      properties:
+        assessment_id:
+          type: string
+        job_id:
+          type: string
+        job_posting_version_id:
+          type: string
+        profile_version_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/EligibilityStatus'
+        checks:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/EligibilityCheck'
+        confidence:
+          type: string
+          enum: [low, medium, high]
+        reason_summary:
+          type: [string, 'null']
+          maxLength: 500
+        status_outdated:
+          type: boolean
+        outdated_reason:
+          type: [string, 'null']
+        computed_at:
+          type: string
+          format: date-time
+
+    EligibilitySummary:
+      type: object
+      required: [assessment_id, status, confidence]
+      properties:
+        assessment_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/EligibilityStatus'
+        confidence:
+          type: string
+          enum: [low, medium, high]
+        reason_summary:
+          type: [string, 'null']
+          maxLength: 500
+
+    FitVerdict:
+      type: string
+      enum: [strong, moderate, weak]
+
+    FitComponent:
+      type: object
+      required: [name, weight, value, contribution]
+      properties:
+        name:
+          type: string
+          enum: [must_coverage, nice_coverage, experience_fit]
+        weight:
+          type: number
+          minimum: 0
+          maximum: 1
+        value:
+          type: number
+          minimum: 0
+          maximum: 1
+        contribution:
+          type: number
+          minimum: 0
+          maximum: 100
+        requirement_ids:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+        evidence_ids:
+          type: array
+          maxItems: 200
+          items:
+            type: string
+
+    FitGap:
+      type: object
+      required: [requirement_id, description]
+      properties:
+        requirement_id:
+          type: string
+        description:
+          type: string
+          maxLength: 2000
+        evidence_ids:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+
+    FitAssessment:
+      type: object
+      required: [assessment_id, job_posting_version_id, profile_version_id, fit_score, verdict, confidence, components, gaps, status_outdated, computed_at]
+      properties:
+        assessment_id:
+          type: string
+        job_posting_version_id:
+          type: string
+        profile_version_id:
+          type: string
+        fit_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        verdict:
+          $ref: '#/components/schemas/FitVerdict'
+        confidence:
+          type: string
+          enum: [low, medium, high]
+        components:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/FitComponent'
+        gaps:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/FitGap'
+        status_outdated:
+          type: boolean
+        outdated_reason:
+          type: [string, 'null']
+        computed_at:
+          type: string
+          format: date-time
+
+    FitSummary:
+      type: object
+      required: [assessment_id, fit_score, verdict, confidence]
+      properties:
+        assessment_id:
+          type: string
+        fit_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        verdict:
+          $ref: '#/components/schemas/FitVerdict'
+        confidence:
+          type: string
+          enum: [low, medium, high]
+
+    Recommendation:
+      type: string
+      description: |
+        Nilai diturunkan backend dari eligibility + fit + gap. Ambang rekomendasi
+        masih OPEN untuk Phase 3/4; klien hanya menampilkan.
+      enum: [apply_now, consider, stretch, needs_review, ineligible]
+
+    MatchItem:
+      type: object
+      required: [job, profile_version_id, eligibility, recommendation, status_outdated]
+      properties:
+        job:
+          $ref: '#/components/schemas/JobSummary'
+        profile_version_id:
+          type: string
+        eligibility:
+          $ref: '#/components/schemas/EligibilitySummary'
+        fit:
+          oneOf:
+            - $ref: '#/components/schemas/FitSummary'
+            - type: 'null'
+        recommendation:
+          $ref: '#/components/schemas/Recommendation'
+        status_outdated:
+          type: boolean
+        application_id:
+          type: [string, 'null']
+
+    MatchList:
+      type: object
+      required: [items, page, ranking, counts]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/MatchItem'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+        ranking:
+          type: object
+          required: [sort, tie_window, primary, tie_breaker]
+          properties:
+            ranking_run_id:
+              type: [string, 'null']
+            sort:
+              type: string
+              enum: [ranking, fit_score_desc, posted_at_desc, priority_tier]
+            primary:
+              type: string
+              enum: [fit_score_desc]
+            tie_breaker:
+              type: array
+              items:
+                type: string
+                enum: [priority_tier, posted_at_desc, job_id]
+            tie_window:
+              type: integer
+              minimum: 0
+              maximum: 20
+        counts:
+          type: object
+          required: [eligible, needs_review, ineligible, hidden_by_min_fit_score]
+          properties:
+            eligible:
+              type: integer
+              minimum: 0
+            needs_review:
+              type: integer
+              minimum: 0
+            ineligible:
+              type: integer
+              minimum: 0
+            hidden_by_min_fit_score:
+              type: integer
+              minimum: 0
+
+    MatchDetail:
+      type: object
+      required: [job_detail, eligibility, recommendation, status_outdated]
+      properties:
+        job_detail:
+          $ref: '#/components/schemas/JobDetail'
+        eligibility:
+          $ref: '#/components/schemas/EligibilityAssessment'
+        fit:
+          oneOf:
+            - $ref: '#/components/schemas/FitAssessment'
+            - type: 'null'
+        recommendation:
+          $ref: '#/components/schemas/Recommendation'
+        status_outdated:
+          type: boolean
+        application_id:
+          type: [string, 'null']
+
+    TierOverrideRequest:
+      type: object
+      required: [tier]
+      description: |
+        `tier: null` menghapus koreksi dan kembali ke klasifikasi backend.
+        `reason` wajib berisi teks bila `tier` diisi.
+      properties:
+        tier:
+          oneOf:
+            - $ref: '#/components/schemas/PriorityTier'
+            - type: 'null'
+        reason:
+          type: [string, 'null']
+          maxLength: 1000
+
+    ApplicationStatus:
+      type: string
+      description: |
+        Ringkasan aplikasi dari backend. Status dokumen tetap sumber kebenaran.
+        `outdated` dan `failed` terpisah.
+      enum: [not_started, processing, needs_review, in_review, approved, exported, failed, outdated]
+
+    DocumentKind:
+      type: string
+      enum: [cv, cover_letter]
+
+    DocumentStatus:
+      type: string
+      enum: [draft, in_review, approved, exported, outdated, failed]
+
+    ReviewStatus:
+      type: string
+      enum: [not_started, processing, completed, unavailable, failed]
+
+    FindingsSummary:
+      type: object
+      properties:
+        blocker:
+          type: integer
+          minimum: 0
+        major:
+          type: integer
+          minimum: 0
+        minor:
+          type: integer
+          minimum: 0
+        nit:
+          type: integer
+          minimum: 0
+
+    DocumentSummary:
+      type: object
+      required: [document_version_id, application_id, profile_version_id, job_posting_version_id, kind, version, status, content_hash, review_status, approved, exported, pdf_available, created_at]
+      properties:
+        document_version_id:
+          type: string
+        application_id:
+          type: string
+        profile_version_id:
+          type: string
+          description: Versi profil yang dipakai saat versi dokumen ini dibuat.
+        job_posting_version_id:
+          type: string
+        kind:
+          $ref: '#/components/schemas/DocumentKind'
+        version:
+          type: integer
+          minimum: 1
+        status:
+          $ref: '#/components/schemas/DocumentStatus'
+        content_hash:
+          type: string
+        review_status:
+          $ref: '#/components/schemas/ReviewStatus'
+        findings_summary:
+          $ref: '#/components/schemas/FindingsSummary'
+        approved:
+          type: boolean
+        approval_id:
+          type: [string, 'null']
+        exported:
+          type: boolean
+        export_id:
+          type: [string, 'null']
+        pdf_available:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DocumentVersion:
+      type: object
+      description: |
+        `content` adalah struktur dokumen turunan. Schema domain detail adalah
+        deliverable terpisah. `diff` membandingkan dengan Master CV.
+      required: [document_version_id, application_id, profile_version_id, job_posting_version_id, kind, version, status, content_hash, content, review_status, approved, created_at]
+      properties:
+        document_version_id:
+          type: string
+        application_id:
+          type: string
+        profile_version_id:
+          type: string
+          description: Versi profil yang dipakai saat versi dokumen ini dibuat.
+        job_posting_version_id:
+          type: string
+        kind:
+          $ref: '#/components/schemas/DocumentKind'
+        version:
+          type: integer
+          minimum: 1
+        parent_document_version_id:
+          type: [string, 'null']
+        status:
+          $ref: '#/components/schemas/DocumentStatus'
+        content_hash:
+          type: string
+        content:
+          type: object
+          additionalProperties: true
+        diff:
+          type: object
+          additionalProperties: true
+        evidence_ids:
+          type: array
+          maxItems: 2000
+          items:
+            type: string
+        prompt_version:
+          type: [string, 'null']
+        template_version:
+          type: [string, 'null']
+        provider:
+          type: [string, 'null']
+          description: Nama provider konfigurasi, bukan secret.
+        model:
+          type: [string, 'null']
+        review_status:
+          $ref: '#/components/schemas/ReviewStatus'
+        approved:
+          type: boolean
+        approval_id:
+          type: [string, 'null']
+        exported:
+          type: boolean
+        export_id:
+          type: [string, 'null']
+        pdf_available:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DocumentList:
+      type: object
+      required: [application_id, items, page]
+      properties:
+        application_id:
+          type: string
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/DocumentSummary'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+        suggested_filenames:
+          type: object
+          properties:
+            cv:
+              type: string
+            cover_letter:
+              type: string
+
+    ApplicationSummary:
+      type: object
+      required: [application_id, job, status, created_at, updated_at]
+      properties:
+        application_id:
+          type: string
+        job:
+          $ref: '#/components/schemas/JobSummary'
+        status:
+          $ref: '#/components/schemas/ApplicationStatus'
+        profile_version_id:
+          type: [string, 'null']
+        eligibility_status:
+          oneOf:
+            - $ref: '#/components/schemas/EligibilityStatus'
+            - type: 'null'
+        fit_score:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 100
+        document_counts:
+          type: object
+          properties:
+            cv_versions:
+              type: integer
+              minimum: 0
+            cover_letter_versions:
+              type: integer
+              minimum: 0
+            pending_review:
+              type: integer
+              minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ApplicationList:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ApplicationSummary'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    ApplicationCreated:
+      type: object
+      required: [application_id, job_id, deduplicated]
+      properties:
+        application_id:
+          type: string
+        job_id:
+          type: string
+        task_id:
+          type: [string, 'null']
+        deduplicated:
+          type: boolean
+
+    NextAction:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          enum: [upload_master_cv, review_profile, confirm_profile, configure_provider, grant_consent, run_discovery, review_matches, review_documents, export_documents, none]
+        label:
+          type: string
+          maxLength: 200
+        target_route:
+          type: string
+          maxLength: 200
+        reason:
+          type: [string, 'null']
+          maxLength: 500
+
+    ApplicationWorkspace:
+      type: object
+      required: [application_id, status, job, documents, suggested_filenames, next_action, created_at, updated_at]
+      properties:
+        application_id:
+          type: string
+        status:
+          $ref: '#/components/schemas/ApplicationStatus'
+        job:
+          $ref: '#/components/schemas/JobSummary'
+        job_posting_version_id:
+          type: string
+        profile_version_id:
+          type: [string, 'null']
+        eligibility:
+          oneOf:
+            - $ref: '#/components/schemas/EligibilitySummary'
+            - type: 'null'
+        fit:
+          oneOf:
+            - $ref: '#/components/schemas/FitSummary'
+            - type: 'null'
+        documents:
+          type: object
+          required: [cv, cover_letter]
+          properties:
+            cv:
+              type: array
+              maxItems: 200
+              items:
+                $ref: '#/components/schemas/DocumentSummary'
+            cover_letter:
+              type: array
+              maxItems: 200
+              items:
+                $ref: '#/components/schemas/DocumentSummary'
+        suggested_filenames:
+          type: object
+          required: [cv, cover_letter]
+          properties:
+            cv:
+              type: string
+            cover_letter:
+              type: string
+        next_action:
+          $ref: '#/components/schemas/NextAction'
+        active_task_id:
+          type: [string, 'null']
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateApplicationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        job_id:
+          type: string
+        url:
+          type: string
+          format: uri
+        language:
+          type: string
+          enum: [en, id]
+      oneOf:
+        - required: [job_id]
+          properties:
+            job_id:
+              type: string
+        - required: [url]
+          properties:
+            url:
+              type: string
+              format: uri
+
+    AnalysisRequest:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum: [profile_changed, job_changed, user_requested, outdated]
+        profile_version_id:
+          type: string
+        note:
+          type: string
+          maxLength: 2000
+
+    GenerateDocumentsRequest:
+      type: object
+      additionalProperties: false
+      required: [kinds, language]
+      properties:
+        kinds:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentKind'
+          minItems: 1
+          maxItems: 2
+        language:
+          type: string
+          enum: [en, id]
+        template_version:
+          type: string
+
+    DocumentEdit:
+      type: object
+      required: [path, value]
+      properties:
+        path:
+          type: string
+          maxLength: 300
+        value: {}
+        note:
+          type: string
+          maxLength: 2000
+
+    DocumentRevisionRequest:
+      type: object
+      additionalProperties: false
+      required: [base_content_hash, edits]
+      properties:
+        base_content_hash:
+          type: string
+        edits:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/DocumentEdit'
+        note:
+          type: string
+          maxLength: 2000
+
+    Finding:
+      type: object
+      required: [finding_id, severity, category, quote, problem]
+      properties:
+        finding_id:
+          type: string
+        severity:
+          type: string
+          enum: [blocker, major, minor, nit]
+        category:
+          type: string
+          enum: [factuality, relevance, exaggeration, language, ats, consistency, format, priority, eligibility]
+        location:
+          type: object
+          properties:
+            doc:
+              type: string
+              enum: [cv, cover_letter]
+            section:
+              type: [string, 'null']
+            bullet_id:
+              type: [string, 'null']
+        quote:
+          type: string
+          maxLength: 2000
+        problem:
+          type: string
+          maxLength: 2000
+        evidence_refs:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+        suggested_fix:
+          type: [string, 'null']
+          maxLength: 2000
+        auto_fixable:
+          type: boolean
+        status:
+          type: string
+          enum: [open, resolved, accepted]
+
+    FindingsReport:
+      type: object
+      required: [document_version_id, profile_version_id, verdict, findings]
+      properties:
+        document_version_id:
+          type: string
+        profile_version_id:
+          type: string
+        review_run_id:
+          type: [string, 'null']
+        cycle:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 3
+        verdict:
+          type: string
+          enum: [pass, changes_required, unresolved, review_unavailable]
+        findings:
+          type: array
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/Finding'
+        reviewed_at:
+          type: [string, 'null']
+          format: date-time
+
+    ApprovalDecision:
+      type: string
+      enum: [approved, rejected, changes_requested]
+
+    ApprovalRequest:
+      type: object
+      additionalProperties: false
+      required: [decision, content_hash]
+      properties:
+        decision:
+          $ref: '#/components/schemas/ApprovalDecision'
+        content_hash:
+          type: string
+          description: Harus sama dengan `content_hash` versi yang disetujui.
+        note:
+          type: string
+          maxLength: 2000
+
+    ApprovalRecord:
+      type: object
+      required: [approval_id, document_version_id, profile_version_id, document_hash, kind, decision, decided_at]
+      properties:
+        approval_id:
+          type: string
+        document_version_id:
+          type: string
+        profile_version_id:
+          type: string
+          description: Versi profil yang dipakai oleh versi dokumen yang disetujui.
+        document_hash:
+          type: string
+        kind:
+          $ref: '#/components/schemas/DocumentKind'
+        decision:
+          $ref: '#/components/schemas/ApprovalDecision'
+        note:
+          type: [string, 'null']
+          maxLength: 2000
+        decided_at:
+          type: string
+          format: date-time
+        decided_by:
+          type: string
+          enum: [user]
+
+    ExportRequest:
+      type: object
+      additionalProperties: false
+      required: [kind, document_version_id, content_hash]
+      properties:
+        kind:
+          $ref: '#/components/schemas/DocumentKind'
+        document_version_id:
+          type: string
+        content_hash:
+          type: string
+        filename:
+          type: string
+          maxLength: 255
+          description: Opsional. Backend tetap menyanitasi dan dapat memakai suffix stabil.
+
+    ExportRecord:
+      type: object
+      required: [export_id, document_version_id, profile_version_id, document_hash, kind, filename, status, created_at]
+      properties:
+        export_id:
+          type: string
+        document_version_id:
+          type: string
+        profile_version_id:
+          type: string
+          description: Versi profil yang dipakai oleh versi dokumen yang diekspor.
+        document_hash:
+          type: string
+        kind:
+          $ref: '#/components/schemas/DocumentKind'
+        filename:
+          type: string
+          maxLength: 255
+          description: |
+            Nama final yang dihitung backend. Untuk `tex_only`/`failed`, nama
+            merujuk artefak yang benar-benar ada (`.tex`) atau tetap nama target.
+        exported_at:
+          type: [string, 'null']
+          format: date-time
+          description: |
+            Null kecuali `status: exported`. Diisi hanya setelah PDF berhasil dibuat
+            dan export record ditulis.
+        created_at:
+          type: string
+          format: date-time
+          description: Waktu export record dibuat, terlepas dari hasil compile.
+        status:
+          type: string
+          description: |
+            `exported`: PDF berhasil dan file final tercatat. `tex_only`: sumber
+            LaTeX tersimpan tetapi PDF tidak dihasilkan. `failed`: tidak ada
+            artefak final yang dapat diunduh. Mesin PDF tidak ditetapkan kontrak
+            (D6 OPEN).
+          enum: [exported, tex_only, failed]
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/Error'
+            - type: 'null'
+          description: Kode aman untuk `tex_only`/`failed`, misalnya `compile_failed`.
+        download_url:
+          type: [string, 'null']
+          description: |
+            Path API relatif, hanya terisi bila `status: exported`. Tidak memuat
+            path filesystem.
+
+    ExportList:
+      type: object
+      required: [application_id, items, page]
+      properties:
+        application_id:
+          type: string
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ExportRecord'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    ProviderRoleConfig:
+      type: object
+      required: [model]
+      properties:
+        model:
+          type: string
+          minLength: 1
+          maxLength: 200
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 2
+
+    ProviderSettings:
+      type: object
+      required: [provider_id, configured, roles, key_source]
+      properties:
+        provider_id:
+          type: [string, 'null']
+          description: Identifier konfigurasi, bukan vendor yang diasumsikan.
+        display_name:
+          type: [string, 'null']
+        configured:
+          type: boolean
+        base_url:
+          type: [string, 'null']
+          description: Opsional. Tanpa kredensial di URL.
+        roles:
+          type: object
+          properties:
+            extract:
+              $ref: '#/components/schemas/ProviderRoleConfig'
+            classify:
+              $ref: '#/components/schemas/ProviderRoleConfig'
+            write:
+              $ref: '#/components/schemas/ProviderRoleConfig'
+            review:
+              $ref: '#/components/schemas/ProviderRoleConfig'
+        key_source:
+          type: string
+          enum: [keyring, env, missing]
+        consent_renewal_required:
+          type: boolean
+        updated_at:
+          type: [string, 'null']
+          format: date-time
+
+    ProviderUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [provider_id, roles]
+      properties:
+        provider_id:
+          type: string
+          minLength: 1
+          maxLength: 100
+        display_name:
+          type: string
+          maxLength: 200
+        base_url:
+          type: string
+          format: uri
+        roles:
+          type: object
+          required: [extract, classify, write, review]
+          properties:
+            extract:
+              $ref: '#/components/schemas/ProviderRoleConfig'
+            classify:
+              $ref: '#/components/schemas/ProviderRoleConfig'
+            write:
+              $ref: '#/components/schemas/ProviderRoleConfig'
+            review:
+              $ref: '#/components/schemas/ProviderRoleConfig'
+        api_key_ref:
+          type: string
+          maxLength: 200
+          description: Nama referensi keyring. API tidak menerima nilai secret.
+
+    ConsentType:
+      type: string
+      enum: [cloud_data_processing]
+
+    ConsentScope:
+      type: object
+      description: |
+        Cakupan consent. Consent lama tetap berlaku hanya bila `provider_id`,
+        `data_classes`, dan model per role sama dengan konfigurasi aktif. Perubahan
+        model pada role mana pun (`extract`, `classify`, `write`, `review`)
+        memerlukan consent baru. Perubahan role yang tidak terpakai untuk
+        pengiriman data kandidat tidak memperluas cakupan consent.
+      required: [data_classes, provider_id]
+      properties:
+        data_classes:
+          type: array
+          maxItems: 3
+          items:
+            type: string
+            enum: [cv_text, job_description, profile_slice]
+        provider_id:
+          type: string
+        model_roles:
+          type: object
+          description: |
+            Model per role yang tercatat saat consent diberikan. Diisi server dari
+            konfigurasi aktif; klien tidak perlu mengirimnya.
+          additionalProperties: false
+          properties:
+            extract:
+              type: string
+              maxLength: 200
+            classify:
+              type: string
+              maxLength: 200
+            write:
+              type: string
+              maxLength: 200
+            review:
+              type: string
+              maxLength: 200
+
+    ConsentRecord:
+      type: object
+      required: [consent_id, consent_type, scope, text_version, granted_at]
+      properties:
+        consent_id:
+          type: string
+        consent_type:
+          $ref: '#/components/schemas/ConsentType'
+        scope:
+          $ref: '#/components/schemas/ConsentScope'
+        text_version:
+          type: string
+          maxLength: 100
+        granted_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: [string, 'null']
+          format: date-time
+
+    ConsentStatus:
+      type: object
+      required: [required, granted, history, history_truncated]
+      properties:
+        required:
+          type: boolean
+        granted:
+          type: boolean
+        current:
+          oneOf:
+            - $ref: '#/components/schemas/ConsentRecord'
+            - type: 'null'
+        provider_changed_since_consent:
+          type: boolean
+        model_changed_since_consent:
+          type: boolean
+          description: |
+            True bila provider atau model pada salah satu role berbeda dari yang
+            tercatat pada consent berlaku. Consent lama tidak berlaku dan consent
+            baru diperlukan.
+        required_scope:
+          oneOf:
+            - $ref: '#/components/schemas/ConsentScope'
+            - type: 'null'
+        required_text:
+          $ref: '#/components/schemas/ConsentText'
+        history:
+          type: array
+          description: |
+            Maksimum `history_limit` record terbaru, urut terbaru lebih dulu.
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/ConsentRecord'
+        history_truncated:
+          type: boolean
+          description: True bila masih ada record riwayat lebih lama yang tidak dikirim.
+
+    ConsentText:
+      type: object
+      description: |
+        Teks consent versi server. Klien menampilkan `display_text` dan tidak
+        memilih `text_version`; server menetapkan versi saat consent dicatat.
+      required: [text_version, text_sha256, display_text, issued_at]
+      properties:
+        text_version:
+          type: string
+          maxLength: 100
+          description: Diterbitkan server. Read-only bagi klien.
+        text_sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+          description: Hash teks consent untuk audit.
+        display_text:
+          type: string
+          maxLength: 8000
+        issued_at:
+          type: string
+          format: date-time
+
+    ConsentCreateRequest:
+      type: object
+      description: |
+        `text_version` tidak diterima dari klien. Server menetapkan versi teks
+        consent aktif saat request dicatat.
+      additionalProperties: false
+      required: [consent_type, scope, accepted]
+      properties:
+        consent_type:
+          $ref: '#/components/schemas/ConsentType'
+        scope:
+          $ref: '#/components/schemas/ConsentScope'
+        accepted:
+          type: boolean
+          enum: [true]
+
+    RetentionItem:
+      type: object
+      required: [data_class, status]
+      properties:
+        data_class:
+          type: string
+        duration_days:
+          type: [integer, 'null']
+          minimum: 0
+        status:
+          type: string
+          enum: [provisional]
+
+    RetentionInfo:
+      type: object
+      required: [provisional, items]
+      properties:
+        provisional:
+          type: boolean
+          enum: [true]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetentionItem'
+
+    ToolchainInfo:
+      type: object
+      description: |
+        Status mesin PDF. D6 OPEN: kontrak tidak menetapkan mesin PDF tertentu dan
+        tidak menjamin satu mesin tersedia. `pdf_engine` melaporkan konfigurasi
+        runtime, bukan keputusan produk.
+      required: [pdf_engine, status, decision_status]
+      properties:
+        pdf_engine:
+          type: [string, 'null']
+          maxLength: 100
+          description: |
+            Identifier mesin PDF yang dikonfigurasi saat runtime, misalnya nama
+            executable. Null bila belum dikonfigurasi.
+        status:
+          type: string
+          enum: [available, unavailable, unknown]
+        decision_status:
+          type: string
+          description: Status keputusan D6. Selama OPEN, ekspor PDF tidak dijanjikan.
+          enum: [open, decided]
+        detail:
+          type: [string, 'null']
+          maxLength: 500
+
+    Settings:
+      type: object
+      required: [app, provider, consent, preferences, retention, toolchain]
+      properties:
+        app:
+          type: object
+          required: [version, api_version, schema_version]
+          properties:
+            version:
+              type: string
+            api_version:
+              type: string
+            schema_version:
+              type: string
+        provider:
+          $ref: '#/components/schemas/ProviderSettings'
+        consent:
+          $ref: '#/components/schemas/ConsentStatus'
+        preferences:
+          $ref: '#/components/schemas/SearchPreferences'
+        retention:
+          $ref: '#/components/schemas/RetentionInfo'
+        toolchain:
+          $ref: '#/components/schemas/ToolchainInfo'
+
+    ActivityEvent:
+      type: object
+      required: [event_id, occurred_at, workflow, status_context, summary]
+      properties:
+        event_id:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        workflow:
+          type: string
+          enum: [setup, discovery, apply, export, settings]
+        stage:
+          type: [string, 'null']
+        status_context:
+          $ref: '#/components/schemas/ActivityStatusContext'
+        summary:
+          type: string
+          maxLength: 300
+          description: Metadata aman. Tanpa isi dokumen dan tanpa PII.
+        application_id:
+          type: [string, 'null']
+        job_id:
+          type: [string, 'null']
+        task_id:
+          type: [string, 'null']
+
+    ActivityStatusContext:
+      type: object
+      description: |
+        Status aktivitas dengan konteks bertipe. `value` harus berasal dari kosakata
+        `kind` yang sesuai; konteks tidak boleh dicampur.
+      required: [kind, value]
+      properties:
+        kind:
+          type: string
+          enum: [task, document, application, eligibility, review, export, master_cv, profile, source_progress]
+        value:
+          type: string
+          enum:
+            - not_started
+            - queued
+            - processing
+            - needs_review
+            - completed
+            - partial
+            - failed
+            - skipped
+            - draft
+            - in_review
+            - approved
+            - exported
+            - outdated
+            - unavailable
+            - uploaded
+            - extracted
+            - confirmed
+            - superseded
+            - eligible
+            - ineligible
+            - pass
+            - changes_required
+            - unresolved
+            - tex_only
+
+    ActivityList:
+      type: object
+      required: [items, page]
+      properties:
+        items:
+          type: array
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/ActivityEvent'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+
+    OverviewCounts:
+      type: object
+      required: [eligible, needs_review, ineligible, total_jobs, documents_pending_review]
+      properties:
+        eligible:
+          type: integer
+          minimum: 0
+        needs_review:
+          type: integer
+          minimum: 0
+        ineligible:
+          type: integer
+          minimum: 0
+        total_jobs:
+          type: integer
+          minimum: 0
+        documents_pending_review:
+          type: integer
+          minimum: 0
+
+    Overview:
+      type: object
+      required: [counts, next_action, consent_required, provider_configured, recent_activity]
+      properties:
+        master_cv:
+          oneOf:
+            - $ref: '#/components/schemas/MasterCv'
+            - type: 'null'
+        profile:
+          oneOf:
+            - $ref: '#/components/schemas/ProfileSummary'
+            - type: 'null'
+        discovery:
+          oneOf:
+            - $ref: '#/components/schemas/DiscoveryRun'
+            - type: 'null'
+        counts:
+          $ref: '#/components/schemas/OverviewCounts'
+        next_action:
+          $ref: '#/components/schemas/NextAction'
+        consent_required:
+          type: boolean
+        provider_configured:
+          type: boolean
+        active_task_id:
+          type: [string, 'null']
+          description: |
+            Task yang sedang berjalan, bila ada. UI memulihkan progress setelah
+            reload dengan polling `GET /api/tasks/{task_id}`.
+        recent_activity:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityEvent'
+          maxItems: 10

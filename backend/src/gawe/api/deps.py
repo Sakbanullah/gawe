@@ -51,10 +51,13 @@ def profile_service(request: Request) -> ProfileService:
 
 
 def discovery_service(request: Request) -> DiscoveryService:
+    settings = request.app.state.config.discovery
     return DiscoveryService(
         request.state.db,
         profile_store(request),
         task_store(request),
         fetcher=request.app.state.discovery_fetcher,
         limiter=request.app.state.discovery_limiter,
+        max_workers=settings.max_workers,
+        max_run_seconds=settings.max_run_seconds,
     )

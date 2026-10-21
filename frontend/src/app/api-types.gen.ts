@@ -268,6 +268,12 @@ export interface paths {
          *     `active_task_id`). `source_ids` kosong berarti semua sumber `enabled`.
          *     Hasil parsial disimpan per sumber; kegagalan satu sumber tidak menghapus
          *     hasil sumber lain.
+         *
+         *     Run berjalan sinkron di dalam request pada v1: respons `202` dikirim
+         *     setelah run selesai, dan status task sudah final saat diterima. Klien
+         *     tidak boleh memakai timeout lebih pendek dari `discovery.max_run_seconds`.
+         *     Sumber yang belum selesai saat batas itu tercapai ditandai `failed`
+         *     dengan `error.code: run_timeout` dan `retryable: true`.
          */
         post: operations["startDiscoveryRun"];
         delete?: never;
@@ -317,6 +323,11 @@ export interface paths {
          *
          *     `min_fit_score` adalah filter tampilan; jumlah yang tersembunyi dilaporkan
          *     di `counts.hidden_by_min_fit_score`.
+         *
+         *     Cursor adalah kunci keyset, bukan offset: isinya `sort`, `ranking_run_id`,
+         *     kunci urut terakhir, dan `job_id` terakhir. Cursor yang tidak cocok dengan
+         *     `sort` atau `ranking_run_id` saat ini ditolak `400 validation_failed`
+         *     (`details[].field = "cursor"`).
          */
         get: operations["listMatches"];
         put?: never;
@@ -347,6 +358,29 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/matches/{job_id}/tier": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Koreksi priority tier untuk satu lowongan
+         * @description Menyimpan koreksi tier pengguna beserta alasannya. Koreksi hanya menjadi
+         *     tie-breaker pada ranking berikutnya; `fit_score`, eligibility, dan
+         *     `ranking_run` yang sudah tersimpan tidak berubah. Kirim `tier: null`
+         *     untuk menghapus koreksi dan kembali ke hasil klasifikasi backend.
+         */
+        patch: operations["overrideMatchTier"];
         trace?: never;
     };
     "/api/applications": {
@@ -797,9 +831,10 @@ export interface paths {
         put?: never;
         /**
          * Retry task atau sumber yang gagal
-         * @description `scope=all` mengulang seluruh task. `scope=failed_sources` hanya berlaku
-         *     untuk task `discovery`: hanya sumber berstatus `failed` atau `partial` yang
-         *     diulang; sumber yang berhasil tidak diulang dan hasilnya tidak dihapus.
+         * @description `scope` default untuk task `discovery` adalah `failed_sources`: hanya
+         *     sumber berstatus `failed` atau `partial` yang retryable yang diulang;
+         *     sumber yang berhasil tidak diulang dan hasilnya tidak dihapus.
+         *     `scope=all` mengulang seluruh task dan harus diminta eksplisit.
          *
          *     `scope=failed_sources` untuk tipe task lain ditolak `400 validation_failed`
          *     dengan `details[].code: retry_scope_unsupported`. Retry membuat `task_id`
@@ -1013,7 +1048,7 @@ export interface components {
          * @description Kode error stabil. Nilai baru hanya ditambahkan, tidak diubah.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "not_found" | "csrf_invalid" | "conflict" | "version_conflict" | "idempotency_conflict" | "task_already_running" | "task_not_retryable" | "task_not_finished" | "profile_not_confirmed" | "profile_conflicts_unresolved" | "profile_version_mismatch" | "eligibility_not_eligible" | "eligibility_needs_review" | "fit_not_available" | "document_not_approved" | "approval_hash_mismatch" | "approval_superseded" | "export_not_ready" | "pdf_not_available" | "review_unavailable" | "review_not_completed" | "compile_failed" | "toolchain_unavailable" | "provider_not_configured" | "provider_unavailable" | "provider_rate_limited" | "consent_required" | "url_rejected" | "source_not_verified" | "source_restricted" | "source_unavailable" | "duplicate_source" | "unsupported_media_type" | "payload_too_large" | "internal_error";
+        ErrorCode: "validation_failed" | "not_found" | "csrf_invalid" | "conflict" | "version_conflict" | "idempotency_conflict" | "task_already_running" | "task_not_retryable" | "task_not_finished" | "profile_not_confirmed" | "profile_conflicts_unresolved" | "profile_version_mismatch" | "eligibility_not_eligible" | "eligibility_needs_review" | "assessment_failed" | "fit_not_available" | "document_not_approved" | "approval_hash_mismatch" | "approval_superseded" | "export_not_ready" | "pdf_not_available" | "review_unavailable" | "review_not_completed" | "compile_failed" | "toolchain_unavailable" | "provider_not_configured" | "provider_unavailable" | "provider_rate_limited" | "consent_required" | "url_rejected" | "source_not_verified" | "source_restricted" | "source_unavailable" | "source_unsupported" | "source_error" | "source_parse_failed" | "response_too_large" | "run_timeout" | "stale_run" | "no_enabled_sources" | "retry_scope_unsupported" | "ats_unavailable" | "ats_host_mismatch" | "duplicate_source" | "unsupported_media_type" | "payload_too_large" | "internal_error";
         ErrorDetail: {
             /** @description Nama field request. Bukan path filesystem. */
             field?: string | null;
@@ -1090,11 +1125,32 @@ export interface components {
             status: components["schemas"]["SourceProgressStatus"];
             fetched_count: number;
             accepted_count: number;
+            /**
+             * @description Jumlah record yang sudah ada sebelumnya pada sumber yang sama,
+             *     termasuk saat kontennya berubah. Bukan deduplikasi lintas sumber.
+             */
             duplicate_count: number;
             retry_count: number;
+            stats?: components["schemas"]["SourceProgressStats"] | null;
+            /**
+             * @description Alasan snapshot tidak dipakai untuk menutup lowongan yang tidak terlihat.
+             *     `null` berarti penutupan dijalankan.
+             */
+            close_skipped?: components["schemas"]["Error"] | null;
             /** Format: date-time */
             last_attempt_at?: string | null;
             error?: components["schemas"]["Error"] | null;
+        };
+        /**
+         * @description Diagnosis per sumber. `skipped` adalah record payload yang dibuang adapter
+         *     sebelum normalisasi; `invalid` gagal normalisasi; `truncated` deskripsinya
+         *     dipotong; `stale` datanya ditandai basi.
+         */
+        SourceProgressStats: {
+            skipped: number;
+            invalid: number;
+            truncated: number;
+            stale: number;
         };
         RetryInfo: {
             retryable: boolean;
@@ -1535,6 +1591,7 @@ export interface components {
             checks: components["schemas"]["EligibilityCheck"][];
             /** @enum {string} */
             confidence: "low" | "medium" | "high";
+            reason_summary?: string | null;
             status_outdated: boolean;
             outdated_reason?: string | null;
             /** Format: date-time */
@@ -1626,6 +1683,14 @@ export interface components {
             recommendation: components["schemas"]["Recommendation"];
             status_outdated: boolean;
             application_id?: string | null;
+        };
+        /**
+         * @description `tier: null` menghapus koreksi dan kembali ke klasifikasi backend.
+         *     `reason` wajib berisi teks bila `tier` diisi.
+         */
+        TierOverrideRequest: {
+            tier: components["schemas"]["PriorityTier"] | null;
+            reason?: string | null;
         };
         /**
          * @description Ringkasan aplikasi dari backend. Status dokumen tetap sumber kebenaran.
@@ -2766,6 +2831,38 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    overrideMatchTier: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TierOverrideRequest"];
+            };
+        };
+        responses: {
+            /** @description Baris match setelah koreksi tier. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatchItem"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listApplications: {
         parameters: {
             query?: {
@@ -3441,7 +3538,7 @@ export interface operations {
             content: {
                 "application/json": {
                     /**
-                     * @default all
+                     * @description Default `failed_sources` untuk task `discovery`. `all` harus diminta eksplisit dan mengulang seluruh task.
                      * @enum {string}
                      */
                     scope?: "all" | "failed_sources";

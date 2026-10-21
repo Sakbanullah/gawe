@@ -17,14 +17,34 @@ export type SourceCreateRequest = components["schemas"]["SourceCreateRequest"];
 export type SourceUpdateRequest = components["schemas"]["SourceUpdateRequest"];
 export type DiscoveryRun = components["schemas"]["DiscoveryRun"];
 export type DiscoveryRunList = components["schemas"]["DiscoveryRunList"];
+export type MatchList = components["schemas"]["MatchList"];
+export type MatchItem = components["schemas"]["MatchItem"];
+export type MatchDetail = components["schemas"]["MatchDetail"];
+export type TierOverrideRequest = components["schemas"]["TierOverrideRequest"];
+export type ApplicationList = components["schemas"]["ApplicationList"];
+export type ApplicationSummary = components["schemas"]["ApplicationSummary"];
+export type ApplicationCreated = components["schemas"]["ApplicationCreated"];
+export type ApplicationWorkspace = components["schemas"]["ApplicationWorkspace"];
+export type AnalysisRequest = components["schemas"]["AnalysisRequest"];
+export type DocumentSummary = components["schemas"]["DocumentSummary"];
+export type DocumentVersion = components["schemas"]["DocumentVersion"];
+export type DocumentList = components["schemas"]["DocumentList"];
+export type GenerateDocumentsRequest = components["schemas"]["GenerateDocumentsRequest"];
+export type DocumentRevisionRequest = components["schemas"]["DocumentRevisionRequest"];
+export type FindingsReport = components["schemas"]["FindingsReport"];
+export type ApprovalRecord = components["schemas"]["ApprovalRecord"];
+export type ApprovalRequest = components["schemas"]["ApprovalRequest"];
 
 let csrfToken: string | null = null;
+
+export type ApiErrorDetail = { field?: string; code?: string; message?: string };
 
 export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly code: string,
     message: string,
+    readonly details: ApiErrorDetail[] = [],
   ) {
     super(message);
   }
@@ -33,12 +53,13 @@ export class ApiError extends Error {
 async function parseError(response: Response): Promise<ApiError> {
   try {
     const body = (await response.json()) as {
-      error?: { code?: string; message?: string };
+      error?: { code?: string; message?: string; details?: ApiErrorDetail[] };
     };
     return new ApiError(
       response.status,
       body.error?.code ?? "internal_error",
       body.error?.message ?? "Permintaan gagal.",
+      body.error?.details ?? [],
     );
   } catch {
     return new ApiError(response.status, "internal_error", "Permintaan gagal.");
@@ -210,4 +231,132 @@ export function retryTask(
   scope: "all" | "failed_sources" = "failed_sources",
 ): Promise<TaskCreated> {
   return apiSend<TaskCreated>("POST", `/api/tasks/${taskId}/retry`, { scope });
+}
+
+export type MatchQuery = {
+  limit?: number;
+  cursor?: string | null;
+  eligibility?: "all" | "eligible" | "needs_review" | "ineligible";
+  q?: string;
+  tier?: string;
+  source_id?: string;
+  market?: string;
+  work_mode?: string;
+  min_fit_score?: number;
+  sort?: "ranking" | "fit_score_desc" | "posted_at_desc" | "priority_tier";
+};
+
+export function listMatches(query: MatchQuery = {}): Promise<MatchList> {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === null || value === "") continue;
+    params.set(key, String(value));
+  }
+  const suffix = params.toString();
+  return apiGet<MatchList>(`/api/matches${suffix ? `?${suffix}` : ""}`);
+}
+
+export function getMatch(jobId: string): Promise<MatchDetail> {
+  return apiGet<MatchDetail>(`/api/matches/${jobId}`);
+}
+
+export function overrideMatchTier(
+  jobId: string,
+  body: TierOverrideRequest,
+): Promise<MatchItem> {
+  return apiSend<MatchItem>("PATCH", `/api/matches/${jobId}/tier`, body);
+}
+
+export function listApplications(): Promise<ApplicationList> {
+  return apiGet<ApplicationList>("/api/applications?limit=200");
+}
+
+export function createApplication(jobId: string): Promise<ApplicationCreated> {
+  return apiSend<ApplicationCreated>("POST", "/api/applications", { job_id: jobId });
+}
+
+export function getApplication(applicationId: string): Promise<ApplicationWorkspace> {
+  return apiGet<ApplicationWorkspace>(`/api/applications/${applicationId}`);
+}
+
+export function rerunApplicationAnalysis(
+  applicationId: string,
+  body: AnalysisRequest,
+): Promise<TaskCreated> {
+  return apiSend<TaskCreated>("POST", `/api/applications/${applicationId}/analysis`, body);
+}
+
+export function listDocuments(applicationId: string): Promise<DocumentList> {
+  return apiGet<DocumentList>(`/api/applications/${applicationId}/documents?limit=200`);
+}
+
+export function generateDocuments(
+  applicationId: string,
+  body: GenerateDocumentsRequest,
+): Promise<TaskCreated> {
+  return apiSend<TaskCreated>("POST", `/api/applications/${applicationId}/documents`, body);
+}
+
+export function getDocumentVersion(
+  applicationId: string,
+  documentVersionId: string,
+): Promise<DocumentVersion> {
+  return apiGet<DocumentVersion>(
+    `/api/applications/${applicationId}/documents/${documentVersionId}`,
+  );
+}
+
+export function createDocumentRevision(
+  applicationId: string,
+  documentVersionId: string,
+  body: DocumentRevisionRequest,
+): Promise<DocumentVersion> {
+  return apiSend<DocumentVersion>(
+    "POST",
+    `/api/applications/${applicationId}/documents/${documentVersionId}/revisions`,
+    body,
+  );
+}
+
+export function regenerateDocument(
+  applicationId: string,
+  documentVersionId: string,
+  baseContentHash: string,
+): Promise<TaskCreated> {
+  return apiSend<TaskCreated>(
+    "POST",
+    `/api/applications/${applicationId}/documents/${documentVersionId}/regenerate`,
+    { base_content_hash: baseContentHash, reason: "user_requested" },
+  );
+}
+
+export function runDocumentReview(
+  applicationId: string,
+  documentVersionId: string,
+): Promise<TaskCreated> {
+  return apiSend<TaskCreated>(
+    "POST",
+    `/api/applications/${applicationId}/documents/${documentVersionId}/review`,
+  );
+}
+
+export function getDocumentFindings(
+  applicationId: string,
+  documentVersionId: string,
+): Promise<FindingsReport> {
+  return apiGet<FindingsReport>(
+    `/api/applications/${applicationId}/documents/${documentVersionId}/findings`,
+  );
+}
+
+export function approveDocumentVersion(
+  applicationId: string,
+  documentVersionId: string,
+  body: ApprovalRequest,
+): Promise<ApprovalRecord> {
+  return apiSend<ApprovalRecord>(
+    "POST",
+    `/api/applications/${applicationId}/documents/${documentVersionId}/approval`,
+    body,
+  );
 }

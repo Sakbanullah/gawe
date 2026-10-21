@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from urllib.parse import quote, urlsplit
 
-from .base import AdapterError, RawJob, parse_json
+from .base import AdapterError, ParsedJobs, RawJob, parse_json
 
 ATS = "lever"
 HOSTS = ("api.lever.co", "api.eu.lever.co")
@@ -32,13 +32,15 @@ def build_url(source: dict) -> str:
     return f"https://{api_host}/v0/postings/{quote(site)}?mode=json"
 
 
-def parse(body: str, source: dict) -> list[RawJob]:
+def parse(body: str, source: dict) -> ParsedJobs:
     payload = parse_json(body)
     if not isinstance(payload, list):
         raise AdapterError("lever payload is not a postings list")
     jobs: list[RawJob] = []
+    skipped = 0
     for item in payload:
         if not isinstance(item, dict):
+            skipped += 1
             continue
         try:
             categories = item.get("categories") or {}
@@ -57,5 +59,6 @@ def parse(body: str, source: dict) -> list[RawJob]:
                 )
             )
         except (KeyError, TypeError, AttributeError):
+            skipped += 1
             continue
-    return jobs
+    return ParsedJobs(jobs, skipped)

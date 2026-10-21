@@ -2,9 +2,10 @@
 data/
 /profile/
 /logs/
-/graphify-out/
-/temporary/
 /raw/
+/temporary/*
+!/temporary/test-results.md
+/graphify-out/
 .venv/
 venv/
 node_modules/
@@ -23,35 +24,6 @@ config.toml
 *.pem
 *.key
 *.zip
-
-# Test, fixture, dan konfigurasi pengujian.
-tests/
-test/
-test_*.py
-*_test.py
-conftest.py
-*.test.ts
-*.test.tsx
-*.spec.ts
-*.spec.tsx
-fixtures/
-snapshots/
-__snapshots__/
-vitest.config.ts
-test-setup.ts
-
-# Dokumentasi, rencana, laporan, dan skrip audit dokumentasi.
-docs/
-*.md
-tools/
-
-# Instruksi dan konfigurasi AI coding agent.
-AGENTS.md
-.opencode/
-.graphifyignore
-CLAUDE.md
-.cursor/
-.windsurf/
 
 # Cache, log, coverage, dan artefak profiling.
 coverage/
@@ -82,3 +54,11 @@ secrets/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Instruksi dan konfigurasi AI coding agent (lokal, bukan bagian produk).
+AGENTS.md
+.opencode/
+.graphifyignore
+CLAUDE.md
+.cursor/
+.windsurf/

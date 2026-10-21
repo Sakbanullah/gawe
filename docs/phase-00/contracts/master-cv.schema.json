@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gawe.local/schemas/phase-00/master-cv.schema.json",
+  "title": "Gawe Master CV Record",
+  "description": "Record Master CV yang immutable dan content-addressed. Bentuk ini selaras dengan components.schemas.MasterCv pada openapi.yaml. `deduplicated` hanya ada pada response unggah (MasterCvUploadResult) dan tidak termasuk schema record ini. Tidak ada path filesystem di record.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["master_cv_id", "original_file", "status", "uploaded_at"],
+  "properties": {
+    "master_cv_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "original_file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "filename", "mime", "size_bytes", "uploaded_at"],
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "Nama asli yang disanitasi. Bukan path."
+        },
+        "mime": {
+          "type": "string",
+          "enum": [
+            "application/pdf",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "text/plain",
+            "text/markdown"
+          ]
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20971520
+        },
+        "page_count": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "maximum": 50
+        },
+        "uploaded_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "description": "`superseded` terminal dan read-only. Tidak ada transisi balik. Tidak ada hard delete di v1.",
+      "enum": ["uploaded", "extracted", "confirmed", "superseded"]
+    },
+    "active_profile_version_id": {
+      "type": ["string", "null"]
+    },
+    "extraction_task_id": {
+      "type": ["string", "null"]
+    },
+    "uploaded_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

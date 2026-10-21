@@ -18,11 +18,19 @@ STATUSES = ("uploaded", "extracted", "confirmed", "superseded")
 
 
 class MasterCvError(Exception):
-    def __init__(self, code: str, message: str, status_code: int = 409) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int = 409,
+        *,
+        active_task_id: str | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.active_task_id = active_task_id
 
 
 def now_iso() -> str:

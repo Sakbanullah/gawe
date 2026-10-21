@@ -1,0 +1,190 @@
+{
+  "tie_window_default": 0,
+  "tie_window_max": 20,
+  "cases": [
+    {
+      "case_id": "identical_scores_tier_then_posted_at",
+      "tie_window": 0,
+      "candidates": [
+        {
+          "job_id": "job_a1",
+          "eligibility_status": "eligible",
+          "fit_score": 90,
+          "priority_tier": "P2",
+          "posted_at": "2026-10-01T00:00:00Z"
+        },
+        {
+          "job_id": "job_a2",
+          "eligibility_status": "eligible",
+          "fit_score": 90,
+          "priority_tier": "P1",
+          "posted_at": "2026-09-01T00:00:00Z"
+        },
+        {
+          "job_id": "job_a3",
+          "eligibility_status": "eligible",
+          "fit_score": 90,
+          "priority_tier": "P2",
+          "posted_at": "2026-10-05T00:00:00Z"
+        }
+      ],
+      "expected_eligible_order": ["job_a2", "job_a3", "job_a1"]
+    },
+    {
+      "case_id": "tie_window_five_band",
+      "tie_window": 5,
+      "candidates": [
+        {
+          "job_id": "job_b1",
+          "eligibility_status": "eligible",
+          "fit_score": 90,
+          "priority_tier": "P2",
+          "posted_at": "2026-10-01T00:00:00Z"
+        },
+        {
+          "job_id": "job_b2",
+          "eligibility_status": "eligible",
+          "fit_score": 87,
+          "priority_tier": "P1",
+          "posted_at": "2026-09-01T00:00:00Z"
+        },
+        {
+          "job_id": "job_b3",
+          "eligibility_status": "eligible",
+          "fit_score": 80,
+          "priority_tier": "P1",
+          "posted_at": "2026-10-09T00:00:00Z"
+        }
+      ],
+      "expected_eligible_order": ["job_b2", "job_b1", "job_b3"]
+    },
+    {
+      "case_id": "tier_never_crosses_band",
+      "tie_window": 0,
+      "candidates": [
+        {
+          "job_id": "job_c1",
+          "eligibility_status": "eligible",
+          "fit_score": 90,
+          "priority_tier": "P2",
+          "posted_at": "2026-10-01T00:00:00Z"
+        },
+        {
+          "job_id": "job_c2",
+          "eligibility_status": "eligible",
+          "fit_score": 80,
+          "priority_tier": "P1",
+          "posted_at": "2026-10-09T00:00:00Z"
+        }
+      ],
+      "expected_eligible_order": ["job_c1", "job_c2"]
+    },
+    {
+      "case_id": "unclassified_last_in_band",
+      "tie_window": 10,
+      "candidates": [
+        {
+          "job_id": "job_d1",
+          "eligibility_status": "eligible",
+          "fit_score": 88,
+          "priority_tier": "unclassified",
+          "posted_at": "2026-10-09T00:00:00Z"
+        },
+        {
+          "job_id": "job_d2",
+          "eligibility_status": "eligible",
+          "fit_score": 85,
+          "priority_tier": "P4",
+          "posted_at": "2026-10-08T00:00:00Z"
+        },
+        {
+          "job_id": "job_d3",
+          "eligibility_status": "eligible",
+          "fit_score": 84,
+          "priority_tier": "P1",
+          "posted_at": "2026-10-07T00:00:00Z"
+        }
+      ],
+      "expected_eligible_order": ["job_d3", "job_d2", "job_d1"]
+    },
+    {
+      "case_id": "non_eligible_excluded",
+      "tie_window": 0,
+      "candidates": [
+        {
+          "job_id": "job_e1",
+          "eligibility_status": "eligible",
+          "fit_score": 70,
+          "priority_tier": "P1",
+          "posted_at": "2026-10-01T00:00:00Z"
+        },
+        {
+          "job_id": "job_e2",
+          "eligibility_status": "needs_review",
+          "fit_score": null,
+          "priority_tier": "P1",
+          "posted_at": "2026-10-02T00:00:00Z"
+        },
+        {
+          "job_id": "job_e3",
+          "eligibility_status": "ineligible",
+          "fit_score": null,
+          "priority_tier": "P1",
+          "posted_at": "2026-10-03T00:00:00Z"
+        }
+      ],
+      "expected_eligible_order": ["job_e1"],
+      "expected_needs_review_order": ["job_e2"],
+      "expected_ineligible_order": ["job_e3"]
+    },
+    {
+      "case_id": "null_posted_at_last_in_band",
+      "tie_window": 0,
+      "candidates": [
+        {
+          "job_id": "job_f1",
+          "eligibility_status": "eligible",
+          "fit_score": 75,
+          "priority_tier": "P1",
+          "posted_at": null
+        },
+        {
+          "job_id": "job_f2",
+          "eligibility_status": "eligible",
+          "fit_score": 75,
+          "priority_tier": "P1",
+          "posted_at": "2026-01-01T00:00:00Z"
+        }
+      ],
+      "expected_eligible_order": ["job_f2", "job_f1"]
+    },
+    {
+      "case_id": "deterministic_under_shuffle",
+      "tie_window": 0,
+      "candidates": [
+        {
+          "job_id": "job_a3",
+          "eligibility_status": "eligible",
+          "fit_score": 90,
+          "priority_tier": "P2",
+          "posted_at": "2026-10-05T00:00:00Z"
+        },
+        {
+          "job_id": "job_a1",
+          "eligibility_status": "eligible",
+          "fit_score": 90,
+          "priority_tier": "P2",
+          "posted_at": "2026-10-01T00:00:00Z"
+        },
+        {
+          "job_id": "job_a2",
+          "eligibility_status": "eligible",
+          "fit_score": 90,
+          "priority_tier": "P1",
+          "posted_at": "2026-09-01T00:00:00Z"
+        }
+      ],
+      "expected_eligible_order": ["job_a2", "job_a3", "job_a1"]
+    }
+  ]
+}

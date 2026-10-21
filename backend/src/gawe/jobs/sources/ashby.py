@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from urllib.parse import quote, urlsplit
 
-from .base import AdapterError, RawJob, parse_json
+from .base import AdapterError, ParsedJobs, RawJob, parse_json
 
 ATS = "ashby"
 HOSTS = ("api.ashbyhq.com",)
@@ -32,13 +32,15 @@ def build_url(source: dict) -> str:
     )
 
 
-def parse(body: str, source: dict) -> list[RawJob]:
+def parse(body: str, source: dict) -> ParsedJobs:
     payload = parse_json(body)
     if not isinstance(payload, dict) or not isinstance(payload.get("jobs"), list):
         raise AdapterError("ashby payload has no jobs list")
     jobs: list[RawJob] = []
+    skipped = 0
     for item in payload["jobs"]:
         if not isinstance(item, dict) or item.get("isListed") is False:
+            skipped += 1
             continue
         try:
             jobs.append(
@@ -55,5 +57,6 @@ def parse(body: str, source: dict) -> list[RawJob]:
                 )
             )
         except (KeyError, TypeError, AttributeError):
+            skipped += 1
             continue
-    return jobs
+    return ParsedJobs(jobs, skipped)

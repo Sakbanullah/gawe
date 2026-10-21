@@ -13,6 +13,9 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
+from ..normalize import canonical_url as canonicalize
+from ..normalize import city_of, fingerprint, norm_text
+
 EMPLOYMENT_TYPES = {
     "fulltime": "full_time",
     "full-time": "full_time",
@@ -48,6 +51,14 @@ class RawJob:
     employment_type_hint: str | None = None
     posted_at: str | None = None
     extra: dict = field(default_factory=dict)
+
+
+class ParsedJobs(list):
+    """Parsed records plus the number of payload entries the adapter dropped."""
+
+    def __init__(self, jobs: list[RawJob], skipped: int = 0) -> None:
+        super().__init__(jobs)
+        self.skipped = skipped
 
 
 class _TextExtractor(HTMLParser):
@@ -109,20 +120,58 @@ def employment_type(value: str | None) -> str:
     return EMPLOYMENT_TYPES.get((value or "").strip().lower(), "unknown")
 
 
-def parse_timestamp(value: str | int | None) -> str | None:
-    """Normalise adapter timestamps to ISO 8601 UTC when the shape is known."""
+def parse_timestamp(value: str | int | float | None) -> str | None:
+    """Normalise adapter timestamps to ISO 8601 UTC; unknown shapes become None."""
+    from datetime import datetime, timezone
+
     if value is None or value == "":
         return None
     if isinstance(value, (int, float)):
-        from datetime import datetime, timezone
+        seconds = value / 1000 if value > 10**11 else value
+        try:
+            stamp = datetime.fromtimestamp(seconds, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        candidate = text[:-1] + "+00:00" if text.endswith("Z") else text
+        try:
+            stamp = datetime.fromisoformat(candidate)
+        except ValueError:
+            return None
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+    return stamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-        return (
-            datetime.fromtimestamp(value / 1000, tz=timezone.utc)
-            .isoformat()
-            .replace("+00:00", "Z")
-        )
-    text = str(value).strip()
-    return text if text.endswith("Z") else text.replace("+00:00", "Z")
+
+# Strongest signal first: "Senior Engineering Manager" is senior, not manager.
+SENIORITY_WORDS = (
+    ("intern", ("intern", "internship")),
+    ("principal", ("principal",)),
+    ("lead", ("lead",)),
+    ("senior", ("senior", "sr.")),
+    ("junior", ("junior", "jr.", "entry level")),
+    ("mid", ("mid-level", "mid level")),
+)
+
+
+def seniority_from_title(title: str) -> str:
+    lowered = title.lower()
+    for level, words in SENIORITY_WORDS:
+        if any(
+            re.search(rf"\b{re.escape(word)}(?![a-z])", lowered) for word in words
+        ):
+            return level
+    return "unknown"
+
+
+def market_from_location(location_raw: str | None) -> str:
+    """Only an explicit country name in the payload marks the market."""
+    if location_raw and re.search(r"\bindonesia\b", location_raw, re.IGNORECASE):
+        return "indonesia"
+    return "unknown"
 
 
 def content_hash(record: dict) -> str:
@@ -143,7 +192,10 @@ def normalize(raw: RawJob, source: dict, fetched_at: str) -> dict:
     title = (raw.title or "").strip()
     if not title:
         raise InvalidJob("missing title")
-    canonical_url = http_url(raw.canonical_url)
+    source_job_id = str(raw.source_job_id or "").strip()
+    if not source_job_id:
+        raise InvalidJob("missing source_job_id")
+    canonical_url = canonicalize(http_url(raw.canonical_url))
     apply_url = http_url(raw.apply_url, required=False)
     description_text = html_to_text(raw.description_html)
     company = (source.get("company") or "").strip()
@@ -163,7 +215,7 @@ def normalize(raw: RawJob, source: dict, fetched_at: str) -> dict:
     ]
     record = {
         "source_id": source["source_id"],
-        "source_job_id": str(raw.source_job_id),
+        "source_job_id": source_job_id[:255],
         "title": title[:300],
         "company": company[:300],
         "description_text": description_text[:87381],
@@ -174,8 +226,8 @@ def normalize(raw: RawJob, source: dict, fetched_at: str) -> dict:
         "location": {"raw": location_raw, "is_remote": mode == "remote"},
         "work_mode": mode,
         "employment_type": employment_type(raw.employment_type_hint),
-        "seniority": "unknown",
-        "market": "unknown",
+        "seniority": seniority_from_title(title),
+        "market": market_from_location(location_raw),
         "posted_at": parse_timestamp(raw.posted_at),
         "fetched_at": fetched_at,
         "priority_tier": "unclassified",
@@ -190,6 +242,7 @@ def normalize(raw: RawJob, source: dict, fetched_at: str) -> dict:
         },
     }
     record["content_hash"] = content_hash(record)
+    record["fingerprint"] = fingerprint(record)
     return record
 
 
