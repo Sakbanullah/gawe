@@ -69,6 +69,12 @@ Aturan keras:
 - Jangan menyamarkan ketidakpastian dengan skor numerik.
 - Setiap hasil menyimpan `requirement_id`, kutipan lowongan, dan bukti/deklarasi profil.
 - Eligibility tidak memakai priority tier.
+- Cakupan geografis lowongan (`geo_scope`) dievaluasi terpisah dari `checks`. Nilainya `indonesia`, `worldwide`, `region_locked`, atau `unknown`. Hanya `indonesia` dan `worldwide` yang boleh `eligible`.
+- `region_locked` dan `unknown` menghasilkan `needs_review`, bukan `ineligible`, kecuali ada persyaratan wajib lain yang jelas tidak terpenuhi. Lowongan tetap tampil dengan alasan; tidak ada yang disembunyikan.
+- `geo_scope` tidak pernah menjadi `checks` dan tidak pernah masuk `fit_score`, karena cakupan adalah fakta tentang lowongan, bukan persyaratan kandidat.
+- Region yang disebut di field lokasi mengalahkan kata "anywhere" di deskripsi. "You can work from anywhere within those regions" adalah pembatasan, bukan izin.
+- Region yang disebut di judul juga mengikat: `Support Engineer (EMEA - Weekends)` dengan lokasi `Remote, Global` tetap `region_locked`. Judul hanya boleh mempersempit, tidak pernah memperluas. APAC dikecualikan karena mencakup Indonesia.
+- `region_locked` yang berada di region terjangkau-relokasi (Asia Tenggara, Australia, Selandia Baru) dan profil menyatakan `relocation` = `conditional`/`yes` tetap `needs_review`, tetapi alasannya menyebut relokasi sebagai pertanyaan terbuka. Lowongan tidak otomatis `eligible`: pemberi kerja belum menyatakan menerima pelamar dari luar negeri. AMER dan EMEA tidak termasuk, karena izin kerja adalah persyaratan terpisah.
 - Deterministik dulu; LLM hanya untuk requirement ambigu, dengan kutipan.
 
 ### 3.4 Format hasil (konsep)

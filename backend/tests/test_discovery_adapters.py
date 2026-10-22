@@ -215,11 +215,16 @@ def test_seniority_is_derived_only_from_clear_title_signals(title, expected) -> 
 
 
 def test_market_requires_an_explicit_country_name() -> None:
-    from gawe.jobs.sources.base import market_from_location
+    from gawe.jobs.priority import market_from_scope
 
-    assert market_from_location("Jakarta, Indonesia") == "indonesia"
-    assert market_from_location("Jakarta") == "unknown"
-    assert market_from_location(None) == "unknown"
+    assert market_from_scope("Jakarta, Indonesia") == "indonesia"
+    assert market_from_scope("Jakarta") == "unknown"
+    assert market_from_scope(None) == "unknown"
+    assert market_from_scope("Remote, Global") == "global"
+    assert market_from_scope("Remote, APAC") == "global"
+    # A region-locked posting is not a market; the vocabulary has three values.
+    assert market_from_scope("Remote, EMEA") == "unknown"
+    assert market_from_scope("Singapore") == "unknown"
 
 
 def test_normalize_applies_seniority_and_market_from_payload() -> None:

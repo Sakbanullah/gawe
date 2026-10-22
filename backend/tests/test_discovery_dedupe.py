@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from gawe.jobs.dedupe import find_duplicate
-from gawe.jobs.normalize import canonical_url, city_of, fingerprint
+from gawe.jobs.normalize import canonical_url, city_of, fingerprint, location_key
 from gawe.jobs.sources.base import RawJob, normalize
 from tests.conftest import extract_profile, latest_profile, upload_cv
 from tests.test_discovery import GREENHOUSE, _Fetcher, _create_source, _use
@@ -70,6 +70,33 @@ def test_fingerprint_differs_on_employment_type() -> None:
     left = _record()
     right = {**left, "employment_type": "contract"}
     assert fingerprint(left) != fingerprint(right)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Jakarta, Indonesia", "jakarta"),
+        ("JAKARTA", "jakarta"),
+        ("Remote, AMER", "amer"),
+        ("Remote, EMEA", "emea"),
+        ("Remote, APAC", "apac"),
+        ("Remote, Global", "anywhere"),
+        ("Remote", "anywhere"),
+        ("North America", "north america"),
+        ("San Francisco, CA", "san francisco"),
+        ("Hybrid (UK)", "hybrid uk"),
+    ],
+)
+def test_location_key_keeps_the_region_that_names_the_scope(raw, expected) -> None:
+    assert location_key(raw) == expected
+
+
+def test_fingerprint_separates_regional_postings_of_the_same_role() -> None:
+    """AMER and EMEA are two postings, not one; city_of made both "remote"."""
+    amer = _record(title="Support Engineer (AMER - Weekends)", location_raw="Remote, AMER")
+    emea = _record(title="Support Engineer (EMEA - Weekends)", location_raw="Remote, EMEA")
+    assert city_of("Remote, AMER") == city_of("Remote, EMEA")
+    assert amer["fingerprint"] != emea["fingerprint"]
 
 
 def _insert_job(connection, record: dict, job_id: str, source_id: str) -> None:
@@ -156,6 +183,45 @@ def test_fuzzy_match_requires_same_company_and_city(connection) -> None:
     assert find_duplicate(connection, "job_c", far) is None
 
 
+def test_regional_postings_of_one_role_are_not_merged(connection) -> None:
+    """AMER and EMEA are separate postings; merging one into the other hides a job."""
+    _register(connection, SOURCE["source_id"])
+    amer = _record(
+        title="Support Engineer (AMER - Weekends)",
+        location_raw="Remote, AMER",
+        canonical_url="https://boards.greenhouse.io/acme/jobs/amer",
+    )
+    _insert_job(connection, amer, "job_amer", SOURCE["source_id"])
+    emea = _record(
+        source_job_id="2",
+        title="Support Engineer (EMEA - Weekends)",
+        location_raw="Remote, EMEA",
+        canonical_url="https://boards.greenhouse.io/acme/jobs/emea",
+    )
+    _insert_job(connection, emea, "job_emea", SOURCE["source_id"])
+
+    assert find_duplicate(connection, "job_emea", emea) is None
+
+
+def test_identical_title_in_a_different_region_is_a_different_job(connection) -> None:
+    _register(connection, SOURCE["source_id"])
+    europe = _record(
+        title="Developer Relations",
+        location_raw="Remote, Europe",
+        canonical_url="https://boards.greenhouse.io/acme/jobs/eu",
+    )
+    _insert_job(connection, europe, "job_eu", SOURCE["source_id"])
+    america = _record(
+        source_job_id="2",
+        title="Developer Relations",
+        location_raw="Remote, North America",
+        canonical_url="https://boards.greenhouse.io/acme/jobs/na",
+    )
+    _insert_job(connection, america, "job_na", SOURCE["source_id"])
+
+    assert find_duplicate(connection, "job_na", america) is None
+
+
 def test_duplicate_chain_resolves_to_the_canonical_job(connection) -> None:
     _register(connection, SOURCE["source_id"])
     first = _record()
@@ -238,6 +304,25 @@ def test_run_rerun_is_idempotent_and_keeps_duplicate_links(
     assert after == before
     total = connection.execute("SELECT COUNT(*) AS total FROM job").fetchone()["total"]
     assert total == 3
+
+
+def test_rerun_refreshes_a_stale_fingerprint(
+    setup_client, csrf, monkeypatch, connection
+) -> None:
+    """A normalisation change must reach stored rows, not only new ones."""
+    _confirm(setup_client, csrf)
+    source = _create_source(
+        setup_client, csrf, monkeypatch, company="Acme", board="acme"
+    )
+    _use(setup_client, _Fetcher({"boards-api": GREENHOUSE}), monkeypatch)
+    _run(setup_client, csrf, source["source_id"])
+
+    connection.execute("UPDATE job SET fingerprint = ?", ("0" * 64,))
+    _run(setup_client, csrf, source["source_id"])
+
+    stored = connection.execute("SELECT fingerprint FROM job").fetchall()
+    assert stored
+    assert all(row["fingerprint"] != "0" * 64 for row in stored)
 
 
 def test_closed_jobs_stay_stored_and_are_not_duplicate_targets(

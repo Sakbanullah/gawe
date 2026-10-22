@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -9,7 +10,7 @@ import pytest
 
 from gawe.eligibility.evaluate import evaluate
 from gawe.jobs import requirements as requirement_rules
-from gawe.jobs.priority import classify
+from gawe.jobs.priority import classify, geo_region, geo_scope, reachable_by_relocation
 from gawe.match.score import score
 from gawe.profile.store import ProfileStore
 from gawe.ranking.rank import RankingError, rank
@@ -72,10 +73,73 @@ def _job(**overrides) -> dict:
         ("Berlin", "onsite", "", "unclassified"),  # no country named
         ("", "remote", "", "unclassified"),
         ("Jakarta, Indonesia", "unknown", "", "unclassified"),
+        # A named region outranks the word "anywhere" in the description. Linear
+        # writes "You can work from anywhere within those regions", which used to
+        # promote a US/Europe-only role to global remote.
+        ("Remote, AMER", "remote", "", "unclassified"),
+        ("Remote, EMEA", "remote", "", "unclassified"),
+        ("North America", "remote", "", "unclassified"),
+        ("Europe", "remote", "", "unclassified"),
+        ("Remote, London UK", "remote", "", "unclassified"),
+        (
+            "North America",
+            "remote",
+            "This role is open to candidates based in North America. "
+            "You can work from anywhere within this region.",
+            "unclassified",
+        ),
+        # APAC covers Indonesia, so it stays reachable.
+        ("Remote, APAC", "remote", "", "P2"),
+        # A region named only in the description still restricts the role.
+        (
+            "Remote",
+            "remote",
+            "This role is open to candidates based in the US and Europe.",
+            "unclassified",
+        ),
     ],
 )
 def test_priority_tier_classification(location, mode, text, tier) -> None:
     assert classify(location, mode, text)["tier"] == tier
+
+
+@pytest.mark.parametrize(
+    ("location", "text", "expected"),
+    [
+        ("Remote, Global", "", "worldwide"),
+        ("Remote, APAC", "", "worldwide"),
+        ("Jakarta, Indonesia", "", "indonesia"),
+        ("Remote, AMER", "", "region_locked"),
+        ("North America", "", "region_locked"),
+        ("Singapore", "", "region_locked"),
+        ("San Francisco, CA", "", "region_locked"),
+        ("Hybrid (UK)", "", "region_locked"),
+        ("Remote", "", "unknown"),
+        # Marketing copy says "globally" without restricting the candidate pool.
+        ("Remote, Global", "We are a globally distributed team.", "worldwide"),
+        ("Remote", "globally distributed team", "unknown"),
+        ("Remote", "You can work from anywhere within those regions.", "region_locked"),
+    ],
+)
+def test_geo_scope_reads_the_location_before_the_prose(location, text, expected) -> None:
+    assert geo_scope(location, text) == expected
+
+
+@pytest.mark.parametrize(
+    ("location", "title", "expected"),
+    [
+        # A region in the title is part of the posting, not marketing prose.
+        ("Remote, Global", "Support Engineer (EMEA - Weekends)", "region_locked"),
+        ("Remote", "Database Support Engineer (EMEA)", "region_locked"),
+        # APAC covers Indonesia, so a title naming it stays reachable.
+        ("Remote, Global", "Support Engineer (APAC)", "worldwide"),
+        ("Remote, Global", "Platform Security Engineer (AMER/APAC)", "worldwide"),
+        # A title naming no region decides nothing.
+        ("Remote, Global", "Product Engineer", "worldwide"),
+    ],
+)
+def test_geo_scope_reads_a_region_named_in_the_title(location, title, expected) -> None:
+    assert geo_scope(location, "", title) == expected
 
 
 def test_priority_classification_carries_reason_and_confidence() -> None:
@@ -203,6 +267,115 @@ def test_profile_without_confirmed_authorization_needs_review() -> None:
     )
     result = evaluate(requirement_rules.extract(job["description_text"]), profile, job)
     assert result["status"] == "needs_review"
+
+
+def test_region_locked_posting_is_never_eligible() -> None:
+    """A role open only to the US and Europe cannot be taken from Indonesia."""
+    job = _job(
+        location_raw="North America",
+        market="global",
+        work_mode="remote",
+        description_text=(
+            "Required: 5+ years backend experience. This role is open to candidates "
+            "based in North America. You can work from anywhere within this region."
+        ),
+    )
+    result = evaluate(requirement_rules.extract(job["description_text"]), PROFILE, job)
+    assert result["status"] == "needs_review"
+    assert result["geo_scope"] == "region_locked"
+    assert "region" in result["reason_summary"]
+
+
+def test_worldwide_posting_can_still_be_eligible() -> None:
+    job = _job(
+        location_raw="Remote, Global",
+        market="global",
+        work_mode="remote",
+        description_text="Required: 5+ years backend experience.",
+    )
+    result = evaluate(requirement_rules.extract(job["description_text"]), PROFILE, job)
+    assert result["status"] == "eligible"
+    assert result["geo_scope"] == "worldwide"
+
+
+def test_geo_scope_never_enters_the_fit_score() -> None:
+    """Scope is a fact about the posting, not a requirement; fit must not see it."""
+    job = _job(
+        location_raw="Remote, AMER",
+        market="global",
+        work_mode="remote",
+        description_text="Required: 5+ years backend experience.",
+    )
+    result = evaluate(requirement_rules.extract(job["description_text"]), PROFILE, job)
+    assert all(check["category"] != "location" for check in result["checks"])
+
+
+@pytest.mark.parametrize(
+    ("location", "title", "expected"),
+    [
+        ("Jakarta, Indonesia", "", "indonesia"),
+        # Southeast Asia wins over APAC: narrowest region first.
+        ("Singapore", "Customer Success Manager, APAC", "sea"),
+        ("Remote, APAC", "Software Engineer", "apac"),
+        ("Australia", "Product Support Specialist, APAC", "oceania"),
+        ("Remote, AMER", "", "amer"),
+        ("Europe", "", "emea"),
+        # Nothing named, nothing reported.
+        ("Remote", "Product Engineer", None),
+        (None, None, None),
+    ],
+)
+def test_geo_region_reports_the_narrowest_named_region(location, title, expected) -> None:
+    assert geo_region(location, title) == expected
+
+
+@pytest.mark.parametrize(
+    ("location", "title", "expected"),
+    [
+        # ASEAN and Australia/New Zealand: a candidate could move there.
+        ("Singapore", "", True),
+        ("Australia", "", True),
+        # APAC is too broad to call reachable: it also covers India and Japan,
+        # and a location naming it is `worldwide`, so this branch never runs.
+        ("Remote, APAC", "Support Engineer (APAC)", False),
+        # The Americas and EMEA need a work permit, which is a different question.
+        ("Remote, AMER", "", False),
+        ("Remote, EMEA", "", False),
+        ("North America", "", False),
+        ("Remote", "", False),
+    ],
+)
+def test_relocation_reachability_stops_at_a_permit(location, title, expected) -> None:
+    assert reachable_by_relocation(location, title) is expected
+
+
+def test_region_locked_posting_names_relocation_as_the_open_question() -> None:
+    """A willing candidate still is not eligible without employer confirmation."""
+    job = _job(
+        location_raw="Singapore",
+        market="unknown",
+        work_mode="remote",
+        description_text="Required: 5+ years backend experience.",
+    )
+    profile = copy.deepcopy(PROFILE)
+    profile["content"]["work_preferences"]["relocation"] = "conditional"
+    result = evaluate(requirement_rules.extract(job["description_text"]), profile, job)
+    assert result["status"] == "needs_review"
+    assert "relokasi" in result["reason_summary"]
+
+
+def test_region_locked_posting_without_relocation_stays_generic() -> None:
+    job = _job(
+        location_raw="Singapore",
+        market="unknown",
+        work_mode="remote",
+        description_text="Required: 5+ years backend experience.",
+    )
+    profile = copy.deepcopy(PROFILE)
+    profile["content"]["work_preferences"]["relocation"] = "no"
+    result = evaluate(requirement_rules.extract(job["description_text"]), profile, job)
+    assert result["status"] == "needs_review"
+    assert "relokasi" not in result["reason_summary"]
 
 
 # -- fit ---------------------------------------------------------------------
@@ -442,6 +615,50 @@ def test_reassessment_is_idempotent(setup_client, csrf, monkeypatch, connection)
 
 
 # -- 3D contract gaps --------------------------------------------------------
+def test_matches_hidden_count_and_search_run_in_sql(
+    setup_client, csrf, monkeypatch, connection
+) -> None:
+    _confirm(setup_client, csrf)
+    source = _create_source(setup_client, csrf, monkeypatch, company="Acme", board="acme")
+    _use(setup_client, _Fetcher({"boards-api": GREENHOUSE}), monkeypatch)
+    _run(setup_client, csrf, source["source_id"])
+
+    full = setup_client.get("/api/matches").json()
+    below = [
+        item
+        for item in full["items"]
+        if item["fit"] is not None and item["fit"]["fit_score"] < 99
+    ]
+    filtered = setup_client.get("/api/matches", params={"min_fit_score": 99}).json()
+    assert filtered["counts"]["hidden_by_min_fit_score"] == len(below)
+    assert len(filtered["items"]) == len(full["items"]) - len(below)
+
+    title = full["items"][0]["job"]["title"].split()[0]
+    found = setup_client.get("/api/matches", params={"q": title}).json()
+    assert all(
+        title.lower()
+        in " ".join(
+            [
+                item["job"]["title"],
+                item["job"]["company"],
+                (item["job"]["location"] or {}).get("raw") or "",
+            ]
+        ).lower()
+        for item in found["items"]
+    )
+    assert found["items"], found
+
+    by_posted = setup_client.get("/api/matches", params={"sort": "posted_at_desc"}).json()
+    epochs = [
+        row["posted_at_epoch"]
+        for row in connection.execute(
+            "SELECT posted_at_epoch FROM job WHERE duplicate_of IS NULL ORDER BY job_id"
+        ).fetchall()
+    ]
+    assert by_posted["ranking"]["sort"] == "posted_at_desc"
+    assert epochs and all(isinstance(value, int) for value in epochs)
+
+
 def test_matches_cursor_pages_without_offset(
     setup_client, csrf, monkeypatch
 ) -> None:

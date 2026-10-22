@@ -8,11 +8,20 @@ recorded in ``job.duplicate_of``; nothing is deleted.
 from __future__ import annotations
 
 import json
+import re
 from difflib import SequenceMatcher
 
-from .normalize import city_of, norm_text
+from .normalize import location_key, norm_text
 
 FUZZY_THRESHOLD = 0.92
+# A title that names a different region names a different posting, whatever the
+# string ratio says: "(AMER)" and "(EMEA)" are four characters apart.
+REGION_TOKEN = re.compile(
+    r"\b(amer|emea|apac|latam|dach|benelux|nordics|"
+    r"north america|south america|europe|asia|africa|oceania|"
+    r"united states|usa|us|uk|canada|australia|india|japan|singapore)\b",
+    re.IGNORECASE,
+)
 # shortcut: candidate scan is capped per job; revisit when one employer block
 # grows past this size (Phase 4 scale work).
 MAX_CANDIDATES = 2000
@@ -57,7 +66,7 @@ def _exact_match(connection, job_id: str, record: dict) -> str | None:
     if row is not None:
         return _root(connection, row["job_id"])
 
-    city = city_of((record.get("location") or {}).get("raw"))
+    place = location_key((record.get("location") or {}).get("raw"))
     title = norm_text(record["title"])
     rows = connection.execute(
         "SELECT job_id, title, location_json FROM job "
@@ -67,12 +76,22 @@ def _exact_match(connection, job_id: str, record: dict) -> str | None:
     ).fetchall()
     for candidate in rows:
         location = json.loads(candidate["location_json"] or "{}")
-        if city_of(location.get("raw")) != city:
+        if location_key(location.get("raw")) != place:
             continue
-        ratio = SequenceMatcher(None, title, norm_text(candidate["title"])).ratio()
+        other_title = norm_text(candidate["title"])
+        if _region_conflict(title, other_title):
+            continue
+        ratio = SequenceMatcher(None, title, other_title).ratio()
         if ratio >= FUZZY_THRESHOLD:
             return candidate["job_id"]
     return None
+
+
+def _region_conflict(left: str, right: str) -> bool:
+    """True when both titles name a region and the regions differ."""
+    left_regions = {match.group(0).lower() for match in REGION_TOKEN.finditer(left)}
+    right_regions = {match.group(0).lower() for match in REGION_TOKEN.finditer(right)}
+    return bool(left_regions and right_regions and left_regions != right_regions)
 
 
 def link_duplicate(connection, job_id: str, record: dict) -> str | None:

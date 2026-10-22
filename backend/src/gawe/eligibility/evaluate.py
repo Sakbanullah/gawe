@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
+from ..jobs.priority import geo_scope, reachable_by_relocation
 from ..jobs.requirements import ELIGIBILITY_CATEGORIES
 
 STATUSES = ("eligible", "ineligible", "needs_review")
@@ -31,7 +32,13 @@ INDONESIAN = re.compile(r"\b(indonesian|bahasa)\b", re.IGNORECASE)
 
 
 def evaluate(requirements: list[dict], profile: dict, job: dict) -> dict:
-    """Return ``{status, checks, confidence, reason_summary}`` for one job."""
+    """Return ``{status, checks, confidence, reason_summary, geo_scope}``.
+
+    ``geo_scope`` is a fact about the posting, not a requirement, so it never
+    becomes a check and never reaches the fit score. It can only hold a job back
+    from ``eligible``: a posting restricted to a region that excludes Indonesia,
+    or one that states no reachable scope, cannot be verified.
+    """
     facts = _facts(profile)
     checks = [_check(requirement, facts, job) for requirement in requirements]
     blocking = [
@@ -48,11 +55,34 @@ def evaluate(requirements: list[dict], profile: dict, job: dict) -> dict:
         status = "needs_review"
     else:
         status = "eligible"
+
+    scope = geo_scope(job.get("location_raw"), job.get("description_text"), job.get("title"))
+    geo_note = None
+    if status == "eligible" and scope == "region_locked":
+        status = "needs_review"
+        if (
+            facts["relocation"] in {"conditional", "yes"}
+            and reachable_by_relocation(job.get("location_raw"), job.get("title"))
+        ):
+            # The candidate said yes to moving, and the region is one they could
+            # actually move to. Still not eligible: the employer has not said it
+            # takes applicants from abroad.
+            geo_note = (
+                f"Lowongan berbasis {job.get('location_raw')}; profil bersedia relokasi, "
+                "tetapi penerimaan pelamar dari luar negeri belum dikonfirmasi."
+            )
+        else:
+            geo_note = "Lowongan hanya menerima kandidat dari region di luar Indonesia."
+    elif status == "eligible" and scope == "unknown":
+        status = "needs_review"
+        geo_note = "Lokasi lowongan tidak menyatakan apakah kandidat dari Indonesia diterima."
+
     return {
         "status": status,
         "checks": checks,
         "confidence": _confidence(requirements, checks, job),
-        "reason_summary": _summary(status, blocking),
+        "reason_summary": geo_note or _summary(status, blocking),
+        "geo_scope": scope,
     }
 
 
@@ -151,6 +181,15 @@ def _location(requirement: dict, facts: dict, job: dict):
             "work_preferences.relocation",
             [],
             "Profil menyatakan tidak bersedia relokasi dan lokasi berbeda.",
+        )
+    if relocation in {"conditional", "yes"}:
+        # The preference is known; what is missing is the employer's willingness
+        # to hire from abroad, which the posting has not stated.
+        return (
+            "unknown",
+            "work_preferences.relocation",
+            [],
+            "Profil bersedia relokasi; penerimaan pelamar dari luar negeri belum dinyatakan.",
         )
     return (
         "unknown",

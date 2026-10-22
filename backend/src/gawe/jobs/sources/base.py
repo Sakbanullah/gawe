@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from ..normalize import canonical_url as canonicalize
 from ..normalize import city_of, fingerprint, norm_text
+from ..priority import market_from_scope
 
 EMPLOYMENT_TYPES = {
     "fulltime": "full_time",
@@ -33,6 +34,12 @@ EMPLOYMENT_TYPES = {
 
 class AdapterError(ValueError):
     """Source payload or registry entry cannot be used. Message is safe."""
+
+
+# HTTP requests one run spends on this source, at most. Adapters that page
+# override it, and the quota reserves this many before the first request: a
+# half-fetched page set is a partial snapshot, never the whole board.
+MAX_REQUESTS = 1
 
 
 class InvalidJob(ValueError):
@@ -54,11 +61,41 @@ class RawJob:
 
 
 class ParsedJobs(list):
-    """Parsed records plus the number of payload entries the adapter dropped."""
+    """Parsed records plus what a run needs to know about the snapshot.
 
-    def __init__(self, jobs: list[RawJob], skipped: int = 0) -> None:
+    ``skipped`` counts payload entries the adapter dropped. ``complete`` says the
+    payload covered the whole board: only then may a run close jobs that are
+    absent from it. An adapter that pages must return ``complete=False`` for a
+    partial page, otherwise a missing job looks like a closed job.
+    """
+
+    def __init__(
+        self,
+        jobs: list[RawJob],
+        skipped: int = 0,
+        complete: bool = True,
+        skip_reasons: dict[str, int] | None = None,
+    ) -> None:
         super().__init__(jobs)
         self.skipped = skipped
+        self.complete = complete
+        # Why records were dropped, so a run can report a real cause instead of
+        # one anonymous count.
+        self.skip_reasons = skip_reasons or {}
+
+
+def company_of(raw: RawJob, fallback: str | None = None) -> str | None:
+    """Per-record company name, or ``fallback`` when the payload names none.
+
+    Adapters that publish many companies per payload read the name from the
+    record. Returning ``None`` lets the adapter drop the record instead of
+    inventing a company; a source label would collapse every unnamed employer
+    into one dedupe block.
+    """
+    value = (raw.extra or {}).get("company")
+    if value and str(value).strip():
+        return str(value).strip()
+    return fallback
 
 
 class _TextExtractor(HTMLParser):
@@ -167,13 +204,6 @@ def seniority_from_title(title: str) -> str:
     return "unknown"
 
 
-def market_from_location(location_raw: str | None) -> str:
-    """Only an explicit country name in the payload marks the market."""
-    if location_raw and re.search(r"\bindonesia\b", location_raw, re.IGNORECASE):
-        return "indonesia"
-    return "unknown"
-
-
 def content_hash(record: dict) -> str:
     material = json.dumps(
         [
@@ -198,7 +228,7 @@ def normalize(raw: RawJob, source: dict, fetched_at: str) -> dict:
     canonical_url = canonicalize(http_url(raw.canonical_url))
     apply_url = http_url(raw.apply_url, required=False)
     description_text = html_to_text(raw.description_html)
-    company = (source.get("company") or "").strip()
+    company = (company_of(raw, source.get("company")) or "").strip()
     if not company:
         raise InvalidJob("missing company")
     location_raw = (raw.location_raw or "").strip() or None
@@ -213,6 +243,13 @@ def normalize(raw: RawJob, source: dict, fetched_at: str) -> dict:
         )
         if not value
     ]
+    # A record can carry a value that is not the real field: the company shown is
+    # a slug, or the posting date is unknown. Both stay visible as gaps instead
+    # of passing for data the source published.
+    if raw.extra.get("company_from_slug"):
+        missing.append("company_name")
+    if raw.extra.get("posted_at_unknown"):
+        missing.append("posted_at")
     record = {
         "source_id": source["source_id"],
         "source_job_id": source_job_id[:255],
@@ -227,7 +264,7 @@ def normalize(raw: RawJob, source: dict, fetched_at: str) -> dict:
         "work_mode": mode,
         "employment_type": employment_type(raw.employment_type_hint),
         "seniority": seniority_from_title(title),
-        "market": market_from_location(location_raw),
+        "market": market_from_scope(location_raw, description_text, title),
         "posted_at": parse_timestamp(raw.posted_at),
         "fetched_at": fetched_at,
         "priority_tier": "unclassified",

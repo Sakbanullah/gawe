@@ -22,6 +22,8 @@ from ..ingest.types import normalize_text, quote_matches
 DATE_RE = re.compile(r"^(\d{4})(-(0[1-9]|1[0-2]))?$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 URL_RE = re.compile(r"^https?://\S+$")
+# Bare host path as printed on CVs, e.g. "github.com/user".
+DOMAIN_RE = re.compile(r"^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/\S*$")
 
 WA_STATUS = {"citizen", "permit", "requires_sponsorship", "unknown"}
 RELOCATION = {"yes", "no", "conditional", "unknown"}
@@ -85,6 +87,78 @@ def _level_supported(level: str | None, refs: list[str], evidence: dict[str, dic
     return False
 
 
+def _coerce_bullet(bullet: Any, item: dict, index: int) -> dict | None:
+    """Accept the shapes models actually emit for a bullet.
+
+    The contract wants `{"id", "text", "evidence"}`. Models also emit a bare
+    string, or an object without evidence. A bare string inherits the parent's
+    evidence, which already covers the same block in the source.
+    """
+    if isinstance(bullet, str):
+        text = bullet.strip()
+        if not text:
+            return None
+        bullet = {"text": text, "evidence": list(item.get("evidence") or [])}
+    if not isinstance(bullet, dict) or not str(bullet.get("text") or "").strip():
+        return None
+    if not bullet.get("id"):
+        bullet["id"] = f"{item['id']}_b{index + 1}"
+    return bullet
+
+
+def _expand_skill(item: dict) -> list[dict]:
+    """Split a grouped skill line into one skill per name.
+
+    Models often copy the CV's skill block verbatim, producing
+    `"Backend: Node.js, Express.js, NestJS"` as a single skill. Every later
+    stage matches on exact names, so one grouped row hides three skills: the
+    writer cannot order them and the ranker cannot match them.
+    """
+    name = str(item.get("name") or "")
+    parts = [part.strip(" .-") for part in name.replace(";", ",").split(",")]
+    parts = [part.split(":")[-1].strip() for part in parts]
+    parts = [part for part in parts if part and len(part) <= 60]
+    if len(parts) < 2:
+        return [item]
+    expanded = []
+    for index, part in enumerate(parts):
+        skill = dict(item)
+        skill["name"] = part
+        skill["id"] = item["id"] if index == 0 else f"{item['id']}_{index + 1}"
+        expanded.append(skill)
+    return expanded
+
+
+def _normalize_project(item: dict, path: str, report: ValidationReport) -> None:
+    """Map the project shapes models emit onto the contract fields.
+
+    `profile.schema.json` has no `bullets`/`context`/`year`/`link` for projects,
+    so a model that writes them loses the whole project when `draft.py` reads
+    `description`. Flatten them into `description` and the date fields instead.
+    """
+    bullets = item.pop("bullets", None) or item.pop("highlights", None)
+    if bullets and not item.get("description"):
+        lines = []
+        for bullet in bullets:
+            text = bullet.get("text") if isinstance(bullet, dict) else bullet
+            if isinstance(text, str) and text.strip():
+                lines.append(text.strip())
+        if lines:
+            item["description"] = " ".join(lines)[:2000]
+    if not item.get("role") and isinstance(item.get("context"), str):
+        item["role"] = item["context"]
+    year = item.get("year")
+    if not item.get("start") and isinstance(year, str) and DATE_RE.match(year):
+        item["start"] = year
+    for alias in ("context", "link", "year"):
+        item.pop(alias, None)
+    for key in ("description", "role", "name"):
+        if isinstance(item.get(key), str):
+            item[key] = item[key].strip() or None
+    if not item.get("name"):
+        report.dropped.append(path)
+
+
 def validate_extraction(
     raw: dict, source_text: str, doc_id: str
 ) -> tuple[dict, dict, list[dict], ValidationReport]:
@@ -146,11 +220,17 @@ def validate_extraction(
     if email is not None and (not isinstance(email, str) or not EMAIL_RE.match(email)):
         report.dropped.append("personal.email")
         email = None
-    links = [
-        link
-        for link in (personal.get("links") or [])
-        if isinstance(link, str) and URL_RE.match(link)
-    ]
+    links = []
+    for link in personal.get("links") or []:
+        if not isinstance(link, str):
+            continue
+        value = link.strip()
+        # The CV prints "github.com/user" without a scheme; prefix it instead of
+        # discarding a link the candidate really wrote.
+        if not URL_RE.match(value) and DOMAIN_RE.match(value):
+            value = f"https://{value}"
+        if URL_RE.match(value):
+            links.append(value)
     if len(links) != len(personal.get("links") or []):
         report.dropped.append("personal.links")
     content: dict[str, Any] = {
@@ -166,9 +246,14 @@ def validate_extraction(
     for collection in FACT_COLLECTIONS:
         items = []
         for index, item in enumerate(raw.get(collection) or []):
-            if not isinstance(item, dict) or not item.get("id"):
+            if not isinstance(item, dict):
                 report.dropped.append(f"{collection}[{index}]")
                 continue
+            # `id` is an internal key, not a fact: the model often omits it on
+            # skills/education. Dropping the item would lose real CV data, so
+            # derive a stable id from the position instead.
+            if not item.get("id"):
+                item["id"] = f"{collection[:4]}_{index + 1}"
             path = f"{collection}[{index}]"
             if not keep(item, path):
                 continue
@@ -180,20 +265,30 @@ def validate_extraction(
                     item["start"] = None
                     item["end"] = None
             if collection == "experience":
+                # `highlights` is a common model alias for `bullets`; accepting it
+                # keeps real CV bullets instead of silently emptying the section.
+                if not item.get("bullets") and item.get("highlights"):
+                    item["bullets"] = item["highlights"]
+                item.pop("highlights", None)
                 bullets = []
                 for bullet_index, bullet in enumerate(item.get("bullets") or []):
                     bullet_path = f"{path}.bullets[{bullet_index}]"
-                    if not isinstance(bullet, dict) or not bullet.get("text"):
+                    bullet = _coerce_bullet(bullet, item, bullet_index)
+                    if bullet is None:
                         report.dropped.append(bullet_path)
                         continue
                     if not keep(bullet, bullet_path):
                         continue
                     bullets.append(bullet)
                 item["bullets"] = bullets
+            if collection == "projects":
+                _normalize_project(item, path, report)
             if collection == "skills":
                 if not _level_supported(item.get("proficiency"), item["evidence"], evidence):
                     report.dropped.append(f"{path}.proficiency")
                     item["proficiency"] = None
+                items.extend(_expand_skill(item))
+                continue
             if collection == "languages":
                 if not _level_supported(item.get("level"), item["evidence"], evidence):
                     report.dropped.append(f"{path}.level")
