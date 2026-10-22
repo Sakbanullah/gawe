@@ -236,6 +236,7 @@ class DocumentService:
         template_version: str | None,
         parent: dict | None,
         revision_instructions: str = "",
+        cv_content: dict | None = None,
     ) -> tuple[dict, dict]:
         """Generate, review, and rewrite until the gates hold or the budget ends.
 
@@ -247,6 +248,11 @@ class DocumentService:
         summary: dict | None = None
         report: dict | None = None
         previous = parent
+        if kind == "cover_letter" and cv_content is None:
+            # `write_cover_letter.md` calls `cv_content_json` the CV of the same
+            # version. Without it the writer cannot avoid repeating CV bullets,
+            # and it falls back to pasting profile text verbatim.
+            cv_content = self._latest_cv_content(record["application_id"])
 
         while True:
             iteration = (
@@ -255,7 +261,9 @@ class DocumentService:
             self._tasks.start_stage(task_id, "select_evidence")
             self._tasks.finish_stage(task_id, "select_evidence")
             self._tasks.start_stage(task_id, "draft")
-            content, metadata = self._draft(kind, profile, job, language, revision_instructions)
+            content, metadata = self._draft(
+                kind, profile, job, language, revision_instructions, cv_content
+            )
             self._tasks.finish_stage(task_id, "draft")
             self._tasks.start_stage(task_id, "diff")
             if previous is None:
@@ -320,7 +328,13 @@ class DocumentService:
         return summary, report
 
     def _draft(
-        self, kind: str, profile: dict, job: dict, language: str, revision_instructions: str
+        self,
+        kind: str,
+        profile: dict,
+        job: dict,
+        language: str,
+        revision_instructions: str,
+        cv_content: dict | None = None,
     ) -> tuple[dict, dict]:
         if not self._writer_ready(kind):
             return draft.build(kind, profile["content"], job, language), {"source": "deterministic"}
@@ -333,6 +347,7 @@ class DocumentService:
             job,
             language,
             revision_instructions,
+            cv_content,
         )
 
     # -- revisions -------------------------------------------------------
@@ -741,7 +756,11 @@ class DocumentService:
         return profile
 
     def _job_context(self, record: dict) -> dict:
-        detail = self._assessments.detail(record["job_id"], record["profile_version_id"])
+        # The workspace outlives the posting: a job that closed after the user
+        # started an application must still be able to draft and review documents.
+        detail = self._assessments.detail(
+            record["job_id"], record["profile_version_id"], include_closed=True
+        )
         if detail is None:
             raise DocumentError("not_found", "Job workspace belum dianalisis.", 404)
         job = dict(detail["job_detail"]["job"])
@@ -806,6 +825,23 @@ class DocumentService:
         if row is None:
             raise DocumentError("not_found", "Versi dokumen tidak ditemukan.", 404)
         return _version_row(dict(row))
+
+    def _latest_cv_content(self, application_id: str) -> dict | None:
+        """The CV version this cover letter must stay consistent with.
+
+        `write_cover_letter.md` says `cv_content_json` is the CV of the same
+        version, but the writer was only ever given the job title and company,
+        so it repeated profile bullets verbatim instead of referencing the CV.
+        """
+        row = self._connection.execute(
+            "SELECT content_json FROM document_version "
+            "WHERE application_id = ? AND kind = 'cv' "
+            "ORDER BY version DESC LIMIT 1",
+            (application_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return json.loads(row["content_json"])
 
     def _insert(
         self,

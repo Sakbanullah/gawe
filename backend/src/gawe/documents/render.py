@@ -61,9 +61,13 @@ def tex_escape(value: str | None) -> str:
 
 def _date_range(start: str | None, end: str | None) -> str:
     if start and end:
-        return f"{start} -- {end}"
+        # A one-year project carries the same value in both fields; printing
+        # "2025 -- 2025" reads like a typo to a recruiter.
+        return start if start == end else f"{start} -- {end}"
     if start:
-        return f"{start} -- present"
+        # `end: null` means "unknown", not "current". The profile has no
+        # `current` flag, so printing "present" would invent a fact.
+        return start
     return end or ""
 
 
@@ -73,7 +77,7 @@ def _link(url: str) -> str:
 
 
 _PREAMBLE = r"""\documentclass[10.5pt,letterpaper]{article}
-\usepackage[margin=0.7in]{geometry}
+\usepackage[margin=0.6in]{geometry}
 \usepackage{fontspec}
 \setmainfont{texgyretermes}[
   Extension=.otf,

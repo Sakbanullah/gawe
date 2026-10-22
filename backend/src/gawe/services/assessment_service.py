@@ -92,14 +92,37 @@ class AssessmentService:
                     computed_at,
                 ),
             )
+            self._store_rank_rows(ranking_run_id, result["sections"])
         return {**result, "ranking_run_id": ranking_run_id, "computed_at": computed_at}
 
-    def override_tier(self, job_id: str, tier: str | None, reason: str | None) -> dict | None:
+    def _store_rank_rows(self, ranking_run_id: str, sections: dict) -> None:
+        """Flatten the ranking order into rows so matches can page in SQL.
+
+        `sections_json` remains the auditable snapshot; these rows are the query
+        surface. Only the eligible section carries a position, because that is the
+        only section the ranking orders; every other job sorts after it by id.
+        """
+        for entry in sections.get("eligible") or []:
+            self._connection.execute(
+                "INSERT INTO job_rank (ranking_run_id, job_id, section, position) "
+                "VALUES (?, ?, 'eligible', ?)",
+                (ranking_run_id, entry["job_id"], int(entry["rank"])),
+            )
+
+    def override_tier(
+        self, job_id: str, tier: str | None, reason: str | None, *, include_closed: bool = False
+    ) -> dict | None:
         """Record a user tier correction; it never changes the stored fit score.
 
         The stored ranking run is not recomputed here: the correction is a
-        tie-breaker for the next ranking run (API-CONTRACTS §4.8).
+        tie-breaker for the next ranking run (API-CONTRACTS §4.8). A closed job is
+        refused: a tier correction there can never reach a ranking run.
         """
+        status = self.job_status(job_id)
+        if status is None:
+            return None
+        if not include_closed and status != "open":
+            return None
         job = self._job(job_id)
         if job is None:
             return None
@@ -143,20 +166,17 @@ class AssessmentService:
         ).fetchone()
         return row["description_text"] if row else ""
 
-    def match(self, job_id: str, profile_version_id: str) -> dict | None:
+    def match(
+        self, job_id: str, profile_version_id: str, *, include_closed: bool = False
+    ) -> dict | None:
         """One list row for a job; ``None`` when it has no assessment yet."""
-        return next(
-            (
-                item
-                for item in self.matches(profile_version_id)
-                if item["job"]["job_id"] == job_id
-            ),
-            None,
-        )
+        return self.match_row(job_id, profile_version_id, include_closed=include_closed)
 
-    def detail(self, job_id: str, profile_version_id: str) -> dict | None:
+    def detail(
+        self, job_id: str, profile_version_id: str, *, include_closed: bool = False
+    ) -> dict | None:
         """MatchDetail payload: job + truncated description + source + assessments."""
-        item = self.match(job_id, profile_version_id)
+        item = self.match(job_id, profile_version_id, include_closed=include_closed)
         if item is None:
             return None
         text, truncated = truncate_description(self.description(job_id))
@@ -177,21 +197,143 @@ class AssessmentService:
 
     def counts(self, profile_version_id: str) -> dict:
         rows = self._connection.execute(
-            "SELECT status, COUNT(*) AS total FROM eligibility_assessment "
-            "WHERE profile_version_id = ? GROUP BY status",
+            "SELECT e.status, COUNT(*) AS total FROM eligibility_assessment e "
+            "JOIN job j ON j.job_id = e.job_id "
+            "WHERE e.profile_version_id = ? AND j.duplicate_of IS NULL "
+            "  AND j.status = 'open' GROUP BY e.status",
             (profile_version_id,),
         ).fetchall()
         counts = {"eligible": 0, "needs_review": 0, "ineligible": 0}
         for row in rows:
             counts[row["status"]] = int(row["total"])
         fit = self._connection.execute(
-            "SELECT COUNT(*) AS total FROM fit_assessment WHERE profile_version_id = ?",
+            "SELECT COUNT(*) AS total FROM fit_assessment f "
+            "JOIN job j ON j.job_id = f.job_id "
+            "WHERE f.profile_version_id = ? AND j.duplicate_of IS NULL "
+            "  AND j.status = 'open'",
             (profile_version_id,),
         ).fetchone()
         return {**counts, "fit_computed": int(fit["total"]) if fit else 0}
 
-    def matches(self, profile_version_id: str) -> list[dict]:
-        """One row per candidate job for the matches view; backend owns the order."""
+    # -- paged reads (Phase 4) -------------------------------------------
+    def matches_page(
+        self,
+        profile_version_id: str,
+        *,
+        limit: int,
+        sort: str,
+        ranking_run_id: str | None,
+        after: tuple | None = None,
+        eligibility: str = "all",
+        tier: str | None = None,
+        source_id: str | None = None,
+        market: str | None = None,
+        work_mode: str | None = None,
+        q: str | None = None,
+        min_fit_score: int = 0,
+    ) -> tuple[list[dict], bool, tuple | None]:
+        """Filter, order, and page matches in SQL.
+
+        The old path loaded every match into Python, filtered it there, and sliced
+        the list. That cannot hold a large board. Ordering and the keyset cursor
+        now live in the query, and the sort keys come from stored columns
+        (`job_rank.position`, `fit_score`, `posted_at_epoch`, `priority_tier`).
+        """
+        where, params = _match_filters(
+            profile_version_id,
+            eligibility=eligibility,
+            tier=tier,
+            source_id=source_id,
+            market=market,
+            work_mode=work_mode,
+            q=q,
+            min_fit_score=min_fit_score,
+        )
+        eligible_count = 0
+        if sort == "ranking" and ranking_run_id:
+            row = self._connection.execute(
+                "SELECT COUNT(*) AS total FROM job_rank "
+                "WHERE ranking_run_id = ? AND section = 'eligible'",
+                (ranking_run_id,),
+            ).fetchone()
+            eligible_count = int(row["total"]) if row else 0
+        expr = _sort_expression(sort, ranking_run_id, eligible_count)
+        cursor_where, cursor_params = _match_cursor(expr, after)
+        if cursor_where:
+            where = f"{where} AND {cursor_where}"
+            params = (*params, *cursor_params)
+        rows = self._connection.execute(
+            "SELECT j.*, e.assessment_id AS eligibility_assessment_id, "
+            "e.status AS eligibility_status, e.confidence AS eligibility_confidence, "
+            "e.reason_summary, e.status_outdated AS eligibility_outdated, "
+            "e.job_posting_version_id AS assessed_version_id, "
+            "f.assessment_id AS fit_assessment_id, f.fit_score, f.verdict, "
+            "f.confidence AS fit_confidence, a.application_id, "
+            f"{expr} AS sort_key "
+            "FROM job j "
+            "JOIN eligibility_assessment e ON e.job_id = j.job_id "
+            "  AND e.profile_version_id = ? "
+            "LEFT JOIN fit_assessment f ON f.job_id = j.job_id "
+            "  AND f.profile_version_id = e.profile_version_id "
+            "LEFT JOIN application a ON a.job_id = j.job_id "
+            "LEFT JOIN job_rank r ON r.job_id = j.job_id AND r.ranking_run_id = ? "
+            "  AND r.section = 'eligible' "
+            f"WHERE {where} "
+            f"ORDER BY {expr}, j.job_id "
+            "LIMIT ?",
+            (profile_version_id, ranking_run_id, *params, limit + 1),
+        ).fetchall()
+        page = rows[:limit]
+        last_key = (page[-1]["sort_key"], page[-1]["job_id"]) if page else None
+        return (
+            [_match_row(row, profile_version_id) for row in page],
+            len(rows) > limit,
+            last_key,
+        )
+
+    def count_matches(
+        self,
+        profile_version_id: str,
+        *,
+        eligibility: str = "all",
+        tier: str | None = None,
+        source_id: str | None = None,
+        market: str | None = None,
+        work_mode: str | None = None,
+        q: str | None = None,
+        min_fit_score: int = 0,
+    ) -> int:
+        where, params = _match_filters(
+            profile_version_id,
+            eligibility=eligibility,
+            tier=tier,
+            source_id=source_id,
+            market=market,
+            work_mode=work_mode,
+            q=q,
+            min_fit_score=min_fit_score,
+        )
+        row = self._connection.execute(
+            "SELECT COUNT(*) AS total FROM job j "
+            "JOIN eligibility_assessment e ON e.job_id = j.job_id "
+            "  AND e.profile_version_id = ? "
+            "LEFT JOIN fit_assessment f ON f.job_id = j.job_id "
+            "  AND f.profile_version_id = e.profile_version_id "
+            f"WHERE {where}",
+            (profile_version_id, *params),
+        ).fetchone()
+        return int(row["total"]) if row else 0
+
+    def match_row(
+        self, job_id: str, profile_version_id: str, *, include_closed: bool = False
+    ) -> dict | None:
+        """One match row by id, without loading the whole list.
+
+        ``include_closed`` is for the application workspace: a job that closed
+        after the user started an application must stay readable there, while the
+        Matches list only ever shows open jobs.
+        """
+        status_clause = "" if include_closed else " AND j.status = 'open'"
         rows = self._connection.execute(
             "SELECT j.*, e.assessment_id AS eligibility_assessment_id, "
             "e.status AS eligibility_status, e.confidence AS eligibility_confidence, "
@@ -205,10 +347,22 @@ class AssessmentService:
             "LEFT JOIN fit_assessment f ON f.job_id = j.job_id "
             "  AND f.profile_version_id = e.profile_version_id "
             "LEFT JOIN application a ON a.job_id = j.job_id "
-            "WHERE j.duplicate_of IS NULL",
-            (profile_version_id,),
-        ).fetchall()
-        return [_match_row(row, profile_version_id) for row in rows]
+            f"WHERE j.job_id = ? AND j.duplicate_of IS NULL{status_clause}",
+            (profile_version_id, job_id),
+        ).fetchone()
+        return _match_row(rows, profile_version_id) if rows else None
+
+    def job_status(self, job_id: str) -> str | None:
+        """Stored job status, or ``None`` when no such job exists.
+
+        The Matches routes use this to answer 409 `job_not_open` for a job that
+        exists but has closed, instead of the 404 that means "no such job".
+        """
+        row = self._connection.execute(
+            "SELECT status FROM job WHERE job_id = ? AND duplicate_of IS NULL",
+            (job_id,),
+        ).fetchone()
+        return row["status"] if row else None
 
     # -- internals -------------------------------------------------------
     def _job(self, job_id: str) -> dict | None:
@@ -378,15 +532,18 @@ class AssessmentService:
         )
 
     def _apply_priority(self, job_id: str, job: dict) -> None:
-        """Store the classification once; a user override is never overwritten."""
+        """Store the classification; a user override is never overwritten.
+
+        The stored tier is recomputed on every assessment because the input
+        (location and description) can change between snapshots, and a
+        classifier fix must reach rows that already carry a tier. Only the
+        explicit user override wins, and it lives in a separate column.
+        """
         from ..jobs.priority import classify
 
-        row = self._connection.execute(
-            "SELECT priority_tier, priority_confidence FROM job WHERE job_id = ?", (job_id,)
-        ).fetchone()
-        if row and row["priority_confidence"] != "unknown":
-            return
-        result = classify(job["location_raw"], job["work_mode"], job["description_text"])
+        result = classify(
+            job["location_raw"], job["work_mode"], job["description_text"], job.get("title")
+        )
         self._connection.execute(
             "UPDATE job SET priority_tier = ?, priority_reason = ?, priority_confidence = ? "
             "WHERE job_id = ?",
@@ -480,6 +637,75 @@ def _fit_payload(row: dict) -> dict:
         "outdated_reason": row["outdated_reason"],
         "computed_at": row["computed_at"],
     }
+
+
+def _match_filters(
+    profile_version_id: str,
+    *,
+    eligibility: str = "all",
+    tier: str | None = None,
+    source_id: str | None = None,
+    market: str | None = None,
+    work_mode: str | None = None,
+    q: str | None = None,
+    min_fit_score: int = 0,
+) -> tuple[str, list]:
+    """WHERE clause for the matches query; profile is bound by the JOIN."""
+    clauses = ["j.duplicate_of IS NULL", "j.status = 'open'"]
+    params: list = []
+    if eligibility != "all":
+        clauses.append("e.status = ?")
+        params.append(eligibility)
+    if tier is not None:
+        clauses.append("COALESCE(j.priority_tier_override, j.priority_tier) = ?")
+        params.append(tier)
+    if source_id is not None:
+        clauses.append("j.source_id = ?")
+        params.append(source_id)
+    if market is not None:
+        clauses.append("j.market = ?")
+        params.append(market)
+    if work_mode is not None:
+        clauses.append("j.work_mode = ?")
+        params.append(work_mode)
+    if q:
+        clauses.append("(j.title LIKE ? OR j.company LIKE ? OR j.location_json LIKE ?)")
+        like = f"%{q}%"
+        params.extend([like, like, like])
+    if min_fit_score:
+        clauses.append("(f.fit_score IS NULL OR f.fit_score >= ?)")
+        params.append(min_fit_score)
+    return " AND ".join(clauses), params
+
+
+_TIER_EXPR = (
+    "CASE COALESCE(j.priority_tier_override, j.priority_tier) "
+    "WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 WHEN 'P3' THEN 3 WHEN 'P4' THEN 4 ELSE 5 END"
+)
+
+
+def _sort_expression(sort: str, ranking_run_id: str | None, eligible_count: int) -> str:
+    """Ascending integer sort key, mirroring the documented order exactly.
+
+    The value is selected as `sort_key`, so the cursor is the same key the rows
+    were ordered by and paging never recomputes an offset.
+    """
+    if sort == "ranking" and ranking_run_id:
+        # Jobs outside the eligible section sort after it, by id, as before.
+        return f"COALESCE(r.position, {eligible_count + 1})"
+    if sort == "fit_score_desc":
+        return "-COALESCE(f.fit_score, -1)"
+    if sort == "posted_at_desc":
+        return "-j.posted_at_epoch"
+    return _TIER_EXPR
+
+
+def _match_cursor(expr: str, after: tuple | None) -> tuple[str, list]:
+    """Keyset predicate for the row after `after` = (sort_key, job_id)."""
+    if after is None:
+        return "", []
+    key, job_id = after
+    return f"({expr} > ? OR ({expr} = ? AND j.job_id > ?))", [key, key, job_id]
 
 
 def _ranking_payload(row: dict) -> dict:

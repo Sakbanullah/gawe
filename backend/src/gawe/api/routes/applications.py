@@ -34,12 +34,17 @@ class CreateApplicationRequest(BaseModel):
 
     job_id: str | None = None
     url: str | None = None
+    # Pasted description for a page that cannot be fetched (403/429 or a
+    # JavaScript shell). The URL stays required: it is the job's identity.
+    text: str | None = Field(default=None, max_length=200_000)
     language: str | None = None
 
     @model_validator(mode="after")
     def exactly_one_source(self) -> "CreateApplicationRequest":
         if bool(self.job_id) == bool(self.url):
             raise ValueError("Isi tepat satu dari job_id atau url.")
+        if self.text is not None and not self.url:
+            raise ValueError("text hanya boleh dikirim bersama url.")
         return self
 
 
@@ -89,7 +94,7 @@ def create_application(request: Request, body: CreateApplicationRequest):
     try:
         if body.url and not body.job_id:
             record, deduplicated = service.create_from_url(
-                body.url, discovery_service(request)
+                body.url, discovery_service(request), text=body.text
             )
         else:
             record, deduplicated = service.create(body.job_id or "")

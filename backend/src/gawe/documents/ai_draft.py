@@ -48,6 +48,7 @@ def write(
     job: dict,
     language: str,
     revision_instructions: str = "",
+    cv_content: dict | None = None,
 ) -> tuple[dict, dict]:
     """Return (content, metadata).
 
@@ -77,7 +78,12 @@ def write(
             "content": render(
                 body,
                 {
-                    "language_instruction": f"Write the document in {language}.",
+                    "language_instruction": (
+                        f"Write the document in {language}. The profile and evidence "
+                        f"quotes are in the candidate's source language: translate "
+                        f"every fact you use into {language}. Never paste "
+                        f"source-language text into the document."
+                    ),
                     "page_limit": "Maximum 2 pages." if kind == "cv" else "One page.",
                     "tone_instruction": "Professional, specific, no flattery.",
                     "document_kind": kind,
@@ -88,7 +94,13 @@ def write(
         {
             "role": "user",
             "content": _user_message(
-                kind, profile_content, evidence_index, job, language, revision_instructions
+                kind,
+                profile_content,
+                evidence_index,
+                job,
+                language,
+                revision_instructions,
+                cv_content,
             ),
         },
     ]
@@ -122,6 +134,7 @@ def _user_message(
     job: dict,
     language: str,
     revision_instructions: str,
+    cv_content: dict | None = None,
 ) -> str:
     payload = {
         "job_requirements_json": json.dumps(
@@ -136,7 +149,9 @@ def _user_message(
         "profile_subset_json": json.dumps(profile_content, ensure_ascii=False),
         "evidence_subset_json": json.dumps(evidence_index, ensure_ascii=False),
         "cv_content_json": json.dumps(
-            {
+            cv_content
+            if kind == "cover_letter" and cv_content
+            else {
                 "target": {
                     "title": job.get("title"),
                     "company": job.get("company"),
@@ -145,7 +160,11 @@ def _user_message(
             },
             ensure_ascii=False,
         ),
-        "language_instruction": f"Write the document in {language}.",
+        "language_instruction": (
+            f"Write the document in {language}. The profile and evidence quotes are "
+            f"in the candidate's source language: translate every fact you use into "
+            f"{language}. Never paste source-language text into the document."
+        ),
         "page_limit": "Maximum 2 pages." if kind == "cv" else "One page.",
         "tone_instruction": "Professional, specific, no flattery.",
         "document_kind": kind,
@@ -191,5 +210,43 @@ def _trusted(
     content["header"] = baseline["header"]
     if kind == "cover_letter":
         content["signature"] = baseline["signature"]
+    else:
+        _restore_missing_facts(content, baseline)
     content["missing"] = draft.missing_information(content)
     return content
+
+
+# Sections where the model may reorder or reword but must not drop a real fact.
+# Tailoring may omit a *role* it deems irrelevant; a project or a skill is a
+# one-line fact, and dropping it silently loses CV content the candidate wrote.
+_MERGE_SECTIONS = ("projects", "skills", "education", "certifications", "languages")
+
+
+def _restore_missing_facts(content: dict, baseline: dict) -> None:
+    for section in _MERGE_SECTIONS:
+        present: set[str] = set()
+        for item in content.get(section) or []:
+            if isinstance(item, dict):
+                present |= _fact_keys(item)
+        restored = [
+            item
+            for item in baseline.get(section) or []
+            if not (_fact_keys(item) & present)
+        ]
+        if restored:
+            content[section] = list(content.get(section) or []) + restored
+
+
+def _fact_keys(item: dict) -> set[str]:
+    """Identify a fact by id *and* label.
+
+    A model may invent or omit ids, so matching on id alone would let the same
+    skill appear twice: once from the model, once restored from the profile.
+    """
+    keys = set()
+    if item.get("id"):
+        keys.add(f"id:{item['id']}")
+    label = item.get("name") or item.get("institution") or item.get("title") or ""
+    if str(label).strip():
+        keys.add(f"name:{str(label).strip().lower()}")
+    return keys

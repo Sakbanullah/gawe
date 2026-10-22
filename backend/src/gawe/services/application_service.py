@@ -44,16 +44,26 @@ class ApplicationService:
 
     # -- writes ----------------------------------------------------------
     def create(self, job_id: str) -> tuple[dict, bool]:
-        """Create the workspace for a job; an existing one is returned as-is."""
+        """Create the workspace for a job; an existing one is returned as-is.
+
+        The existing check runs first: a job that closed after the user started an
+        application must still answer `200 deduplicated`, not `409`.
+        """
         profile = self._profiles.require_confirmed()
-        match = self._assessments.match(job_id, profile["profile_version_id"])
-        if match is None:
-            raise ApplicationError(
-                "not_found", "Job tidak ditemukan atau belum dianalisis.", 404
-            )
         existing = self._by_job(job_id)
         if existing is not None:
             return existing, True
+        match = self._assessments.match(job_id, profile["profile_version_id"])
+        if match is None:
+            if self._assessments.job_status(job_id) not in (None, "open"):
+                raise ApplicationError(
+                    "job_not_open",
+                    "Lowongan sudah ditutup; tidak dapat membuat aplikasi baru.",
+                    409,
+                )
+            raise ApplicationError(
+                "not_found", "Job tidak ditemukan atau belum dianalisis.", 404
+            )
         application_id = new_id("app")
         timestamp = now_iso()
         with self._connection:
@@ -66,10 +76,12 @@ class ApplicationService:
         assert record is not None
         return record, False
 
-    def create_from_url(self, url: str, discovery: DiscoveryService) -> tuple[dict, bool]:
+    def create_from_url(
+        self, url: str, discovery: DiscoveryService, text: str | None = None
+    ) -> tuple[dict, bool]:
         """Manual-URL fallback: ingest one pasted job page, then create the workspace."""
         profile = self._profiles.require_confirmed()
-        result = discovery.ingest_manual_url(url)
+        result = discovery.ingest_manual_url(url, text=text)
         return self.create(result["job_id"])
 
     def rerun_analysis(self, application_id: str) -> dict:
@@ -174,7 +186,9 @@ class ApplicationService:
         record = self._row(application_id)
         if record is None:
             raise ApplicationError("not_found", "Workspace tidak ditemukan.", 404)
-        match = self._assessments.match(record["job_id"], record["profile_version_id"])
+        match = self._assessments.match(
+            record["job_id"], record["profile_version_id"], include_closed=True
+        )
         if match is None:
             raise ApplicationError(
                 "not_found", "Job workspace belum dianalisis.", 404
@@ -203,7 +217,9 @@ class ApplicationService:
         record = self._row(application_id)
         if record is None:
             raise ApplicationError("not_found", "Workspace tidak ditemukan.", 404)
-        detail = self._assessments.detail(record["job_id"], record["profile_version_id"])
+        detail = self._assessments.detail(
+            record["job_id"], record["profile_version_id"], include_closed=True
+        )
         if detail is None:
             raise ApplicationError("not_found", "Job workspace tidak ditemukan.", 404)
         return detail["job_detail"]
@@ -230,7 +246,9 @@ class ApplicationService:
         return row["task_id"] if row else None
 
     def _summary(self, record: dict) -> dict | None:
-        match = self._assessments.match(record["job_id"], record["profile_version_id"])
+        match = self._assessments.match(
+            record["job_id"], record["profile_version_id"], include_closed=True
+        )
         if match is None:
             # No assessment left for this workspace; never invent eligibility or fit.
             return None

@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -86,33 +85,49 @@ def list_matches(
 
     profile = _confirmed(request)
     service = _service(request)
-    items = service.matches(profile["profile_version_id"])
     counts = service.counts(profile["profile_version_id"])
     ranking = service.latest_ranking(profile["profile_version_id"])
     ranking_run_id = ranking["ranking_run_id"] if ranking else None
 
-    items = [item for item in items if _keep(item, eligibility, q, tier, source_id, market, work_mode)]
+    after = _decode_cursor(cursor, sort, ranking_run_id) if cursor else None
+    page, has_more, last_key = service.matches_page(
+        profile["profile_version_id"],
+        limit=limit,
+        sort=sort,
+        ranking_run_id=ranking_run_id,
+        after=after,
+        eligibility=eligibility,
+        tier=tier,
+        source_id=source_id,
+        market=market,
+        work_mode=work_mode,
+        q=q,
+        min_fit_score=min_fit_score,
+    )
     hidden = 0
     if min_fit_score:
-        kept = [
-            item
-            for item in items
-            if item["fit"] is None or item["fit"]["fit_score"] >= min_fit_score
-        ]
-        hidden = len(items) - len(kept)
-        items = kept
-
-    ordered = _order(items, sort, ranking)
-    start = 0
-    if cursor:
-        key = _decode_cursor(cursor, sort, ranking_run_id)
-        start = _offset_after(ordered, sort, ranking, key)
-    page = ordered[start : start + limit]
-    has_more = start + limit < len(ordered)
+        kept = service.count_matches(
+            profile["profile_version_id"],
+            eligibility=eligibility,
+            tier=tier,
+            source_id=source_id,
+            market=market,
+            work_mode=work_mode,
+            q=q,
+            min_fit_score=min_fit_score,
+        )
+        total = service.count_matches(
+            profile["profile_version_id"],
+            eligibility=eligibility,
+            tier=tier,
+            source_id=source_id,
+            market=market,
+            work_mode=work_mode,
+            q=q,
+        )
+        hidden = total - kept
     next_cursor = (
-        _encode_cursor(_sort_key(page[-1], sort, ranking), sort, ranking_run_id)
-        if has_more and page
-        else None
+        _encode_cursor(last_key, sort, ranking_run_id) if has_more and last_key else None
     )
     return {
         "items": page,
@@ -136,8 +151,18 @@ def list_matches(
 @router.get("/{job_id}")
 def get_match(request: Request, job_id: str) -> dict:
     profile = _confirmed(request)
-    detail = _service(request).detail(job_id, profile["profile_version_id"])
+    service = _service(request)
+    detail = service.detail(job_id, profile["profile_version_id"])
     if detail is None:
+        # A job that exists but has closed is not the same as one that does not:
+        # the client must be able to say so instead of "not found".
+        if service.job_status(job_id) not in (None, "open"):
+            raise ApiError(
+                409,
+                "job_not_open",
+                "Lowongan sudah ditutup dan tidak lagi tersedia di Matches.",
+                stage="eligibility",
+            )
         raise ApiError(
             404, "not_found", "Job tidak ditemukan atau belum dianalisis.", stage="eligibility"
         )
@@ -163,6 +188,16 @@ def override_tier(request: Request, job_id: str, body: TierOverrideRequest) -> d
         )
     profile = _confirmed(request)
     service = _service(request)
+    status = service.job_status(job_id)
+    if status is None:
+        raise ApiError(404, "not_found", "Job tidak ditemukan.", stage="eligibility")
+    if status != "open":
+        raise ApiError(
+            409,
+            "job_not_open",
+            "Lowongan sudah ditutup; koreksi tier tidak lagi berlaku.",
+            stage="eligibility",
+        )
     if service.override_tier(job_id, body.tier, (body.reason or "").strip() or None) is None:
         raise ApiError(404, "not_found", "Job tidak ditemukan.", stage="eligibility")
     row = service.match(job_id, profile["profile_version_id"])
@@ -171,74 +206,6 @@ def override_tier(request: Request, job_id: str, body: TierOverrideRequest) -> d
             404, "not_found", "Job tidak ditemukan atau belum dianalisis.", stage="eligibility"
         )
     return row
-
-
-def _keep(item, eligibility, q, tier, source_id, market, work_mode) -> bool:
-    job = item["job"]
-    if eligibility != "all" and item["eligibility"]["status"] != eligibility:
-        return False
-    if tier is not None and job["priority_tier"] != tier:
-        return False
-    if source_id is not None and job["source_id"] != source_id:
-        return False
-    if market is not None and job["market"] != market:
-        return False
-    if work_mode is not None and job["work_mode"] != work_mode:
-        return False
-    if q:
-        haystack = " ".join(
-            (job["title"], job["company"], (job["location"] or {}).get("raw") or "")
-        ).lower()
-        if q.lower() not in haystack:
-            return False
-    return True
-
-
-def _order(items: list[dict], sort: str, ranking: dict | None) -> list[dict]:
-    return sorted(items, key=lambda item: _sort_key(item, sort, ranking))
-
-
-def _sort_key(item: dict, sort: str, ranking: dict | None = None) -> tuple:
-    """Ascending tuple whose first element is the primary sort key.
-
-    The tuple is the cursor key as well, so paging never depends on an offset.
-    """
-    job = item["job"]
-    if sort == "ranking" and ranking is not None:
-        positions = {
-            entry["job_id"]: entry["rank"] for entry in ranking["sections"]["eligible"]
-        }
-        return (positions.get(job["job_id"], len(positions) + 1), job["job_id"])
-    if sort == "ranking":
-        return (TIER_ORDER.get(job["priority_tier"], 5), job["job_id"])
-    if sort == "fit_score_desc":
-        return (-(item["fit"]["fit_score"] if item["fit"] else -1), job["job_id"])
-    if sort == "posted_at_desc":
-        return (-_epoch(job["posted_at"]), job["job_id"])
-    return (TIER_ORDER.get(job["priority_tier"], 5), job["job_id"])
-
-
-def _epoch(value: str | None) -> float:
-    """Unix seconds for an ISO timestamp; 0 for a missing one (sorts last)."""
-    if not value:
-        return 0.0
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return 0.0
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.timestamp()
-
-
-def _offset_after(
-    ordered: list[dict], sort: str, ranking: dict | None, key: tuple
-) -> int:
-    """Index of the first item whose key is strictly after the cursor key."""
-    for index, item in enumerate(ordered):
-        if _sort_key(item, sort, ranking) > key:
-            return index
-    return len(ordered)
 
 
 def _encode_cursor(key: tuple, sort: str, ranking_run_id: str | None) -> str:
