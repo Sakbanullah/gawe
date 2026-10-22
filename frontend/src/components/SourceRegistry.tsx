@@ -1,11 +1,13 @@
 import { useState } from "react";
 import {
   Alert,
+  Anchor,
   Badge,
   Button,
   Card,
   Group,
   Modal,
+  NumberInput,
   Select,
   Stack,
   Switch,
@@ -27,11 +29,12 @@ const ATS = [
   { value: "greenhouse", label: "Greenhouse" },
   { value: "lever", label: "Lever" },
   { value: "ashby", label: "Ashby" },
+  { value: "himalayas", label: "Himalayas" },
   { value: "unknown", label: "Lainnya" },
 ];
 const ACCESS = [
   { value: "ats_api", label: "ATS API" },
-  { value: "html", label: "Halaman karier (HTML)" },
+  { value: "aggregator", label: "Aggregator" },
 ];
 const VERIFICATION = [
   { value: "unverified", label: "unverified" },
@@ -44,6 +47,13 @@ const VERIFICATION_COLOR: Record<string, string> = {
   verified: "green",
   unverified: "gray",
   restricted: "orange",
+  broken: "red",
+};
+
+const HEALTH_COLOR: Record<string, string> = {
+  healthy: "green",
+  unknown: "gray",
+  degraded: "orange",
   broken: "red",
 };
 
@@ -150,10 +160,13 @@ function CreateSourceForm() {
               company: company.trim(),
               careers_url: careersUrl.trim(),
               market: market as "indonesia" | "global",
-              ats: ats as "greenhouse" | "lever" | "ashby" | "unknown",
-              access_method: accessMethod as "ats_api" | "html",
+              ats: ats as "greenhouse" | "lever" | "ashby" | "himalayas" | "unknown",
+              access_method: accessMethod as "ats_api" | "aggregator",
               tos_notes: tosNotes.trim() || undefined,
               enabled: false,
+              priority_order: 100,
+              fetch_interval_minutes: 360,
+              daily_request_quota: 24,
             })
           }
         >
@@ -179,6 +192,9 @@ function EditSourceModal({
   const [accessMethod, setAccessMethod] = useState<string>(source.access_method);
   const [verification, setVerification] = useState<string>(source.verification_status);
   const [enabled, setEnabled] = useState(source.enabled);
+  const [priority, setPriority] = useState<number>(source.priority_order);
+  const [interval, setInterval] = useState<number>(source.fetch_interval_minutes);
+  const [quota, setQuota] = useState<number>(source.daily_request_quota);
   const [tosNotes, setTosNotes] = useState(source.tos_notes ?? "");
   const [dismissed, setDismissed] = useState(false);
   const error = dismissed ? null : update.error;
@@ -260,6 +276,43 @@ function EditSourceModal({
             setEnabled(event.currentTarget.checked);
           }}
         />
+        <Group grow>
+          <NumberInput
+            label="Prioritas"
+            description="Kecil dijalankan lebih dulu"
+            min={1}
+            max={1000}
+            value={priority}
+            error={fieldError(error, "priority_order")}
+            onChange={(value) => {
+              resetError();
+              setPriority(typeof value === "number" ? value : 100);
+            }}
+          />
+          <NumberInput
+            label="Interval (menit)"
+            min={5}
+            max={43200}
+            value={interval}
+            error={fieldError(error, "fetch_interval_minutes")}
+            onChange={(value) => {
+              resetError();
+              setInterval(typeof value === "number" ? value : 360);
+            }}
+          />
+          <NumberInput
+            label="Kuota 24 jam"
+            description="0 = tanpa batas"
+            min={0}
+            max={100000}
+            value={quota}
+            error={fieldError(error, "daily_request_quota")}
+            onChange={(value) => {
+              resetError();
+              setQuota(typeof value === "number" ? value : 24);
+            }}
+          />
+        </Group>
         <Textarea
           label="Catatan ToS"
           autosize
@@ -287,9 +340,17 @@ function EditSourceModal({
                     careers_url: careersUrl.trim(),
                     market: market as "indonesia" | "global",
                     ats: ats as SourceRegistryEntry["ats"],
-                    access_method: accessMethod as "ats_api" | "html",
+                    // A legacy row may still hold `html`, which the request
+                    // contract no longer accepts. Sending it back unchanged would
+                    // make the row unsavable, so only a real change is sent.
+                    ...(accessMethod === source.access_method
+                      ? {}
+                      : { access_method: accessMethod as "ats_api" | "aggregator" }),
                     verification_status: verification as SourceRegistryEntry["verification_status"],
                     enabled,
+                    priority_order: priority,
+                    fetch_interval_minutes: interval,
+                    daily_request_quota: quota,
                     tos_notes: tosNotes.trim(),
                   },
                 },
@@ -338,8 +399,10 @@ export function SourceRegistry({ editable = false }: { editable?: boolean }) {
                 <Table.Th>Perusahaan</Table.Th>
                 <Table.Th>ATS</Table.Th>
                 <Table.Th>Verifikasi</Table.Th>
+                <Table.Th>Kesehatan</Table.Th>
                 <Table.Th>Aktif</Table.Th>
                 <Table.Th>Terakhir dicek</Table.Th>
+                <Table.Th>Kuota 24 jam</Table.Th>
                 <Table.Th>Job</Table.Th>
                 {editable ? <Table.Th>Aksi</Table.Th> : null}
               </Table.Tr>
@@ -354,8 +417,21 @@ export function SourceRegistry({ editable = false }: { editable?: boolean }) {
                       {source.verification_status}
                     </Badge>
                   </Table.Td>
+                  <Table.Td>
+                    <Badge color={HEALTH_COLOR[source.health_status] ?? "gray"}>
+                      {source.health_status}
+                    </Badge>
+                    {source.consecutive_failures > 0 ? (
+                      <Text size="xs" c="dimmed">
+                        {source.consecutive_failures} gagal berturut-turut
+                      </Text>
+                    ) : null}
+                  </Table.Td>
                   <Table.Td>{source.enabled ? "ya" : "tidak"}</Table.Td>
                   <Table.Td>{source.last_checked_at ?? "—"}</Table.Td>
+                  <Table.Td>
+                    {source.requests_last_24h}/{source.daily_request_quota || "∞"}
+                  </Table.Td>
                   <Table.Td>{source.job_count ?? 0}</Table.Td>
                   {editable ? (
                     <Table.Td>
@@ -385,6 +461,15 @@ export function SourceRegistry({ editable = false }: { editable?: boolean }) {
             </Table.Tbody>
           </Table>
         )}
+        {items.some((source) => source.ats === "himalayas") ? (
+          <Text size="xs" c="dimmed">
+            Data lowongan dari{" "}
+            <Anchor href="https://himalayas.app" target="_blank" rel="noreferrer">
+              Himalayas
+            </Anchor>
+            . Tautan melamar dibuka apa adanya.
+          </Text>
+        ) : null}
         {update.error ? <Alert color="red">{errorText(update.error)}</Alert> : null}
         {editable ? <CreateSourceForm /> : null}
         {editing ? <EditSourceModal source={editing} onClose={() => setEditing(null)} /> : null}

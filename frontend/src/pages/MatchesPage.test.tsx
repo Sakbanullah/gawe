@@ -201,6 +201,35 @@ describe("MatchesPage", () => {
     );
   });
 
+  it("names the two gaps the source leaves, and only those", async () => {
+    const withGaps = item();
+    withGaps.job.completeness = {
+      missing_fields: ["company_name", "posted_at", "description_text"],
+      fetched_at: "2026-10-20T00:00:00Z",
+      stale: false,
+    };
+    vi.mocked(api.listMatches).mockResolvedValue(list([withGaps]));
+    vi.mocked(api.getMatch).mockResolvedValue({ ...detail(), job_detail: { ...detail().job_detail, job: withGaps.job } });
+    renderPage();
+
+    expect(await screen.findByText("Nama perusahaan dari slug")).toBeTruthy();
+    expect(screen.getByText("Tanggal posting tidak tersedia")).toBeTruthy();
+    expect(screen.queryByText("description_text")).toBeNull();
+
+    fireEvent.click(screen.getByText("Senior Backend Engineer"));
+    const drawer = within(await screen.findByRole("dialog"));
+    expect(drawer.getByText("Nama perusahaan dari slug")).toBeTruthy();
+    expect(drawer.getByText("Tanggal posting tidak tersedia")).toBeTruthy();
+  });
+
+  it("shows no gap note for a job whose source fills every field", async () => {
+    renderPage();
+
+    await screen.findByText("Senior Backend Engineer");
+    expect(screen.queryByText("Nama perusahaan dari slug")).toBeNull();
+    expect(screen.queryByText("Tanggal posting tidak tersedia")).toBeNull();
+  });
+
   it("pages forward with the backend cursor", async () => {
     vi.mocked(api.listMatches).mockResolvedValue(list([item()], true));
     renderPage();
@@ -240,5 +269,18 @@ describe("MatchesPage", () => {
     renderPage();
 
     expect(await screen.findByText("Belum ada job match")).toBeTruthy();
+  });
+
+  it("tells a closed job apart from a load failure by error code", async () => {
+    vi.mocked(api.getMatch).mockRejectedValue(
+      new api.ApiError(409, "job_not_open", "Lowongan sudah ditutup."),
+    );
+    renderPage();
+
+    fireEvent.click(await screen.findByText("Senior Backend Engineer"));
+    expect(await screen.findByText("Lowongan sudah ditutup")).toBeTruthy();
+    expect(
+      screen.getByText("Lowongan sudah ditutup. Muat ulang daftar Matches."),
+    ).toBeTruthy();
   });
 });

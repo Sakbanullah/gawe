@@ -17,12 +17,20 @@ import {
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
-import type { MatchDetail, MatchItem } from "../app/apiClient";
+import { ApiError, type MatchDetail, type MatchItem } from "../app/apiClient";
 import {
   useCreateApplication,
   useMatchDetail,
   useOverrideMatchTier,
 } from "../app/queries";
+
+/** A job that closed after the list was loaded is a state change, not a failure. */
+function errorMessage(error: unknown): string {
+  if (error instanceof ApiError && error.code === "job_not_open") {
+    return "Lowongan sudah ditutup. Muat ulang daftar Matches.";
+  }
+  return error instanceof Error ? error.message : "Permintaan gagal.";
+}
 
 const TIER_LABEL: Record<string, string> = {
   P1: "P1 · Global onsite",
@@ -52,6 +60,18 @@ const RESULT_COLOR: Record<string, string> = {
   not_met: "red",
   unknown: "yellow",
 };
+
+/** Only gaps the reader can act on; other missing fields stay out of the UI. */
+const COMPLETENESS_LABEL: Record<string, string> = {
+  company_name: "Nama perusahaan dari slug",
+  posted_at: "Tanggal posting tidak tersedia",
+};
+
+function completenessNotes(missing: string[] | undefined): string[] {
+  return (missing ?? [])
+    .map((field) => COMPLETENESS_LABEL[field])
+    .filter((label): label is string => Boolean(label));
+}
 
 export function MatchStatusBadge({ status }: { status: string }) {
   return <Badge color={STATUS_COLOR[status] ?? "gray"}>{status}</Badge>;
@@ -97,8 +117,15 @@ export function JobDetailDrawer({
         </Group>
       ) : null}
       {detail.isError ? (
-        <Alert color="red" title="Gagal memuat detail">
-          {detail.error instanceof Error ? detail.error.message : "Permintaan gagal."}
+        <Alert
+          color="red"
+          title={
+            detail.error instanceof ApiError && detail.error.code === "job_not_open"
+              ? "Lowongan sudah ditutup"
+              : "Gagal memuat detail"
+          }
+        >
+          {errorMessage(detail.error)}
         </Alert>
       ) : null}
       {data ? (
@@ -109,6 +136,11 @@ export function JobDetailDrawer({
               {data.job_detail.job.company} ·{" "}
               {data.job_detail.job.location?.raw ?? "lokasi tidak dicantumkan"}
             </Text>
+            {completenessNotes(data.job_detail.job.completeness?.missing_fields).map((note) => (
+              <Text key={note} size="xs" c="dimmed">
+                {note}
+              </Text>
+            ))}
           </div>
 
           <Group gap="xs">
@@ -162,11 +194,7 @@ export function JobDetailDrawer({
             </Group>
           )}
           {createApplication.error ? (
-            <Alert color="red">
-              {createApplication.error instanceof Error
-                ? createApplication.error.message
-                : "Permintaan gagal."}
-            </Alert>
+            <Alert color="red">{errorMessage(createApplication.error)}</Alert>
           ) : null}
 
           {data.job_detail.job.apply_url ? (
@@ -275,6 +303,15 @@ export function JobDetailDrawer({
           <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
             {data.job_detail.description_text || "Deskripsi tidak tersedia."}
           </Text>
+          {data.job_detail.source.access_method === "aggregator" ? (
+            <Text size="xs" c="dimmed">
+              Data lowongan dari{" "}
+              <Anchor href="https://himalayas.app" target="_blank" rel="noreferrer">
+                Himalayas
+              </Anchor>
+              . Tautan melamar dibuka apa adanya.
+            </Text>
+          ) : null}
 
           <Divider label="Koreksi tier" labelPosition="left" />
           <Stack gap="xs">
@@ -297,9 +334,7 @@ export function JobDetailDrawer({
               onChange={(event) => setReason(event.currentTarget.value)}
             />
             {override.error ? (
-              <Alert color="red">
-                {override.error instanceof Error ? override.error.message : "Permintaan gagal."}
-              </Alert>
+              <Alert color="red">{errorMessage(override.error)}</Alert>
             ) : null}
             <Group>
               <Button
@@ -366,7 +401,14 @@ export function JobMatchesTable({
                 {item.job.title}
               </Anchor>
             </Table.Td>
-            <Table.Td>{item.job.company}</Table.Td>
+            <Table.Td>
+              {item.job.company}
+              {completenessNotes(item.job.completeness?.missing_fields).map((note) => (
+                <Text key={note} size="xs" c="dimmed">
+                  {note}
+                </Text>
+              ))}
+            </Table.Td>
             <Table.Td>{item.job.location?.raw ?? "—"}</Table.Td>
             <Table.Td>
               <MatchStatusBadge status={item.eligibility.status} />

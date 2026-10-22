@@ -138,6 +138,7 @@ Konvensi umum:
 | GET | `/api/settings/sources` | `listSources` | Daftar source registry |
 | POST | `/api/settings/sources` | `createSource` | Tambah sumber |
 | GET | `/api/settings/sources/{source_id}` | `getSource` | Detail sumber |
+| GET | `/api/settings/sources/health` | `getSourceHealth` | Kesehatan, jadwal, dan kuota semua sumber |
 | PATCH | `/api/settings/sources/{source_id}` | `updateSource` | Ubah/nonaktifkan sumber |
 
 Catatan inventaris:
@@ -282,11 +283,21 @@ Aturan kontrak:
   "company": "...",
   "market": "indonesia | global",
   "careers_url": "...",
-  "access_method": "ats_api | html | manual_url",
-  "ats": "greenhouse | lever | ashby | unknown",
+  "access_method": "ats_api | aggregator | html | manual_url",
+  "ats": "greenhouse | lever | ashby | himalayas | unknown",
   "verification_status": "unverified | verified | restricted | broken",
   "tos_notes": "...",
   "last_checked_at": null,
+  "last_success_at": null,
+  "health_status": "unknown | healthy | degraded | broken",
+  "consecutive_failures": 0,
+  "last_error_code": null,
+  "next_run_at": null,
+  "priority_order": 100,
+  "fetch_interval_minutes": 360,
+  "daily_request_quota": 24,
+  "requests_last_24h": 0,
+  "stale": false,
   "enabled": true,
   "job_count": 12,
   "created_at": "...",
@@ -304,7 +315,14 @@ Aturan kontrak:
 - Sumber `broken` atau `restricted` tidak boleh diaktifkan.
 - Tidak ada hard delete pada v1.
 - `last_checked_at` diisi backend setelah percobaan fetch.
-- `access_method` untuk entri yang dikelola pengguna hanya `ats_api` atau `html`. `manual_url` bukan pilihan pengguna; nilai itu dipakai record sintetis.
+- `access_method` untuk entri yang dikelola pengguna hanya `ats_api` (board satu perusahaan) dan `aggregator` (feed lintas perusahaan dengan adapter resmi, mis. Himalayas). `html` ditolak saat write (`400 validation_failed`, detail `access_method_unsupported`), karena tidak ada adapter yang dapat mengambilnya. `manual_url` bukan pilihan pengguna; nilai itu dipakai record sintetis. Baris lama bertipe `html` tetap dapat dibaca dan dinonaktifkan, tetapi tidak pernah di-fetch.
+- `health_status` adalah turunan streak kegagalan, bukan penilaian terpisah: `unknown` belum ada percobaan, `healthy` percobaan terakhir sukses, `degraded` 1-2 gagal berurutan, `broken` 3 atau lebih gagal berurutan. `consecutive_failures` direset ke 0 setelah sukses.
+- `next_run_at` adalah slot berikutnya. `null` berarti sumber langsung due. Sumber yang gagal mendapat backoff eksponensial (`interval × 2^(failure-1)`, maksimum faktor 8); `Retry-After` dari server dipakai sebagai lantai, bukan pengganti.
+- `daily_request_quota` membatasi jumlah **HTTP request** per 24 jam, dihitung dari `SUM(discovery_run_source.request_count)` untuk baris yang `last_attempt_at` berada dalam 24 jam terakhir (bukan `source_fetch`, karena respons 304 dan kegagalan tidak menulis baris fetch). Setiap percobaan mencatat jumlah request yang benar-benar dipakai, jadi adapter berhalaman menghitung satu per halaman. `0` berarti tanpa batas. Sumber di-skip dengan `source_quota_exhausted` bila sisa kuota tidak cukup untuk seluruh kebutuhan run, sehingga tidak ada snapshot sebagian.
+- `requests_last_24h` adalah jumlah HTTP request yang tercatat dalam 24 jam terakhir.
+- `stale` bernilai true bila tidak ada fetch sukses selama 7 hari; ini peringatan, bukan perubahan status.
+- `priority_order` menentukan urutan eksekusi scheduler; kecil lebih dulu. `fetch_interval_minutes` adalah jarak normal antar-run sukses.
+- `GET /api/settings/sources/health` mengembalikan ringkasan yang sama untuk semua sumber dalam satu panggilan.
 
 **Sumber sintetis `manual_url`.**
 
@@ -314,6 +332,14 @@ Aturan kontrak:
 - Pengguna **tidak perlu** mengonfigurasi sumber untuk memakai fallback URL manual. Discovery otomatis tetap memerlukan setidaknya satu entri registry `verified` dan `enabled`.
 - `verification_status` sumber sintetis adalah `verified` untuk pemakaian manual oleh pengguna, karena URL divalidasi per request oleh URL guard; ini tidak menyatakan situs sumber sudah diuji untuk fetch otomatis.
 - URL tetap divalidasi per request: HTTPS, host publik, tanpa kredensial, redirect tervalidasi, timeout 20 detik, maksimal 5 redirect, maksimal 5 MB. Kegagalan menghasilkan `400 url_rejected`.
+- **Tempel teks (`text`).** `POST /api/applications` menerima `text` opsional bersama `url` untuk halaman yang tidak dapat diambil otomatis (403/429 atau shell JavaScript). Bila `text` diisi:
+  - halaman **tidak** di-fetch dan `robots.txt` tidak diperiksa, karena tidak ada pengambilan otomatis;
+  - `url` tetap wajib dan tetap divalidasi URL guard; URL menjadi `canonical_url` dan `apply_url` job. URL tidak pernah dikarang;
+  - baris pertama teks menjadi judul; teks utuh menjadi `description_text` (dipotong sesuai batas normalisasi);
+  - `text` maksimum 200.000 karakter; lebih dari itu ditolak `400 validation_failed`;
+  - teks diperlakukan sebagai data tidak tepercaya, sama seperti isi halaman;
+  - kegagalan parse menghasilkan `400 manual_page_unreadable`;
+  - `source_fetch.raw_json` menyimpan teks tempel, `http_status`, `final_url`, dan `etag` bernilai `null`, dan `stats` run memuat `manual_text: 1` alih-alih `manual_url: 1`.
 
 ### 3.5 Eligibility result (`PLAN.md` §4.2)
 
@@ -643,6 +669,25 @@ Kode error dan pemetaan HTTP:
 | `source_not_verified` | 409 | false | Sumber belum diverifikasi |
 | `source_restricted` | 409 | false | Sumber dibatasi ToS/akses |
 | `source_unavailable` | 503 | true | Sumber gagal diakses |
+| `source_unsupported` | — | false | Jenis sumber belum punya adapter; dilaporkan sebagai status `skipped` per sumber |
+| `source_error` | — | true | Sumber gagal diproses di luar kategori lain; dilaporkan sebagai status `failed` per sumber |
+| `source_parse_failed` | — | false | Payload sumber tidak dapat diparse; dilaporkan sebagai status `failed` per sumber |
+| `response_too_large` | — | false | Respons sumber melebihi 5 MB |
+| `run_timeout` | — | true | Batas durasi run discovery tercapai |
+| `stale_run` | — | false | Task discovery basi dipulihkan saat run baru dimulai |
+| `no_enabled_sources` | 409 | false | Tidak ada sumber `verified` dan `enabled` untuk dijalankan |
+| `retry_scope_unsupported` | 400 | false | `scope` retry tidak berlaku untuk jenis task tersebut |
+| `ats_unavailable` | 400 | false | Detail `validation_failed`: ATS tidak punya adapter |
+| `ats_host_mismatch` | 400 | false | Detail `validation_failed`: host `careers_url` tidak cocok dengan ATS |
+| `robots_disallowed` | 400 | false | `robots.txt` melarang pengambilan halaman URL manual |
+| `manual_page_unreadable` | 400 | false | Halaman URL manual tidak memuat judul/deskripsi yang dapat dibaca, termasuk halaman yang dirender JavaScript |
+| `source_quota_exhausted` | — | false | Kuota request harian sumber habis; dilaporkan sebagai status `skipped` per sumber |
+| `empty_snapshot` | — | false | Snapshot tidak memuat record; penutupan lowongan dilewati |
+| `all_records_invalid` | — | false | Semua record gagal dinormalisasi; penutupan lowongan dilewati |
+| `payload_truncated` | — | false | Payload sumber terindikasi terpotong; penutupan lowongan dilewati |
+| `invalid_ratio_high` | — | false | Rasio record invalid melebihi ambang; penutupan lowongan dilewati |
+| `partial_snapshot` | — | false | Payload hanya sebagian dari board (adapter berpaginasi); penutupan lowongan dilewati |
+| `access_method_unsupported` | 400 | false | Detail `validation_failed`: `access_method` tidak punya adapter fetch |
 | `duplicate_source` | 409 | false | Sumber sudah terdaftar |
 | `unsupported_media_type` | 415 | false | MIME/ekstensi tidak didukung |
 | `payload_too_large` | 413 | false | Melebihi batas ukuran: JSON > 1 MiB atau file > 20 MB |

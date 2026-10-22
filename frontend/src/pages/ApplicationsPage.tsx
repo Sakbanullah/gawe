@@ -1,4 +1,13 @@
-import { Alert, Badge, Button, Group, Table, Text, TextInput } from "@mantine/core";
+import {
+  Alert,
+  Badge,
+  Button,
+  Group,
+  Table,
+  Text,
+  Textarea,
+  TextInput,
+} from "@mantine/core";
 import { useState } from "react";
 import { Link } from "react-router";
 
@@ -27,6 +36,8 @@ export function ApplicationsPage() {
   const applications = useApplications();
   const createFromUrl = useCreateApplicationFromUrl();
   const [url, setUrl] = useState("");
+  const [text, setText] = useState("");
+  const [showText, setShowText] = useState(false);
   const state: PageState = applications.isPending
     ? "loading"
     : applications.isError
@@ -62,12 +73,40 @@ export function ApplicationsPage() {
           loading={createFromUrl.isPending}
           disabled={locked || url.trim() === ""}
           onClick={() =>
-            void createFromUrl.mutateAsync(url.trim()).then(() => setUrl(""))
+            void createFromUrl
+              .mutateAsync({ url: url.trim(), text: text.trim() || undefined })
+              .then(() => {
+                setUrl("");
+                setText("");
+                setShowText(false);
+              })
           }
         >
           Buat workspace
         </Button>
       </Group>
+      <Group justify="space-between">
+        <Button
+          variant="subtle"
+          size="compact-sm"
+          onClick={() => setShowText((current) => !current)}
+          disabled={locked}
+        >
+          {showText ? "Sembunyikan teks lowongan" : "Halaman tidak bisa dibaca? Tempel teksnya"}
+        </Button>
+      </Group>
+      {showText ? (
+        <Textarea
+          label="Teks lowongan"
+          description="Untuk halaman yang menolak akses otomatis (403/429) atau dirender JavaScript. Baris pertama menjadi judul. URL di atas tetap wajib."
+          placeholder={"Senior Backend Engineer - Acme\n\nKami mencari backend engineer..."}
+          value={text}
+          onChange={(event) => setText(event.currentTarget.value)}
+          minRows={6}
+          maxLength={200000}
+          disabled={locked}
+        />
+      ) : null}
       {createFromUrl.isError ? (
         <Alert color="red" title="URL ditolak">
           {createFromUrl.error instanceof ApiError

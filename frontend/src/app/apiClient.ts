@@ -365,8 +365,14 @@ export type ExportRecord = components["schemas"]["ExportRecord"];
 export type ExportList = components["schemas"]["ExportList"];
 export type ExportRequest = components["schemas"]["ExportRequest"];
 
-export function createApplicationFromUrl(url: string): Promise<ApplicationCreated> {
-  return apiSend<ApplicationCreated>("POST", "/api/applications", { url });
+export function createApplicationFromUrl(
+  url: string,
+  text?: string,
+): Promise<ApplicationCreated> {
+  return apiSend<ApplicationCreated>("POST", "/api/applications", {
+    url,
+    ...(text ? { text } : {}),
+  });
 }
 
 export function listExports(applicationId: string): Promise<ExportList> {

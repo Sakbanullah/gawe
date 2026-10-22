@@ -298,6 +298,29 @@ describe("ApplicationsPage", () => {
     await waitFor(() =>
       expect(api.createApplicationFromUrl).toHaveBeenCalledWith(
         "https://example.com/jobs/1",
+        undefined,
+      ),
+    );
+  });
+
+  it("sends pasted text when the page cannot be read", async () => {
+    renderAt("/applications");
+
+    fireEvent.change(await screen.findByLabelText("Tambah dari URL lowongan"), {
+      target: { value: "https://example.com/jobs/1" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Halaman tidak bisa dibaca? Tempel teksnya" }),
+    );
+    fireEvent.change(screen.getByLabelText("Teks lowongan"), {
+      target: { value: "Senior Backend Engineer - Acme\n\nPython dan PostgreSQL." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Buat workspace" }));
+
+    await waitFor(() =>
+      expect(api.createApplicationFromUrl).toHaveBeenCalledWith(
+        "https://example.com/jobs/1",
+        "Senior Backend Engineer - Acme\n\nPython dan PostgreSQL.",
       ),
     );
   });

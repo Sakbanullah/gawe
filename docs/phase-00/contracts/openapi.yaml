@@ -697,6 +697,11 @@ paths:
         Mengembalikan job, eligibility, dan fit terbaru untuk profil aktif. Fit
         hanya ada bila eligibility `eligible`. `apply_url` berasal dari backend;
         klien tidak boleh menyusun URL sendiri.
+
+        Job yang sudah ditutup tidak lagi muncul di daftar Matches dan ditolak
+        `409 job_not_open`. Job yang tidak ada atau belum dianalisis tetap
+        `404 not_found`. Workspace aplikasi yang sudah ada tetap dapat dibuka
+        lewat `/api/applications/{application_id}`.
       parameters:
         - name: job_id
           in: path
@@ -712,6 +717,13 @@ paths:
                 $ref: '#/components/schemas/MatchDetail'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            Job ada tetapi sudah ditutup. Kode error `job_not_open`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           $ref: '#/components/responses/InternalError'
 
@@ -725,6 +737,9 @@ paths:
         tie-breaker pada ranking berikutnya; `fit_score`, eligibility, dan
         `ranking_run` yang sudah tersimpan tidak berubah. Kirim `tier: null`
         untuk menghapus koreksi dan kembali ke hasil klasifikasi backend.
+
+        Job yang sudah ditutup ditolak `409 job_not_open`: koreksi tier pada job
+        tertutup tidak akan pernah dibaca ranking run berikutnya.
       security:
         - csrfToken: []
           sessionCookie: []
@@ -805,6 +820,10 @@ paths:
         dengan `deduplicated: true` dan task aktif bila ada. Task yang dijalankan:
         fetch (bila `url`), simpan versi posting, requirement, eligibility, dan fit
         bila `eligible`.
+
+        Job yang sudah ditutup ditolak `409 job_not_open`, kecuali workspace untuk
+        job itu sudah ada: pemeriksaan workspace berjalan lebih dulu, sehingga
+        response tetap 200 `deduplicated`.
       security:
         - csrfToken: []
           sessionCookie: []
@@ -1855,6 +1874,25 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/settings/sources/health:
+    get:
+      tags: [Settings]
+      operationId: getSourceHealth
+      summary: Kesehatan sumber dan pemakaian kuota
+      description: |
+        Satu baris per sumber: status kesehatan, streak kegagalan, slot berikutnya,
+        dan pemakaian kuota 24 jam. Turunan dari percobaan fetch yang tercatat,
+        bukan penilaian terpisah.
+      responses:
+        '200':
+          description: Ringkasan kesehatan sumber.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourceHealthList'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/settings/sources/{source_id}:
     get:
       tags: [Settings]
@@ -2056,6 +2094,7 @@ components:
         - profile_version_mismatch
         - eligibility_not_eligible
         - eligibility_needs_review
+        - job_not_open
         - assessment_failed
         - fit_not_available
         - document_not_approved
@@ -2086,6 +2125,14 @@ components:
         - ats_unavailable
         - ats_host_mismatch
         - duplicate_source
+        - robots_disallowed
+        - manual_page_unreadable
+        - source_quota_exhausted
+        - empty_snapshot
+        - all_records_invalid
+        - payload_truncated
+        - invalid_ratio_high
+        - partial_snapshot
         - unsupported_media_type
         - payload_too_large
         - internal_error
@@ -2276,7 +2323,10 @@ components:
       description: |
         Diagnosis per sumber. `skipped` adalah record payload yang dibuang adapter
         sebelum normalisasi; `invalid` gagal normalisasi; `truncated` deskripsinya
-        dipotong; `stale` datanya ditandai basi.
+        dipotong; `stale` datanya ditandai basi; `requests` adalah jumlah HTTP
+        request yang benar-benar dipakai (sama dengan kuota); `skip_reasons`
+        memecah `skipped` per alasan, mis. `missing_company` atau
+        `duplicate_guid`.
       required: [skipped, invalid, truncated, stale]
       properties:
         skipped:
@@ -2291,6 +2341,14 @@ components:
         stale:
           type: integer
           minimum: 0
+        requests:
+          type: integer
+          minimum: 0
+        skip_reasons:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
 
     RetryInfo:
       type: object
@@ -2732,24 +2790,35 @@ components:
       type: string
       enum: [unverified, verified, restricted, broken]
 
+    SourceHealthStatus:
+      type: string
+      description: |
+        Turunan dari streak kegagalan, bukan tebakan: `unknown` belum ada
+        percobaan, `healthy` percobaan terakhir sukses, `degraded` 1-2 gagal
+        berurutan, `broken` 3 atau lebih gagal berurutan.
+      enum: [unknown, healthy, degraded, broken]
+
     SourceAccessMethod:
       type: string
       description: |
         `manual_url` adalah sumber sintetis sistem (`source_id: manual_url`), bukan
         entri registry yang dibuat pengguna. Entri registry buatan pengguna memakai
-        `UserManagedAccessMethod`.
-      enum: [ats_api, html, manual_url]
+        `UserManagedAccessMethod`. `aggregator` menandai feed lintas perusahaan
+        (mis. Himalayas) yang memakai adapter resmi.
+      enum: [ats_api, aggregator, html, manual_url]
 
     UserManagedAccessMethod:
       type: string
       description: |
         Metode akses yang boleh dipilih pengguna saat membuat/mengubah entri source
-        registry. `manual_url` tidak termasuk karena dikelola sistem.
-      enum: [ats_api, html]
+        registry. `ats_api` untuk board satu perusahaan, `aggregator` untuk feed
+        lintas perusahaan. `html` ditolak di write time karena tidak ada adapter
+        yang dapat mengambilnya. `manual_url` tidak termasuk karena dikelola sistem.
+      enum: [ats_api, aggregator]
 
     SourceAts:
       type: string
-      enum: [greenhouse, lever, ashby, unknown]
+      enum: [greenhouse, lever, ashby, himalayas, unknown]
 
     SourceMarket:
       type: string
@@ -2760,7 +2829,7 @@ components:
       description: |
         Entri source registry yang dikelola pengguna. Sumber sintetis `manual_url`
         tidak muncul di sini dan tidak dapat dibuat/diubah lewat endpoint registry.
-      required: [source_id, company, market, careers_url, access_method, ats, verification_status, enabled, created_at, updated_at]
+      required: [source_id, company, market, careers_url, access_method, ats, verification_status, enabled, health_status, consecutive_failures, priority_order, fetch_interval_minutes, daily_request_quota, requests_last_24h, created_at, updated_at]
       properties:
         source_id:
           type: string
@@ -2785,6 +2854,44 @@ components:
         last_checked_at:
           type: [string, 'null']
           format: date-time
+        last_success_at:
+          type: [string, 'null']
+          format: date-time
+          description: Waktu fetch sukses terakhir. Dasar perhitungan `stale`.
+        health_status:
+          $ref: '#/components/schemas/SourceHealthStatus'
+        consecutive_failures:
+          type: integer
+          minimum: 0
+          description: Jumlah kegagalan berurutan. Direset ke 0 setelah sukses.
+        last_error_code:
+          type: [string, 'null']
+          description: Kode error fetch terakhir, atau null bila percobaan terakhir sukses.
+        next_run_at:
+          type: [string, 'null']
+          format: date-time
+          description: Slot berikutnya. Null berarti sumber langsung due.
+        priority_order:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          description: Urutan eksekusi scheduler; kecil lebih dulu.
+        fetch_interval_minutes:
+          type: integer
+          minimum: 5
+          maximum: 43200
+        daily_request_quota:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: Batas percobaan fetch per 24 jam. 0 berarti tanpa batas.
+        requests_last_24h:
+          type: integer
+          minimum: 0
+          description: Jumlah percobaan fetch tercatat dalam 24 jam terakhir.
+        stale:
+          type: boolean
+          description: True bila tidak ada fetch sukses selama 7 hari.
         enabled:
           type: boolean
         job_count:
@@ -2796,6 +2903,53 @@ components:
         updated_at:
           type: string
           format: date-time
+
+    SourceHealthEntry:
+      type: object
+      description: Ringkasan kesehatan satu sumber dari `GET /api/settings/sources/health`.
+      required: [source_id, company, enabled, verification_status, health_status, consecutive_failures, fetch_interval_minutes, daily_request_quota, requests_last_24h, stale]
+      properties:
+        source_id:
+          type: string
+        company:
+          type: string
+        enabled:
+          type: boolean
+        verification_status:
+          $ref: '#/components/schemas/SourceVerificationStatus'
+        health_status:
+          $ref: '#/components/schemas/SourceHealthStatus'
+        consecutive_failures:
+          type: integer
+          minimum: 0
+        last_error_code:
+          type: [string, 'null']
+        last_checked_at:
+          type: [string, 'null']
+          format: date-time
+        last_success_at:
+          type: [string, 'null']
+          format: date-time
+        next_run_at:
+          type: [string, 'null']
+          format: date-time
+        fetch_interval_minutes:
+          type: integer
+        daily_request_quota:
+          type: integer
+        requests_last_24h:
+          type: integer
+        stale:
+          type: boolean
+
+    SourceHealthList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SourceHealthEntry'
 
     SourceCreateRequest:
       type: object
@@ -2821,6 +2975,21 @@ components:
         enabled:
           type: boolean
           default: false
+        priority_order:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+        fetch_interval_minutes:
+          type: integer
+          minimum: 5
+          maximum: 43200
+          default: 360
+        daily_request_quota:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          default: 24
 
     SourceUpdateRequest:
       type: object
@@ -2846,6 +3015,18 @@ components:
           maxLength: 2000
         enabled:
           type: boolean
+        priority_order:
+          type: integer
+          minimum: 1
+          maximum: 1000
+        fetch_interval_minutes:
+          type: integer
+          minimum: 5
+          maximum: 43200
+        daily_request_quota:
+          type: integer
+          minimum: 0
+          maximum: 100000
 
     SourceList:
       type: object
@@ -3709,6 +3890,15 @@ components:
         url:
           type: string
           format: uri
+        text:
+          type: string
+          maxLength: 200000
+          description: |
+            Deskripsi lowongan yang ditempel pengguna, untuk halaman yang tidak
+            dapat diambil otomatis (403/429 atau shell JavaScript). Hanya boleh
+            dikirim bersama `url`; `url` tetap wajib karena menjadi identitas job
+            dan target Apply. Bila `text` diisi, halaman tidak di-fetch dan
+            `robots.txt` tidak diperiksa.
         language:
           type: string
           enum: [en, id]

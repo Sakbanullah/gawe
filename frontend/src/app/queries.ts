@@ -291,7 +291,9 @@ export function useApproveDocument() {
 }
 
 export function useCreateApplicationFromUrl() {
-  return useSetupMutation((url: string) => createApplicationFromUrl(url));
+  return useSetupMutation((args: { url: string; text?: string }) =>
+    createApplicationFromUrl(args.url, args.text),
+  );
 }
 
 export function useExports(applicationId: string | undefined) {

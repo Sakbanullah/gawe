@@ -46,7 +46,7 @@
         },
         "access_method": {
           "type": "string",
-          "enum": ["ats_api", "html", "manual_url"]
+          "enum": ["ats_api", "aggregator", "html", "manual_url"]
         }
       }
     },

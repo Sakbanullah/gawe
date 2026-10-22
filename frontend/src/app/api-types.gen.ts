@@ -350,6 +350,11 @@ export interface paths {
          * @description Mengembalikan job, eligibility, dan fit terbaru untuk profil aktif. Fit
          *     hanya ada bila eligibility `eligible`. `apply_url` berasal dari backend;
          *     klien tidak boleh menyusun URL sendiri.
+         *
+         *     Job yang sudah ditutup tidak lagi muncul di daftar Matches dan ditolak
+         *     `409 job_not_open`. Job yang tidak ada atau belum dianalisis tetap
+         *     `404 not_found`. Workspace aplikasi yang sudah ada tetap dapat dibuka
+         *     lewat `/api/applications/{application_id}`.
          */
         get: operations["getMatch"];
         put?: never;
@@ -379,6 +384,9 @@ export interface paths {
          *     tie-breaker pada ranking berikutnya; `fit_score`, eligibility, dan
          *     `ranking_run` yang sudah tersimpan tidak berubah. Kirim `tier: null`
          *     untuk menghapus koreksi dan kembali ke hasil klasifikasi backend.
+         *
+         *     Job yang sudah ditutup ditolak `409 job_not_open`: koreksi tier pada job
+         *     tertutup tidak akan pernah dibaca ranking run berikutnya.
          */
         patch: operations["overrideMatchTier"];
         trace?: never;
@@ -412,6 +420,10 @@ export interface paths {
          *     dengan `deduplicated: true` dan task aktif bila ada. Task yang dijalankan:
          *     fetch (bila `url`), simpan versi posting, requirement, eligibility, dan fit
          *     bila `eligible`.
+         *
+         *     Job yang sudah ditutup ditolak `409 job_not_open`, kecuali workspace untuk
+         *     job itu sudah ada: pemeriksaan workspace berjalan lebih dulu, sehingga
+         *     response tetap 200 `deduplicated`.
          */
         post: operations["createApplication"];
         delete?: never;
@@ -728,8 +740,8 @@ export interface paths {
          *     ekspor versi approved.
          *
          *     `409 pdf_not_available` bila belum ada PDF untuk versi ini. `503
-         *     toolchain_unavailable` bila mesin PDF belum tersedia (D6 OPEN); kontrak
-         *     tidak menetapkan mesin PDF tertentu.
+         *     toolchain_unavailable` bila mesin PDF belum tersedia; kontrak tidak
+         *     menetapkan mesin PDF tertentu (implementasi: Tectonic).
          */
         get: operations["previewDocumentPdf"];
         put?: never;
@@ -765,7 +777,7 @@ export interface paths {
          *     Task per application diserialisasi: task aktif lain untuk `application_id`
          *     yang sama menghasilkan `409 task_already_running` dengan `active_task_id`.
          *
-         *     Bila mesin PDF belum tersedia (D6 OPEN) atau toolchain tidak dapat dipakai,
+         *     Bila mesin PDF belum tersedia atau toolchain tidak dapat dipakai,
          *     request ditolak `503 toolchain_unavailable` sebelum task dibuat.
          */
         post: operations["createExport"];
@@ -866,8 +878,8 @@ export interface paths {
          *     `Idempotency-Key` 24 jam, yang merupakan mekanisme teknis dan bukan
          *     kebijakan retensi data pengguna.
          *
-         *     `toolchain` melaporkan status mesin PDF. D6 OPEN: tidak ada mesin PDF yang
-         *     diwajibkan kontrak dan ekspor PDF tidak dijanjikan sampai D6 diputuskan.
+         *     `toolchain` melaporkan status mesin PDF. Kontrak tidak mewajibkan satu
+         *     mesin; D6 diputuskan 2026-10-21 dengan Tectonic sebagai implementasi.
          */
         get: operations["getSettings"];
         put?: never;
@@ -1017,6 +1029,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/sources/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Kesehatan sumber dan pemakaian kuota
+         * @description Satu baris per sumber: status kesehatan, streak kegagalan, slot berikutnya,
+         *     dan pemakaian kuota 24 jam. Turunan dari percobaan fetch yang tercatat,
+         *     bukan penilaian terpisah.
+         */
+        get: operations["getSourceHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/sources/{source_id}": {
         parameters: {
             query?: never;
@@ -1048,7 +1082,7 @@ export interface components {
          * @description Kode error stabil. Nilai baru hanya ditambahkan, tidak diubah.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "not_found" | "csrf_invalid" | "conflict" | "version_conflict" | "idempotency_conflict" | "task_already_running" | "task_not_retryable" | "task_not_finished" | "profile_not_confirmed" | "profile_conflicts_unresolved" | "profile_version_mismatch" | "eligibility_not_eligible" | "eligibility_needs_review" | "assessment_failed" | "fit_not_available" | "document_not_approved" | "approval_hash_mismatch" | "approval_superseded" | "export_not_ready" | "pdf_not_available" | "review_unavailable" | "review_not_completed" | "compile_failed" | "toolchain_unavailable" | "provider_not_configured" | "provider_unavailable" | "provider_rate_limited" | "consent_required" | "url_rejected" | "source_not_verified" | "source_restricted" | "source_unavailable" | "source_unsupported" | "source_error" | "source_parse_failed" | "response_too_large" | "run_timeout" | "stale_run" | "no_enabled_sources" | "retry_scope_unsupported" | "ats_unavailable" | "ats_host_mismatch" | "duplicate_source" | "unsupported_media_type" | "payload_too_large" | "internal_error";
+        ErrorCode: "validation_failed" | "not_found" | "csrf_invalid" | "conflict" | "version_conflict" | "idempotency_conflict" | "task_already_running" | "task_not_retryable" | "task_not_finished" | "profile_not_confirmed" | "profile_conflicts_unresolved" | "profile_version_mismatch" | "eligibility_not_eligible" | "eligibility_needs_review" | "job_not_open" | "assessment_failed" | "fit_not_available" | "document_not_approved" | "approval_hash_mismatch" | "approval_superseded" | "export_not_ready" | "pdf_not_available" | "review_unavailable" | "review_not_completed" | "compile_failed" | "toolchain_unavailable" | "provider_not_configured" | "provider_unavailable" | "provider_rate_limited" | "consent_required" | "url_rejected" | "source_not_verified" | "source_restricted" | "source_unavailable" | "source_unsupported" | "source_error" | "source_parse_failed" | "response_too_large" | "run_timeout" | "stale_run" | "no_enabled_sources" | "retry_scope_unsupported" | "ats_unavailable" | "ats_host_mismatch" | "duplicate_source" | "robots_disallowed" | "manual_page_unreadable" | "source_quota_exhausted" | "empty_snapshot" | "all_records_invalid" | "payload_truncated" | "invalid_ratio_high" | "partial_snapshot" | "unsupported_media_type" | "payload_too_large" | "internal_error";
         ErrorDetail: {
             /** @description Nama field request. Bukan path filesystem. */
             field?: string | null;
@@ -1144,13 +1178,20 @@ export interface components {
         /**
          * @description Diagnosis per sumber. `skipped` adalah record payload yang dibuang adapter
          *     sebelum normalisasi; `invalid` gagal normalisasi; `truncated` deskripsinya
-         *     dipotong; `stale` datanya ditandai basi.
+         *     dipotong; `stale` datanya ditandai basi; `requests` adalah jumlah HTTP
+         *     request yang benar-benar dipakai (sama dengan kuota); `skip_reasons`
+         *     memecah `skipped` per alasan, mis. `missing_company` atau
+         *     `duplicate_guid`.
          */
         SourceProgressStats: {
             skipped: number;
             invalid: number;
             truncated: number;
             stale: number;
+            requests?: number;
+            skip_reasons?: {
+                [key: string]: number;
+            };
         };
         RetryInfo: {
             retryable: boolean;
@@ -1367,20 +1408,30 @@ export interface components {
         /** @enum {string} */
         SourceVerificationStatus: "unverified" | "verified" | "restricted" | "broken";
         /**
+         * @description Turunan dari streak kegagalan, bukan tebakan: `unknown` belum ada
+         *     percobaan, `healthy` percobaan terakhir sukses, `degraded` 1-2 gagal
+         *     berurutan, `broken` 3 atau lebih gagal berurutan.
+         * @enum {string}
+         */
+        SourceHealthStatus: "unknown" | "healthy" | "degraded" | "broken";
+        /**
          * @description `manual_url` adalah sumber sintetis sistem (`source_id: manual_url`), bukan
          *     entri registry yang dibuat pengguna. Entri registry buatan pengguna memakai
-         *     `UserManagedAccessMethod`.
+         *     `UserManagedAccessMethod`. `aggregator` menandai feed lintas perusahaan
+         *     (mis. Himalayas) yang memakai adapter resmi.
          * @enum {string}
          */
-        SourceAccessMethod: "ats_api" | "html" | "manual_url";
+        SourceAccessMethod: "ats_api" | "aggregator" | "html" | "manual_url";
         /**
          * @description Metode akses yang boleh dipilih pengguna saat membuat/mengubah entri source
-         *     registry. `manual_url` tidak termasuk karena dikelola sistem.
+         *     registry. `ats_api` untuk board satu perusahaan, `aggregator` untuk feed
+         *     lintas perusahaan. `html` ditolak di write time karena tidak ada adapter
+         *     yang dapat mengambilnya. `manual_url` tidak termasuk karena dikelola sistem.
          * @enum {string}
          */
-        UserManagedAccessMethod: "ats_api" | "html";
+        UserManagedAccessMethod: "ats_api" | "aggregator";
         /** @enum {string} */
-        SourceAts: "greenhouse" | "lever" | "ashby" | "unknown";
+        SourceAts: "greenhouse" | "lever" | "ashby" | "himalayas" | "unknown";
         /** @enum {string} */
         SourceMarket: "indonesia" | "global";
         /**
@@ -1402,12 +1453,59 @@ export interface components {
             tos_notes?: string | null;
             /** Format: date-time */
             last_checked_at?: string | null;
+            /**
+             * Format: date-time
+             * @description Waktu fetch sukses terakhir. Dasar perhitungan `stale`.
+             */
+            last_success_at?: string | null;
+            health_status: components["schemas"]["SourceHealthStatus"];
+            /** @description Jumlah kegagalan berurutan. Direset ke 0 setelah sukses. */
+            consecutive_failures: number;
+            /** @description Kode error fetch terakhir, atau null bila percobaan terakhir sukses. */
+            last_error_code?: string | null;
+            /**
+             * Format: date-time
+             * @description Slot berikutnya. Null berarti sumber langsung due.
+             */
+            next_run_at?: string | null;
+            /** @description Urutan eksekusi scheduler; kecil lebih dulu. */
+            priority_order: number;
+            fetch_interval_minutes: number;
+            /** @description Batas percobaan fetch per 24 jam. 0 berarti tanpa batas. */
+            daily_request_quota: number;
+            /** @description Jumlah percobaan fetch tercatat dalam 24 jam terakhir. */
+            requests_last_24h: number;
+            /** @description True bila tidak ada fetch sukses selama 7 hari. */
+            stale?: boolean;
             enabled: boolean;
             job_count?: number;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        /** @description Ringkasan kesehatan satu sumber dari `GET /api/settings/sources/health`. */
+        SourceHealthEntry: {
+            source_id: string;
+            company: string;
+            enabled: boolean;
+            verification_status: components["schemas"]["SourceVerificationStatus"];
+            health_status: components["schemas"]["SourceHealthStatus"];
+            consecutive_failures: number;
+            last_error_code?: string | null;
+            /** Format: date-time */
+            last_checked_at?: string | null;
+            /** Format: date-time */
+            last_success_at?: string | null;
+            /** Format: date-time */
+            next_run_at?: string | null;
+            fetch_interval_minutes: number;
+            daily_request_quota: number;
+            requests_last_24h: number;
+            stale: boolean;
+        };
+        SourceHealthList: {
+            items: components["schemas"]["SourceHealthEntry"][];
         };
         SourceCreateRequest: {
             company: string;
@@ -1419,6 +1517,12 @@ export interface components {
             tos_notes?: string;
             /** @default false */
             enabled: boolean;
+            /** @default 100 */
+            priority_order: number;
+            /** @default 360 */
+            fetch_interval_minutes: number;
+            /** @default 24 */
+            daily_request_quota: number;
         };
         SourceUpdateRequest: {
             company?: string;
@@ -1430,6 +1534,9 @@ export interface components {
             verification_status?: components["schemas"]["SourceVerificationStatus"];
             tos_notes?: string;
             enabled?: boolean;
+            priority_order?: number;
+            fetch_interval_minutes?: number;
+            daily_request_quota?: number;
         };
         SourceList: {
             items: components["schemas"]["SourceRegistryEntry"][];
@@ -1840,6 +1947,14 @@ export interface components {
             job_id?: string;
             /** Format: uri */
             url?: string;
+            /**
+             * @description Deskripsi lowongan yang ditempel pengguna, untuk halaman yang tidak
+             *     dapat diambil otomatis (403/429 atau shell JavaScript). Hanya boleh
+             *     dikirim bersama `url`; `url` tetap wajib karena menjadi identitas job
+             *     dan target Apply. Bila `text` diisi, halaman tidak di-fetch dan
+             *     `robots.txt` tidak diperiksa.
+             */
+            text?: string;
             /** @enum {string} */
             language?: "en" | "id";
         } & ({
@@ -1956,8 +2071,8 @@ export interface components {
             /**
              * @description `exported`: PDF berhasil dan file final tercatat. `tex_only`: sumber
              *     LaTeX tersimpan tetapi PDF tidak dihasilkan. `failed`: tidak ada
-             *     artefak final yang dapat diunduh. Mesin PDF tidak ditetapkan kontrak
-             *     (D6 OPEN).
+             *     artefak final yang dapat diunduh. Mesin PDF tidak diwajibkan kontrak
+             *     (implementasi: Tectonic).
              * @enum {string}
              */
             status: "exported" | "tex_only" | "failed";
@@ -2097,7 +2212,7 @@ export interface components {
             items: components["schemas"]["RetentionItem"][];
         };
         /**
-         * @description Status mesin PDF. D6 OPEN: kontrak tidak menetapkan mesin PDF tertentu dan
+         * @description Status mesin PDF. Kontrak tidak menetapkan mesin PDF tertentu dan
          *     tidak menjamin satu mesin tersedia. `pdf_engine` melaporkan konfigurasi
          *     runtime, bukan keputusan produk.
          */
@@ -2110,7 +2225,7 @@ export interface components {
             /** @enum {string} */
             status: "available" | "unavailable" | "unknown";
             /**
-             * @description Status keputusan D6. Selama OPEN, ekspor PDF tidak dijanjikan.
+             * @description Status keputusan D6. Bila open, ekspor PDF tidak dijanjikan.
              * @enum {string}
              */
             decision_status: "open" | "decided";
@@ -2828,6 +2943,15 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            /** @description Job ada tetapi sudah ditutup. Kode error `job_not_open`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             500: components["responses"]["InternalError"];
         };
     };
@@ -3834,6 +3958,27 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
             413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    getSourceHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ringkasan kesehatan sumber. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceHealthList"];
+                };
+            };
             500: components["responses"]["InternalError"];
         };
     };

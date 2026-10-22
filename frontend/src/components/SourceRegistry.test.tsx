@@ -28,6 +28,16 @@ function source(overrides: Partial<SourceRegistryEntry> = {}): SourceRegistryEnt
     verification_status: "verified",
     tos_notes: null,
     last_checked_at: "2026-10-20T00:00:00Z",
+    last_success_at: "2026-10-20T00:00:00Z",
+    health_status: "healthy",
+    consecutive_failures: 0,
+    last_error_code: null,
+    next_run_at: "2026-10-20T06:00:00Z",
+    priority_order: 100,
+    fetch_interval_minutes: 360,
+    daily_request_quota: 24,
+    requests_last_24h: 1,
+    stale: false,
     enabled: true,
     job_count: 12,
     created_at: "2026-10-19T00:00:00Z",
@@ -99,6 +109,9 @@ describe("SourceRegistry", () => {
         access_method: "ats_api",
         tos_notes: undefined,
         enabled: false,
+        priority_order: 100,
+        fetch_interval_minutes: 360,
+        daily_request_quota: 24,
       }),
     );
   });
@@ -124,10 +137,14 @@ describe("SourceRegistry", () => {
           careers_url: "https://jobs.lever.co/acme",
           market: "global",
           ats: "greenhouse",
-          access_method: "ats_api",
           verification_status: "verified",
         }),
       ),
+    );
+    // Unchanged, so not resent: a legacy row may still hold an access method the
+    // request contract no longer accepts.
+    expect(vi.mocked(api.updateSource).mock.calls[0][1]).not.toHaveProperty(
+      "access_method",
     );
   });
 
