@@ -46,7 +46,7 @@ Rekomendasi `PLAN.md` §8:
 
 ## 4. Isolasi
 
-- Database test memakai schema MySQL khusus per test run dengan prefix `gawe_test_`; suite tidak pernah memakai, mengubah, atau menghapus schema pengembangan.
+- Database test memakai schema MySQL khusus `gawe_test_main` (nama tetap, dipakai ulang antar run); suite tidak pernah memakai, mengubah, atau menghapus schema pengembangan. Nama tetap dipilih 2026-10-22 agar hasil `SHOW SCHEMAS` tidak menumpuk; isolasi antar test tetap dijamin `TRUNCATE`, bukan schema baru per run.
 - Nama schema divalidasi sebelum operasi destruktif: hanya `gawe_test_*` yang boleh di-`DROP`, dan nama sistem ditolak.
 - Schema test dibersihkan setelah run. Bila koneksi gagal, cleanup tidak dijalankan dan schema dibiarkan untuk diagnosis.
 - Data antar test diisolasi dengan `TRUNCATE` tabel (kecuali `schema_version`), bukan dengan schema baru per test.

@@ -552,7 +552,7 @@ Perubahan kode: `backend/src/gawe/jobs/sources/greenhouse.py` (mapping `apply_ur
 - Tidak ada perubahan formula, bobot, eligibility, atau tier. Rekomendasi menunggu persetujuan pengguna.
 
 
-### Phase 3 � writer LLM, reviewer LLM, dan loop revisi otomatis (2026-10-21)
+### Phase 3 — writer LLM, reviewer LLM, dan loop revisi otomatis (2026-10-21)
 
 Kode: `documents/ai_draft.py` (baru), `documents/ai_review.py` (baru), `llm/prompts.py` (baru, loader generik), `services/document_service.py` (loop, penghitung iterasi global, gate approval), `api/routes/documents.py` (wiring), `cli.py` (validasi prompt saat `serve`).
 Prompt runtime: `docs/phase-00/prompts/{write_cv,write_cover_letter,review}.md` versi 0.2.0.
@@ -571,3 +571,208 @@ Batasan:
 - Ambang skor 8.0 **belum dikalibrasi**. `temporary/review-samples/CHECKLIST.md` masih kosong; dua sampel yang disetujui belum dinilai dengan rubric baru.
 - Frontend belum menampilkan skor, dimensi, `gaps`, atau `stop_reason`. Backend sudah mengirimnya di `findings`.
 - `docs/phase-00/prompts/` (runtime) dan `prompts/` (spesifikasi pengguna) masih duplikat; runtime memakai yang pertama.
+
+---
+
+## Run 2026-10-22 - perbaikan enam bug (geo scope, dedupe, priority recompute, ETag)
+
+Command: `cd D:\gawe\backend; .\.venv\Scripts\python.exe -m pytest --no-header -p no:cacheprovider --tb=no -q -o addopts=""`
+
+Working directory: `D:\gawe\backend`
+
+- Result: **406 passed, 2 skipped, 1 warning in 84.47s**, exit code 0.
+- 2 skip = dua test live provider opt-in (`tests/test_live_9router.py`), alasan: `set GAWE_LIVE_9ROUTER=1`.
+- Sebelumnya (2026-10-21): `356 passed, 2 skipped in 68.66s`. Selisih +45 test dari test baru untuk `location_key`, region guard dedupe, `geo_scope`, gate geo di eligibility, dan ETag/304.
+- Schema test: `gawe_test_main` (nama tetap). MySQL 8.0.30 dijalankan ulang manual (`D:\laragon\bin\mysql\mysql-8.0.30-winx64\bin\mysqld.exe --defaults-file=...my.ini`) setelah server restart.
+
+Data nyata di schema `gawe` (102 job, 3 sumber):
+
+- Fingerprint dihitung ulang: **63 dari 102** baris berubah. Tanpa backfill, dedupe lintas sumber melewatkan pasangan lama-baru.
+- `duplicate_of` di-reset lalu dihitung ulang: **0 duplikat**. Dua penggabungan salah sebelumnya (`Support Engineer AMER -> EMEA`, `Database Support Engineer AMER -> EMEA`) hilang.
+- Priority tier: P2 **84 -> 38**, `unclassified` 18 -> 64. 46 job turun karena memang terkunci region.
+- Eligibility setelah reassess penuh 102 job: `eligible` **18**, `needs_review` **36**, `ineligible` **48**. Sebelumnya `eligible` 32, `needs_review` 18, `ineligible` 50.
+- Ranking: 18 job di section `eligible`, primary `fit_score_desc`, tie-breaker `priority_tier`.
+
+Batasan:
+- Angka 27 job geo-locked berasal dari 3 perusahaan US/EU-sentris (Linear, PostHog, Supabase). Regex `GEO_LOCK`/`DESCRIPTION_LOCK` harus divalidasi ulang saat Phase 4 menambah sumber.
+- `work_preferences.relocation` di profil aktif masih `unknown`, bukan `conditional`. Belum ada endpoint edit preferensi; harus diperbaiki lewat koreksi profil.
+- ETag hanya aktif pada jalur HTTP nyata. Test memakai fetcher injeksi, jadi header diuji terpisah lewat monkeypatch opener.
+- `fit_score` untuk job `needs_review` tidak dihitung, sesuai aturan; 36 job karena itu tidak punya skor.
+
+
+
+---
+
+## Run 2026-10-22 - market dari geo_scope dan relokasi terjangkau
+
+Command: `cd D:\gawe\backend; .\.venv\Scripts\python.exe -m pytest --no-header -p no:cacheprovider --tb=short -q -o addopts=""`
+
+- Result: **423 passed, 2 skipped, 1 warning in 104.91s**, exit code 0.
+- 2 skip = test live provider opt-in (`tests/test_live_9router.py`).
+- Sebelumnya: 406 passed. +17 test baru: `geo_region` (8 kasus), `reachable_by_relocation` (7 kasus), catatan relokasi di gate (2 kasus), `market_from_scope` (7 asersi).
+- `tests/test_assessment.py` sendiri: 96 passed. `tests/test_discovery_adapters.py` + `test_assessment.py`: 127 passed.
+
+Perubahan:
+
+- `priority.py`: `REGIONS` (indonesia, sea, oceania, apac, amer, emea; urut tersempit dulu), `REGION_LABELS`, `geo_region()`, `RELOCATION_REACHABLE`, `reachable_by_relocation()`, `MARKET_BY_SCOPE`, `market_from_scope()`.
+- `jobs/sources/base.py`: `normalize()` mengisi `market` dari `market_from_scope()`; `market_from_location()` dihapus.
+- `eligibility/evaluate.py`: `region_locked` di region terjangkau-relokasi + `relocation` = `conditional`/`yes` memberi catatan relokasi. `_location()` tidak lagi bilang "belum dapat dipastikan" saat preferensi sudah diketahui.
+
+Data nyata (`gawe`, 102 job):
+
+- `job.market`: `unknown` 102 -> **`global` 37, `unknown` 65**. Filter Pasar di Job Matches kini menyaring 37 dari 102.
+- Status tidak berubah: `eligible` 18, `needs_review` 37, `ineligible` 47. Gate geo hanya menyala saat status semula `eligible`, dan enam job Singapura/Australia sudah bukan `eligible` karena alasan lain.
+- Bukti perilaku relokasi (unit test): `Singapore` + `relocation=conditional` -> `needs_review` dengan catatan relokasi; `Remote, EMEA`/`Remote, AMER` -> catatan region generik; `Remote, Global` -> `eligible`.
+
+Batasan:
+
+- Empat job `Remote, APAC` berlabel `market=global`, karena `market` hanya punya tiga nilai. Tidak akurat, tetapi lebih baik daripada 102 `unknown`. `geo_region` sudah tersedia untuk filter yang lebih tajam bila dibutuhkan.
+- Catatan relokasi hanya muncul pada lowongan yang status semula `eligible`. Tiga job Singapura yang `needs_review` karena tidak punya must-have tidak menampilkan catatan relokasi.
+- `region_locked` 60 job tetapi catatan geo hanya terlihat di 14; sisanya tertutup alasan lain di `reason_summary`. Perbaikan visibilitas ini belum dikerjakan.
+
+---
+
+## Run 2026-10-22 - fallback URL manual: parser hardening + teks tempel (Tier A+B)
+
+Command backend: `cd D:\gawe\backend; .venv\Scripts\python.exe -m pytest`
+Command frontend: `cd D:\gawe\frontend; npx vitest run` dan `npx tsc --noEmit` dan `npx vite build`
+
+- Backend: **444 passed, 2 skipped, 1 warning in 94.27s**, exit code 0. Diulang setelah `_stable_id` memakai `canonical_url`: **444 passed, 2 skipped in 103.35s**, exit code 0.
+- Frontend: **42 passed (7 files) in 9.03s**; `tsc --noEmit` tanpa output (lulus); `vite build` sukses in 3.23s (warning chunk >500 kB, sudah ada sebelumnya).
+- 2 skip = test live provider opt-in (`tests/test_live_9router.py`).
+- Sebelumnya 423 passed. +21 test baru di `backend/tests/test_manual_fallback.py` dan 1 test frontend baru (teks tempel).
+
+Perubahan:
+
+- `jobs/sources/manual.py`: `MIN_DESCRIPTION_CHARS`, `SCRIPT_SHELL_HTML_MIN`, `SCRIPT_SHELL_TEXT_RATIO`, `_canonical_url()` (og:url hanya bila host sama + https + tanpa kredensial), `_looks_like_js_shell()`, `from_text()`; `parse()` membaca JSON-LD sebelum heuristik shell dan memberi pesan "renders its content with JavaScript"; `_stable_id()` memakai `normalize.canonical_url()` sehingga `utm_*`/`gh_src`/`ref` dan trailing slash tidak memecah identitas job.
+- `services/discovery_service.py`: `ingest_manual_url(..., text=None)`; jalur teks tidak fetch dan tidak cek robots, `source_fetch.http_status/final_url/etag` bernilai NULL, stats `manual_text: 1`.
+- `services/application_service.py`: `create_from_url(..., text=None)`.
+- `api/routes/applications.py`: `text` (max 200000) hanya boleh bersama `url`.
+- `openapi.yaml`: `CreateApplicationRequest.text`, ErrorCode + `robots_disallowed`, `manual_page_unreadable`.
+- `API-CONTRACTS.md`: tabel error dilengkapi (source_unsupported, source_error, source_parse_failed, response_too_large, run_timeout, stale_run, no_enabled_sources, retry_scope_unsupported, ats_unavailable, ats_host_mismatch, robots_disallowed, manual_page_unreadable) dan §3.4 catatan `text`.
+- `JOB-DISCOVERY.md` §4.4/§10: teks tempel sebagai jalur fallback.
+- Frontend: `createApplicationFromUrl(url, text?)`, `useCreateApplicationFromUrl({url, text})`, `ApplicationsPage` textarea toggle + `Textarea`.
+
+Batasan:
+
+- `text` tidak dipakai untuk mengarang URL: `url` tetap wajib (normalize menolak canonical_url non-https).
+- Deteksi shell JS memakai rasio teks/markup (0.02) dan panjang minimum 2000 karakter; belum diuji pada halaman nyata.
+- Adapter HTML registry (`access_method=html`) tetap tidak ada dan tetap di-skip.
+
+---
+
+## Run 2026-10-22 - Phase 4 infra: health/backoff/kuota, paging SQL, scheduler
+
+Command backend: `cd D:\gawe\backend; .\.venv\Scripts\python.exe -m pytest --tb=short`
+Command frontend: `cd D:\gawe\frontend; npx vitest run`, `npx tsc --noEmit`, `npm run build`
+
+- Backend: **455 passed, 2 skipped, 1 warning in 111.31s**, exit code 0 (wall 115.10s). Diukur setelah test tambahan `test_matches_hidden_count_and_search_run_in_sql` dan penghapusan `AssessmentService.matches()` yang tidak terpakai.
+- Frontend: **42 passed (7 files) in 11.76s**; `tsc --noEmit` tanpa output (lulus); `vite build` sukses in 1.02s (warning chunk >500 kB, sudah ada sebelumnya).
+- 2 skip = test live provider opt-in (`tests/test_live_9router.py`).
+- Sebelumnya 444 passed. +11 test baru: 10 di `backend/tests/test_source_health.py`, 1 di `backend/tests/test_assessment.py`. Satu test lama `test_html_source_may_stay_unverified_without_an_adapter` diganti menjadi `test_html_source_is_rejected_because_no_adapter_can_fetch_it` (perilaku berubah dengan sengaja).
+
+Perubahan:
+
+- `db/migrations/0013_source_schedule.sql`: kolom jadwal/kesehatan `source_registry`, `job.posted_at_epoch` + backfill, tabel `job_rank`, indeks `idx_source_registry_due`/`idx_run_source_quota`/`idx_job_matches`/`idx_eligibility_profile_status`/`idx_job_posted_epoch`.
+- `jobs/health.py` (baru): `status_from`, `next_run_at`, `retry_at` (backoff `interval x 2^(failure-1)`, faktor maks 8, `Retry-After` sebagai lantai), `is_due`, `quota_exhausted`.
+- `jobs/sources/registry.py`: `ACCESS_METHODS = {"ats_api"}` (`html` ditolak saat write, detail `access_method_unsupported`), `record_outcome`, `due()`, `_to_public` memuat kesehatan/jadwal/kuota/`stale`; kuota dihitung dari `discovery_run_source.last_attempt_at` (bukan `source_fetch`, karena 304 tidak menulis baris fetch).
+- `jobs/sources/base.py`: `ParsedJobs.complete`.
+- `jobs/fetch.py`: `FetchError.retry_after_s` + parsing header `Retry-After` (cap 24 jam).
+- `services/discovery_service.py`: `record_outcome` per percobaan (sukses, gagal, 304), skip `source_quota_exhausted`, guard `partial_snapshot` sebelum menutup lowongan, `due_only`, `posted_at_epoch` ditulis pada insert dan update.
+- `services/assessment_service.py`: `matches_page` (filter + order + keyset paging di SQL), `count_matches`, `match_row`, `_store_rank_rows` (hanya section `eligible`), `match()` memakai `match_row`.
+- `services/scheduler.py` (baru): `DiscoveryScheduler`, thread tunggal, koneksi sendiri, default mati.
+- `api/routes/sources.py`: `access_method: Literal["ats_api"]`, field prioritas/interval/kuota, `GET /api/settings/sources/health`.
+- `api/routes/matches.py`: memakai `matches_page`; helper in-memory `_keep`/`_order`/`_sort_key`/`_epoch`/`_offset_after` dihapus.
+- `api/app.py`: lifespan start/stop scheduler bila `scheduler_enabled`.
+- `config.py`: `scheduler_enabled` (default false), `schedule_interval_seconds` (default 900).
+- `openapi.yaml` + `API-CONTRACTS.md` + `JOB-DISCOVERY.md` + `ARCHITECTURE.md` + `DATABASE.md` + `PHASE-04.md` disesuaikan.
+- `api-types.gen.ts` diregenerasi (`npm run gen:api`).
+- Frontend `SourceRegistry.tsx`: kolom Kesehatan dan Kuota 24 jam, input Prioritas/Interval/Kuota di modal edit, opsi `html` dihapus dari select.
+
+Batasan:
+
+- Scheduler default mati; belum ada test yang menjalankan thread-nya end-to-end (test hanya memeriksa `tick()` tanpa profil confirmed dan `due()`).
+- `posted_at_epoch` untuk data lama di-backfill memakai `UNIX_TIMESTAMP` (zona waktu sesi MySQL), jadi bisa bergeser konstan; urutan relatif tetap benar.
+- Ranking run yang dibuat sebelum migrasi 0013 tidak punya baris `job_rank`, sehingga `sort=ranking` jatuh ke urutan tier sampai ranking dihitung ulang.
+- `source_quota_exhausted` dihitung per run attempt, bukan per request HTTP; adapter dengan dua request per attempt (robots + halaman) belum ada di jalur ATS.
+
+## Run 2026-10-22 - Tahap A-C: berburu lowongan (company per record, job closed, kuota request)
+
+Superseded oleh bagian berikutnya. Hasil saat itu: backend **494 passed in 108.14s**,
+frontend **45 passed in 6.56s**, `tsc --noEmit` bersih. Test `test_himalayas_run.py`
+belum berjumlah 8 dan `test_sources.py` belum punya 3 test aggregator pada saat itu.
+
+## Run 2026-10-22 - Tahap D/E/F + Tahap G BLOCKED (adapter Himalayas, indikator completeness)
+
+Perintah dan hasil aktual:
+- `backend\.venv\Scripts\python.exe -m pytest tests --ignore=tests/test_live_9router.py -o addopts=""` -> **497 passed, 1 warning in 105.01s**, exit 0.
+- `npx tsc --noEmit` (cwd `frontend`) -> tanpa output (lulus).
+- `npx vitest run` (cwd `frontend`) -> **45 passed (7 files) in 8.37s**, exit 0.
+- Tidak ada kegagalan. `tests/test_live_9router.py` tidak dijalankan (butuh provider nyata, opt-in).
+
+Test baru:
+- `tests/test_himalayas_adapter.py` 17 test: company dari `companyName`/slug `guid`, drop `missing_company`, `apply_url` apa adanya, `posted_at` unknown + `missing_fields`, `complete=False`, dedupe guid antar halaman, cursor URL, batas 5 halaman/20 per halaman, API key opsional dari env, payload tanpa `jobs` ditolak.
+- `tests/test_himalayas_run.py` 8 test: 5 halaman = 5 request (`request_count`, `requests_last_24h`), `partial_snapshot` tidak menutup job, evidence manifest halaman tanpa payload, company per record, `skip_reasons` di stats, kuota 4 < 5 skip whole tanpa request, kegagalan di halaman ke-3 tetap menghitung 3 request, kegagalan tidak menutup job.
+- `tests/test_sources.py` +3 test: aggregator butuh `access_method=aggregator`, ATS perusahaan tidak boleh `aggregator`, `careers_url` aggregator harus host sendiri.
+- `frontend/src/pages/MatchesPage.test.tsx` +2 test: dua teks completeness tampil di tabel dan drawer, field lain di `missing_fields` tidak dirender, dan tidak tampil bila field lengkap.
+
+Perubahan kode:
+- `jobs/sources/himalayas.py` (baru): adapter agregator, cursor pagination, `MAX_REQUESTS=5`, `PAGE_LIMIT=20`, company per record, `headers()` dari `GAWE_HIMALAYAS_API_KEY`.
+- `jobs/fetch.py`: `fetch_pages` (menghitung request aktual, menempel `requests` pada error), `http_fetch(extra_headers=...)`, import `AdapterError`.
+- `services/discovery_service.py`: `_fetch_one` memakai `fetch_pages`/`parse_pages`, `_pages_manifest`, `_SourceResult.raw`/`skip_reasons`, stats `requests`+`skip_reasons`, `_skip_reason` menerima `aggregator`.
+- `jobs/sources/base.py`: `ParsedJobs.skip_reasons`, `normalize` memakai `company_of` dan menambah `company_name`/`posted_at` ke `missing_fields`.
+- `jobs/sources/registry.py`: `ACCESS_METHODS={ats_api,aggregator}`, `AGGREGATOR_ATS`, validasi silang ATS/metode.
+- `api/routes/sources.py`: `AccessMethod`/`Ats` diperluas.
+- `frontend`: opsi ATS Himalayas + metode Aggregator, atribusi Himalayas di Settings dan drawer detail, indikator completeness di tabel dan drawer.
+- Dokumen: `openapi.yaml` (`SourceAccessMethod`, `UserManagedAccessMethod`, `SourceAts`, `SourceProgressStats`), `job.schema.json`, `API-CONTRACTS.md`, `JOB-DISCOVERY.md`, `DECISIONS.md` (blocker retensi), `.env.example`.
+- Catatan baru: `docs/notes/himalayas-clarification.md` (email **BELUM TERKIRIM**), `docs/notes/himalayas-status-check-rotation.md` (Tahap G **BLOCKED** + tabel kasus uji).
+
+Status DB dev (dibaca langsung):
+- `schema_version` = `0014_source_request_count`; migrasi terakhir: `0012_export`, `0013_source_schedule`, `0014_source_request_count`.
+- `source_registry`: 3 sumber, semuanya `ats_api` (ashby: Linear, PostHog, Supabase), `verified`, `enabled=1`.
+- **Tidak ada entri Himalayas**: adapter terdaftar di kode, sumber belum diaktifkan.
+- `job` = 102 baris, `status='closed'` = 0.
+
+Batasan:
+- `410 Gone` belum pernah teramati (3/3 sampel `200`).
+- Test adapter memakai fixture tersimpan, bukan jaringan; tidak ada klaim kepatuhan ToS.
+- Tahap G tidak diimplementasikan: `BLOCKED` oleh retensi (OPEN), ketiadaan penanda cek status, dan belum teramatinya `410`.
+- Gate Phase 3 utuh (`FETCHABLE = "verified"`); Phase 4 belum dinyatakan lulus.
+
+## Run 2026-10-22 - Audit A-F: probe terarah (dua temuan)
+
+Probe sementara dijalankan lalu dihapus. Bukan bagian suite; tidak ada file uji permanen yang berubah.
+
+1) `backend\.venv\Scripts\python.exe -m pytest tests/test_tmp_audit_closed_docs.py -o addopts="" -x -q -s` -> **1 passed, 1 warning in 4.46s**.
+   - Skenario: buat workspace untuk job `eligible`, lalu `UPDATE job SET status='closed'`, lalu `POST /api/applications/{id}/documents` dengan `kinds=["cv"]`.
+   - Hasil: `GET /api/applications/{id}` -> **200**; `POST .../documents` -> **404** `not_found` "Job workspace belum dianalisis."
+   - Arti: `document_service._job_context` memanggil `detail()` tanpa `include_closed=True`, jadi generate/regenerate/review dokumen gagal setelah job ditutup. Bertentangan dengan D4 "workspace existing tetap terbuka".
+
+2) `backend\.venv\Scripts\python.exe -m pytest tests/test_tmp_audit_legacy.py -o addopts="" -x -q -s` -> **1 passed, 1 warning in 2.89s**.
+   - Skenario: baris legacy `access_method='html'` disisipkan langsung ke `source_registry`.
+   - Hasil: `PATCH {"enabled": false}` -> **200**. `PATCH` dengan payload penuh seperti modal UI (termasuk `access_method: "html"`) -> **400** `validation_failed` `literal_error`.
+   - Arti: baris legacy `html` masih bisa dinonaktifkan lewat tombol Nonaktifkan, tetapi tidak bisa disimpan lewat modal Edit karena modal selalu mengirim `access_method`.
+
+Tidak ada test suite yang dijalankan ulang pada audit ini. Hasil suite terakhir tetap 497 passed / 45 vitest (lihat run sebelumnya).
+
+## 2026-10-22 18:5x - Verifikasi perbaikan audit B1/B4-B9 + keputusan dokumentasi
+
+### Backend (targeted regression, bukan full suite)
+Perintah:
+`backend\.venv\Scripts\python.exe -m pytest tests/test_sources.py tests/test_closed_jobs.py tests/test_documents.py tests/test_himalayas_adapter.py tests/test_himalayas_run.py tests/test_assessment.py tests/test_discovery.py tests/test_discovery_adapters.py tests/test_discovery_dedupe.py tests/test_api.py tests/test_project_rules.py -o addopts="" -q`
+
+- Hasil: **285 passed, 0 failed, 0 skipped, 1 warning** (exit code 0). Diukur dengan `-o addopts="" -q`, karena `addopts = "-q"` di pyproject membuat `-q` ganda dan menyembunyikan baris ringkasan.
+- Durasi aktual: **63.42 s** (wall 67.4 s).
+- Perubahan yang dicakup: `_job_context(include_closed=True)` + regression test generate/review pada job closed; `counts().fit_computed` difilter `status='open'`; `himalayas._location` mengembalikan `None` (bukan `Remote - Worldwide`); konstanta mati dihapus; komentar 100 record; re-gate binding di `registry.update` hanya saat nilai berubah + test baris legacy `html`.
+- Tidak ada kegagalan. Satu warning `StarletteDeprecationWarning` (httpx/testclient), sudah ada sebelumnya.
+
+### Frontend
+- `npx tsc --noEmit` -> bersih (exit 0).
+- `npx vitest run` -> **7 files, 45 passed, 0 failed**, 8.98 s.
+- Perubahan yang dicakup: modal Edit tidak lagi mengirim `access_method` bila tidak berubah; assertion test diperbarui dan menegaskan properti itu absen.
+
+### Catatan
+- Full suite backend tidak dijalankan ulang pada langkah ini; bukti 497 passed tetap yang terakhir untuk cakupan penuh.
+- `docs/README.md` dipulihkan lewat `git checkout`; `README.md` root dihapus, sehingga link relatif kembali benar.
+- `prompts/` dipindah ke `temporary/prompts-stray/` (gitignored, tidak ikut commit).
+- `test_fit_count_skips_closed_jobs` diverifikasi dengan mutasi balik: menghapus filter `j.status = 'open'` membuat test gagal (`assert 2 == 1`), lalu file dipulihkan.

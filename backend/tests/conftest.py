@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import os
-import uuid
 from pathlib import Path
 
 import pytest
@@ -12,8 +11,10 @@ from gawe.api.app import create_app
 from gawe.config import DatabaseConfig, load_config
 from gawe.db import repo
 
-# One schema per test run. The prefix is required for any destructive cleanup.
-TEST_SCHEMA = f"{repo.TEST_SCHEMA_PREFIX}{uuid.uuid4().hex[:12]}"
+# One fixed test schema, reused by every run. A random name per run left a
+# schema behind on any interrupted run, so the database filled with
+# `gawe_test_*` copies. Override with GAWE_TEST_SCHEMA for a parallel run.
+TEST_SCHEMA = os.environ.get("GAWE_TEST_SCHEMA", f"{repo.TEST_SCHEMA_PREFIX}main")
 
 CONFIG_TEMPLATE = f"""
 [server]
