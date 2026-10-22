@@ -143,6 +143,7 @@ Entity dan relasi lengkap ada di [`../domains/DATABASE.md`](../domains/DATABASE.
 - State di MySQL dan file; browser hanya view/control.
 - Tugas panjang (fetch, parsing, generate, compile, ekspor) berjalan sebagai background task in-process dengan progress dan status.
 - Tidak ada queue eksternal untuk v1.
+- Discovery terjadwal memakai satu thread in-process (`DiscoveryScheduler`) yang memanggil `DiscoveryService.start_run` yang sama dengan tombol manual. Thread membuka koneksi sendiri, tidak berbagi koneksi request, dan default mati (`[discovery] scheduler_enabled = false`). Lock discovery yang sudah ada menjaga agar hanya satu run berjalan.
 
 ### Pengembangan
 

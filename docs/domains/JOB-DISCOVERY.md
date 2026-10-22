@@ -51,16 +51,45 @@ Setiap sumber adalah record yang dapat dikelola dari web UI:
   "company": "...",
   "market": "indonesia | global",
   "careers_url": "...",
-  "access_method": "ats_api | html | manual_url",
-  "ats": "greenhouse | lever | ashby | unknown",
+  "access_method": "ats_api | aggregator | html | manual_url",
+  "ats": "greenhouse | lever | ashby | himalayas | unknown",
   "verification_status": "unverified | verified | restricted | broken",
   "tos_notes": "...",
   "last_checked_at": null,
+  "last_success_at": null,
+  "health_status": "unknown | healthy | degraded | broken",
+  "consecutive_failures": 0,
+  "last_error_code": null,
+  "next_run_at": null,
+  "priority_order": 100,
+  "fetch_interval_minutes": 360,
+  "daily_request_quota": 24,
+  "requests_last_24h": 0,
+  "stale": false,
   "enabled": true
 }
 ```
 
-Operasi UI: tambah, edit, nonaktifkan, ubah status verifikasi.
+Operasi UI: tambah, edit, nonaktifkan, ubah status verifikasi, atur prioritas/interval/kuota.
+
+`access_method` yang boleh dibuat pengguna hanya `ats_api` (board satu perusahaan) dan `aggregator` (feed lintas perusahaan, mis. Himalayas). `html` ditolak saat write karena tidak ada adapter yang dapat mengambilnya; menyimpannya hanya menjanjikan fetch yang selalu di-skip. Baris lama bertipe `html` tetap terbaca dan dapat dinonaktifkan.
+
+### Kesehatan dan penjadwalan
+
+`health_status` adalah turunan streak kegagalan, bukan penilaian terpisah:
+
+| Status | Arti |
+|---|---|
+| `unknown` | Belum ada percobaan |
+| `healthy` | Percobaan terakhir sukses |
+| `degraded` | 1-2 kegagalan berurutan |
+| `broken` | 3 atau lebih kegagalan berurutan |
+
+- Kegagalan memberi backoff eksponensial: `interval × 2^(failure-1)`, maksimum faktor 8. `Retry-After` dari server dipakai sebagai lantai jadwal, bukan pengganti interval.
+- Sukses mereset `consecutive_failures` ke 0 dan menjadwalkan `next_run_at = now + fetch_interval_minutes`.
+- `daily_request_quota` membatasi jumlah HTTP request per 24 jam, dihitung dari `SUM(discovery_run_source.request_count)` dengan predikat `last_attempt_at` dalam 24 jam terakhir. Setiap percobaan mencatat request yang benar-benar dipakai, jadi sukses, 304, dan kegagalan semuanya dihitung, dan adapter berhalaman menghitung satu per halaman. `0` berarti tanpa batas. Sumber `skipped` dengan `source_quota_exhausted` bila sisa kuota tidak cukup untuk seluruh kebutuhan run; snapshot sebagian tidak pernah dipakai.
+- Scheduler latar bersifat opt-in (`[discovery] scheduler_enabled = true`, default mati). Tanpa itu, run hanya terjadi saat pengguna menekan tombol.
+- `partial_snapshot`: adapter yang hanya mengembalikan sebagian board menandai `ParsedJobs.complete = False`; run tidak menutup lowongan yang tidak terlihat pada snapshot itu.
 
 ### Seed
 
@@ -117,6 +146,20 @@ Ketiganya per-perusahaan. Cakupan luas membutuhkan daftar perusahaan (D3) yang d
 
 Semua aggregator di atas remote/EU/US-centric. Tidak satu pun menyediakan cakupan Indonesia yang memadai.
 
+#### Adapter Himalayas (aktif di kode, sumber belum diaktifkan)
+
+- `access_method` = `aggregator`, `ats` = `himalayas`. Host `careers_url` wajib `himalayas.app`.
+- Batas satu run: **5 halaman × 20 record = 100 record**, dinyatakan sebagai `MAX_REQUESTS = 5` pada adapter dan ikut dihitung oleh pemeriksaan kuota (`_planned_requests`). Sisa kuota yang tidak cukup untuk 5 request membuat sumber di-skip whole.
+- Snapshot selalu sebagian: `ParsedJobs.complete = False`, sehingga run tidak pernah menutup lowongan yang tidak terlihat (`partial_snapshot`).
+- `companyName` dipakai apa adanya. Bila kosong, slug dari `guid` (`/companies/<slug>/`) dipakai sebagai nama tampilan dan `company_name` masuk `missing_fields`; record tanpa keduanya di-drop dengan alasan `missing_company`.
+- `applicationLink` dipakai apa adanya, termasuk `?utm_source=api`. Tidak ada URL lamaran yang dikarang.
+- `posted_at` selalu `None` (O6): `pubDate` adalah waktu update terakhir, bukan tanggal posting. `posted_at` masuk `missing_fields`.
+- `locationRestrictions` adalah satu-satunya lokasi yang diterbitkan feed. Daftar kosong berarti sumber tidak menerbitkan batasan, bukan "worldwide": lokasi tetap `None`, masuk `missing_fields`, dan `geo_scope` menjadi `unknown` sehingga tier tidak naik tanpa bukti.
+- Bukti fetch untuk sumber berhalaman disimpan sebagai **manifest** deterministik (`{"pages": [{page, status, bytes, sha256}]}`), bukan salinan seluruh payload.
+- Kunci API opsional dibaca dari `GAWE_HIMALAYAS_API_KEY`; tidak disimpan di config, tidak masuk log, tidak dikembalikan endpoint mana pun. Tanpa kunci, feed tetap berjalan.
+- Atribusi: halaman Settings menampilkan tautan ke `https://himalayas.app` saat ada sumber Himalayas.
+- **Sumber ini belum diaktifkan** karena pertanyaan retensi/penghapusan masih terbuka. Lihat [`../notes/himalayas-clarification.md`](../notes/himalayas-clarification.md).
+
 ### 4.4 Sumber yang tidak dapat dipakai v1
 
 | Sumber | Alasan |
@@ -130,7 +173,7 @@ Semua aggregator di atas remote/EU/US-centric. Tidak satu pun menyediakan cakupa
 | Workday | Tidak ada API job posting publik; REST/SOAP per tenant |
 | LinkedIn, Indeed | Anti-bot/auth/ToS; tidak didukung |
 | Halaman karier perusahaan (HTML) | Satu perusahaan; tergantung robots/ToS; perlu verifikasi per situs |
-| URL manual | Satu lowongan; validasi per request; **fallback**, bukan jalur utama |
+| URL manual | Satu lowongan; validasi per request; **fallback**, bukan jalur utama; dapat memakai teks tempel bila halaman menolak akses atau dirender JavaScript |
 
 ### 4.5 Catatan cakupan
 
@@ -192,18 +235,21 @@ Semua aggregator di atas remote/EU/US-centric. Tidak satu pun menyediakan cakupa
 
 - URL kanonik: buang `utm_*`, `gh_src`, `ref`, trailing slash; simpan URL final setelah redirect.
 - Field wajib: judul, perusahaan, deskripsi.
-- Completeness flag untuk metadata yang hilang.
+- Completeness flag untuk metadata yang hilang. Dua nilai yang tampil di UI: `company_name` → "Nama perusahaan dari slug" (nama perusahaan diambil dari slug `guid` karena payload tidak memuat `companyName`), dan `posted_at` → "Tanggal posting tidak tersedia" (sumber tidak mempublikasikan tanggal posting).
 - `fetched_at` disimpan; warning bila data >7 hari.
 - Greenhouse `content` adalah HTML ter-escape ganda; perlu `html.unescape` dua kali (quirk terverifikasi).
 - Simpan `source_id` dan URL asli lowongan (`canonical_url`) pada setiap job. Tidak ada job tanpa sumber.
+- `market` pada job adalah nilai turunan dari `geo_scope`, bukan field yang diisi adapter: `indonesia` → `indonesia`, `worldwide` → `global`, sisanya `unknown`. Sebelumnya `market` hanya terisi bila field lokasi memuat kata "indonesia", sehingga seluruh 102 job tersimpan `unknown` dan filter Pasar di Job Matches tidak pernah menyaring apa pun.
 
 ---
 
 ## 8. Dedupe
 
 - Exact: `(source, source_job_id)` dan `canonical_url`.
-- Lintas sumber: fingerprint `sha256(company_norm + title_norm + city_norm + employment_type)`.
-- Fuzzy: `difflib.SequenceMatcher` dalam blok company/location yang sama, threshold 0.92.
+- Lintas sumber: fingerprint `sha256(company_norm + title_norm + location_norm + employment_type)`.
+- `location_norm` adalah `location_key`: segmen lokasi pertama yang benar-benar menamai tempat. Kata mode kerja (`remote`, `anywhere`, `hybrid`, `onsite`, `global`) dilewati karena tidak menamai tempat. Tanpa aturan ini `city_of("Remote, AMER")` dan `city_of("Remote, EMEA")` sama-sama `remote`, sehingga dua lowongan regional yang berbeda tergabung.
+- Fuzzy: `difflib.SequenceMatcher` dalam blok company/location yang sama, threshold 0.92. Dua judul yang menyebut region berbeda (`AMER` vs `EMEA`) tidak pernah digabung, meski rasionya tinggi.
+- Fingerprint adalah nilai turunan. Setiap kali normalisasi berubah, fingerprint baris lama harus dihitung ulang; kalau tidak, dedupe lintas sumber melewatkan pasangan lama-baru.
 - Simpan `duplicate_of`; jangan hapus data.
 - Hindari duplikasi saat run diulang (idempoten).
 - Lowongan tertutup tetap tersimpan dengan status `closed`/`expired`; tidak dihapus.
@@ -243,7 +289,10 @@ Aturan:
 - Tanpa login, tanpa CAPTCHA bypass, tanpa paywall bypass, tanpa rotasi proxy.
 - 403/429 → berhenti untuk sumber itu, laporkan.
 - `robots.txt` dicek untuk fetch HTML umum.
+- Bila halaman URL manual menolak akses otomatis (403/429) atau dirender JavaScript, pengguna dapat menempelkan teks lowongan. URL tetap wajib dan tetap divalidasi karena menjadi identitas job dan target Apply; teks tempel tidak di-fetch, sehingga `robots.txt` tidak berlaku untuk jalur itu.
 - Cache 24 jam; jangan polling melebihi batas sumber.
+- Fetch kondisional dipakai bila sumber mendukung: kirim `If-None-Match` berisi `ETag` snapshot terakhir. Balasan `304 Not Modified` berarti papan tidak berubah, jadi payload tidak diunduh, tidak diparse, dan lowongan **tidak** ditutup. Hanya baris `source_fetch` dengan payload penuh yang menyimpan `etag`.
+- `304` bukan kegagalan dan bukan snapshot kosong. Jangan pernah memperlakukannya sebagai "semua lowongan hilang".
 - Attribution ditampilkan untuk sumber yang mensyaratkannya (Remotive, Jobicy, Himalayas, Arbeitnow bila disyaratkan).
 - Setiap sumber menyimpan catatan ToS dan status verifikasi.
 - Hanya sumber dengan dokumentasi akses resmi yang boleh diimplementasikan.

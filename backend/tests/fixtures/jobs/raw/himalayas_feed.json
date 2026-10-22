@@ -1,0 +1,47 @@
+{
+  "jobs": [
+    {
+      "guid": "https://himalayas.app/companies/grafana-labs/jobs/staff-technical-writer-remote-usa",
+      "title": "Staff Technical Writer | Remote | USA",
+      "companyName": "Grafana Labs",
+      "companySlug": "grafana-labs",
+      "employmentType": "Full Time",
+      "seniority": ["Senior"],
+      "locationRestrictions": ["United States"],
+      "description": "<div class=\"content-intro\"><p>Grafana Labs builds observability tooling.</p></div>",
+      "applicationLink": "https://himalayas.app/companies/grafana-labs/jobs/staff-technical-writer-remote-usa?utm_source=api",
+      "pubDate": 1792641875,
+      "expiryDate": 1797825873
+    },
+    {
+      "guid": "https://himalayas.app/companies/volga-partners/jobs/government-sme",
+      "title": "Government Subject Matter Expert",
+      "companyName": "",
+      "companySlug": "volga-partners",
+      "employmentType": "Contractor",
+      "seniority": ["Mid-level"],
+      "locationRestrictions": [],
+      "description": "<p>Evaluate AI answers about public policy.</p>",
+      "applicationLink": "https://himalayas.app/companies/volga-partners/jobs/government-sme?utm_source=api",
+      "pubDate": 1792641875,
+      "expiryDate": 1797825873
+    },
+    {
+      "guid": "https://himalayas.app/jobs/no-company-in-guid",
+      "title": "Unattributed Role",
+      "companyName": "",
+      "companySlug": "",
+      "employmentType": "Full Time",
+      "locationRestrictions": ["Worldwide"],
+      "description": "<p>No company anywhere in the record.</p>",
+      "applicationLink": "https://himalayas.app/jobs/no-company-in-guid",
+      "pubDate": 1792641875,
+      "expiryDate": 1797825873
+    }
+  ],
+  "limit": 20,
+  "offset": 0,
+  "totalCount": 128463,
+  "nextCursor": "eyJvZmZzZXQiOjIwfQ==",
+  "updatedAt": "2026-10-22T00:00:00.000Z"
+}

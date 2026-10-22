@@ -1,6 +1,6 @@
 # Phase 4 — Perluasan Sumber dan Skala Discovery
 
-**Status:** belum dimulai. Menunggu Phase 3 dan persetujuan eksplisit.
+**Status:** infrastruktur registry/penjadwalan/skala sudah diimplementasikan (2026-10-22); penambahan sumber Indonesia dan adapter baru belum dimulai. Butuh persetujuan eksplisit.
 **Sumber:** `PLAN.md` §13 Phase 4, §14, §4.2.
 
 ---
@@ -45,15 +45,23 @@ Di luar scope: agregator remote/EU dan operasi backup (Phase 5), Playwright/OCR 
 ## 4. File atau Modul yang Diharapkan Berubah
 
 ```text
-backend/src/gawe/jobs/sources/{indonesia_*.py}
-backend/src/gawe/jobs/sources/registry.py        (prioritas, jadwal, kuota)
-backend/src/gawe/services/discovery_service.py   (penjadwalan, kuota)
+backend/src/gawe/jobs/sources/{indonesia_*.py}          (belum)
+backend/src/gawe/jobs/sources/registry.py               (prioritas, jadwal, kuota, kesehatan)
+backend/src/gawe/jobs/sources/base.py                   (ParsedJobs.complete)
+backend/src/gawe/jobs/fetch.py                          (Retry-After)
 backend/src/gawe/jobs/health.py
-backend/src/gawe/api/routes/{sources.py,discovery.py,matches.py}
-frontend/src/pages/MatchesPage.tsx               (virtualisasi, filter lanjutan)
-frontend/src/components/{SourceHealthPanel.tsx,AttributionNote.tsx}
-backend/tests/fixtures/sources/
+backend/src/gawe/services/{discovery_service.py,scheduler.py}
+backend/src/gawe/services/assessment_service.py         (paging SQL)
+backend/src/gawe/api/routes/{sources.py,matches.py}
+backend/src/gawe/db/migrations/0013_source_schedule.sql
+frontend/src/components/SourceRegistry.tsx              (kesehatan, prioritas, kuota)
+backend/src/gawe/jobs/sources/{lever,ashby,greenhouse}.py (kontrak tidak berubah)
+backend/tests/{test_source_health.py,test_sources.py}
 ```
+
+`SourceHealthPanel.tsx` tidak dibuat terpisah: kolom kesehatan masuk ke
+`SourceRegistry.tsx` yang sudah menampilkan daftar sumber, dan endpoint
+`GET /api/settings/sources/health` tersedia untuk konsumen lain.
 
 Lokasi mengikuti proposal `PLAN.md` §12.
 
@@ -90,7 +98,6 @@ Lokasi mengikuti proposal `PLAN.md` §12.
 Dari `PLAN.md` §13 Phase 4, ditambah kriteria cakupan:
 
 - minimal dua sumber tambahan berjalan;
-- sumber Indonesia yang dipakai sudah diverifikasi (D17);
 - batas laju dan kuota harian dipatuhi;
 - status kesehatan sumber dan waktu fetch terlihat;
 - dedupe tetap akurat pada volume lebih besar;
@@ -100,7 +107,26 @@ Dari `PLAN.md` §13 Phase 4, ditambah kriteria cakupan:
 - tabel menangani data besar tanpa memblokir UI;
 - hasil parsial tidak dihapus saat sumber lain gagal.
 
-Klaim cakupan Indonesia hanya boleh dibuat setelah D17 tersedia dan sumber diuji.
+Status per kriteria setelah implementasi infrastruktur 2026-10-22:
+
+| Kriteria | Status | Bukti |
+|---|---|---|
+| Kuota harian dipatuhi | selesai | `jobs/health.py:quota_exhausted`, skip `source_quota_exhausted`, `tests/test_source_health.py` |
+| Backoff dan `Retry-After` | selesai | `health.retry_at`, `FetchError.retry_after_s`, test `test_retry_after_is_a_floor_for_the_next_slot` |
+| Kesehatan sumber terlihat | selesai | `health_status`/`consecutive_failures`/`next_run_at` di `SourceRegistryEntry` + `GET /api/settings/sources/health` + kolom UI |
+| Hasil parsial tidak menutup job | selesai | `ParsedJobs.complete`, `partial_snapshot`, `test_partial_snapshot_does_not_close_jobs` |
+| Filter/sort matches di SQL | selesai | `AssessmentService.matches_page`/`count_matches`, `job_rank`, `posted_at_epoch` |
+| Minimal dua sumber tambahan | belum | butuh adapter baru + fixture |
+| Dedupe pada volume besar | belum | belum ada test volume |
+| Tabel menangani data besar | belum | UI masih merender seluruh halaman; belum ada test performa |
+| Cakupan Indonesia (D17) | tidak berlaku | fokus worldwide |
+
+Kriteria "sumber Indonesia yang dipakai sudah diverifikasi (D17)" **tidak berlaku**.
+Keputusan pengguna 2026-10-22 menetapkan fokus produk adalah pencarian kerja
+worldwide; Indonesia adalah bonus. Phase 4 tidak menunggu D17.
+
+Klaim cakupan Indonesia tetap tidak boleh dibuat sampai D17 tersedia dan sumber
+Indonesia diuji.
 
 ---
 

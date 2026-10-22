@@ -57,14 +57,15 @@ Sumber: `PLAN.md` §9.2. Tabel Phase 1–3D yang sudah ada di migrasi: `schema_v
 | `profile_correction` | Field, nilai lama/baru, waktu, alasan | `correction_id` | Profile version |
 | `profile_decision` | Gate, pilihan, alasan, waktu | `decision_id` | Profile version |
 | `task` | Tipe, status, progress, hasil, error | `task_id` | Application |
-| `source_registry` | Company, URL, metode akses, status verifikasi, ToS | `source_id` | Menghasilkan job |
-| `job` | Sumber, ID sumber, URL kanonik, `apply_url` terverifikasi, company, title, lokasi, work mode, tanggal | `(source, source_job_id)`, `canonical_url` | Banyak versi posting |
+| `source_registry` | Company, URL, metode akses, status verifikasi, ToS, prioritas, jadwal, kuota, kesehatan | `source_id` | Menghasilkan job |
+| `job` | Sumber, ID sumber, URL kanonik, `apply_url` terverifikasi, company, title, lokasi, work mode, tanggal, `posted_at_epoch` untuk sort SQL | `(source, source_job_id)`, `canonical_url` | Banyak versi posting |
 | `job_posting_version` | `content_hash`, deskripsi, `fetched_at`, URL, `analyzed_at`, status | UUID | Milik job |
 | `job_requirement` | Kind, teks, skill, bobot, kutipan, constraint | UUID | Milik posting version |
 | `eligibility_assessment` | Status, checks, alasan, confidence, `status_outdated` | UUID | Posting version + profile version |
 | `eligibility_check` | Requirement, hasil, kutipan, bukti | UUID | Eligibility assessment |
 | `fit_assessment` | `fit_score`, verdict, confidence, komponen, gap, `status_outdated` | UUID | Posting version + profile version |
 | `ranking_run` | Preferensi, `tie_window`, urutan, waktu | UUID | Profile version |
+| `job_rank` | Urutan ranking yang sudah di-flatten: `(ranking_run_id, job_id, section, position)`; query surface untuk `/api/matches` | `(ranking_run_id, job_id)` | Milik ranking run |
 | `application` | Workspace per lowongan, `profile_version_id` snapshot, waktu; status ringkasan dihitung saat baca, bukan disimpan | UUID, unik `job_id` | Job, profile version |
 | `document_version` | Kind, versi, `content_json`, `content_hash`, `diff_json`, `evidence_json`, review status/verdict/cycle/findings, parent; tidak ada path TeX/PDF | `(application, kind, version)` | Milik application |
 | `document_edit` *(rencana)* | Sebelum/sesudah, sumber (user/LLM), waktu | UUID | Document version |

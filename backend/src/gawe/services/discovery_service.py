@@ -15,7 +15,7 @@ import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
 from ..db.repo import Connection
@@ -26,10 +26,18 @@ from ..jobs.fetch import (
     FetchResponse,
     HostRateLimiter,
     fetch_document,
+    fetch_pages,
     fetch_source,
 )
+from ..jobs.health import quota_exhausted
 from ..jobs.sources import manual
-from ..jobs.sources.base import AdapterError, InvalidJob, RawJob, normalize
+from ..jobs.sources.base import (
+    AdapterError,
+    InvalidJob,
+    RawJob,
+    company_of,
+    normalize,
+)
 from ..jobs.sources.registry import (
     FETCHABLE,
     MANUAL_SOURCE_ID,
@@ -85,6 +93,17 @@ class _SourceResult:
     jobs: list[RawJob] | None = None
     skipped: int = 0
     error: FetchError | None = None
+    not_modified: bool = False
+    # False when the payload is a page, not the whole board.
+    complete: bool = True
+    # HTTP requests actually spent, whatever the outcome. The daily quota counts
+    # these, not attempts: a paginated adapter spends one per page.
+    requests: int = 1
+    # Evidence body to store when it is not the raw page: a paged feed keeps a
+    # manifest of its pages instead of every record again.
+    raw: str | None = None
+    # Why the adapter dropped records, keyed by reason.
+    skip_reasons: dict[str, int] = field(default_factory=dict)
 
 
 class DiscoveryService:
@@ -118,6 +137,7 @@ class DiscoveryService:
         attempt: int = 1,
         retried_from_task_id: str | None = None,
         retry_counts: dict[str, int] | None = None,
+        due_only: bool = False,
     ) -> dict:
         profile = self._profiles.require_confirmed()
         if profile_version_id and profile_version_id != profile["profile_version_id"]:
@@ -146,7 +166,7 @@ class DiscoveryService:
                     409,
                     active_task_id=active["task_id"],
                 )
-            sources = self._select_sources(source_ids)
+            sources = self._select_sources(source_ids, due_only=due_only)
             if not sources:
                 raise SourceError(
                     "no_enabled_sources",
@@ -158,6 +178,16 @@ class DiscoveryService:
             run_id = new_id("run")
             started_at = now_iso()
             fetchable: list[dict] = []
+            # The quota is checked per source against everything the source would
+            # spend in this run, so a source is fetched whole or not at all. A
+            # partially fetched source is a partial snapshot, and a partial
+            # snapshot must never close absent jobs.
+            reasons = {
+                source["source_id"]: _skip_reason(
+                    source, planned_requests=_planned_requests(source)
+                )
+                for source in sources
+            }
             # One transaction: a failure here leaves neither task nor run behind.
             with self._connection:
                 task = self._tasks.create(
@@ -174,13 +204,14 @@ class DiscoveryService:
                     (run_id, task_id, profile["profile_version_id"], started_at),
                 )
                 for source in sources:
-                    reason = _skip_reason(source)
+                    reason = reasons[source["source_id"]]
                     if reason is None:
                         fetchable.append(source)
                     self._connection.execute(
                         "INSERT INTO discovery_run_source (run_id, source_id, company, status, "
                         "fetched_count, accepted_count, duplicate_count, retry_count, "
-                        "last_attempt_at, error_json) VALUES (?, ?, ?, ?, 0, 0, 0, ?, NULL, ?)",
+                        "request_count, last_attempt_at, error_json) "
+                        "VALUES (?, ?, ?, ?, 0, 0, 0, ?, 0, NULL, ?)",
                         (
                             run_id,
                             source["source_id"],
@@ -274,12 +305,19 @@ class DiscoveryService:
                 _clear_active(task_id)
             self._release_lock()
 
-    def ingest_manual_url(self, url: str, profile_version_id: str | None = None) -> dict:
+    def ingest_manual_url(
+        self, url: str, profile_version_id: str | None = None, text: str | None = None
+    ) -> dict:
         """Fetch one pasted job URL, store it, and assess it.
 
         This is the fallback path from JOB-DISCOVERY.md §1: one page, no link
         following, `robots.txt` checked, URL guard applied. It records a normal
         discovery run so the raw response, hash, and `fetched_at` stay auditable.
+
+        When `text` is supplied the page is not fetched at all: that is the
+        escape hatch for a 403/429 or a JavaScript shell, where the user pastes
+        the description instead. The URL is still required and still validated,
+        because it is the job's identity and its apply target.
         """
         profile = self._profiles.require_confirmed()
         if profile_version_id and profile_version_id != profile["profile_version_id"]:
@@ -294,17 +332,28 @@ class DiscoveryService:
             raise MasterCvError("url_rejected", f"URL ditolak: {exc}.", 400) from exc
         source = self._registry.ensure_manual_source()
 
-        allowed, reason = robots.check(url, fetcher=self._document_fetcher)
-        if not allowed:
-            raise MasterCvError("robots_disallowed", reason or "robots.txt menolak.", 400)
-
-        try:
-            response = self._fetch_document(url)
-            raw_job = manual.parse(response.body, url)
-        except FetchError as exc:
-            raise MasterCvError(exc.code, exc.message, 400 if exc.code == "url_rejected" else 502) from exc
-        except AdapterError as exc:
-            raise MasterCvError("manual_page_unreadable", str(exc), 400) from exc
+        pasted = (text or "").strip()
+        if pasted:
+            response = None
+            raw = pasted
+            try:
+                raw_job = manual.from_text(pasted, url)
+            except AdapterError as exc:
+                raise MasterCvError("manual_page_unreadable", str(exc), 400) from exc
+        else:
+            allowed, reason = robots.check(url, fetcher=self._document_fetcher)
+            if not allowed:
+                raise MasterCvError("robots_disallowed", reason or "robots.txt menolak.", 400)
+            try:
+                response = self._fetch_document(url)
+                raw_job = manual.parse(response.body, url)
+            except FetchError as exc:
+                raise MasterCvError(
+                    exc.code, exc.message, 400 if exc.code == "url_rejected" else 502
+                ) from exc
+            except AdapterError as exc:
+                raise MasterCvError("manual_page_unreadable", str(exc), 400) from exc
+            raw = response.body
 
         run_id = new_id("run")
         task_id: str | None = None
@@ -327,10 +376,11 @@ class DiscoveryService:
                 )
             self._tasks.start_stage(task_id, "fetch")
             fetched_at = now_iso()
-            raw = response.body
             raw_sha = hashlib.sha256(raw.encode("utf-8")).hexdigest()
             record = normalize(
-                raw_job, {**source, "company": manual.company_of(raw_job)}, fetched_at
+                raw_job,
+                {**source, "company": company_of(raw_job, manual.COMPANY)},
+                fetched_at,
             )
             self._store_fetch(run_id, MANUAL_SOURCE_ID, response, raw, None)
             created, job_id = self._store_job(record, raw_sha, fetched_at)
@@ -344,7 +394,9 @@ class DiscoveryService:
                 duplicates=0 if created else 1,
                 error=None,
                 close_skipped=None,
-                stats={"manual_url": True},
+                stats={"manual_text": True} if pasted else {"manual_url": True},
+                # Pasted text costs no request; a fetched page costs one.
+                requests=0 if pasted else 1,
             )
             self._tasks.finish_stage(task_id, "fetch")
             assessment, assessment_error = self._assess(profile)
@@ -458,6 +510,7 @@ class DiscoveryService:
                 error=error,
                 close_skipped=None,
                 stats=None,
+                requests=result.requests,
             )
         except Exception:
             # The outer lifecycle handler fails the whole run if the DB is gone.
@@ -592,9 +645,11 @@ class DiscoveryService:
         ).fetchone()
         return self.get_run(row["run_id"]) if row else None
 
-    def _select_sources(self, source_ids: list[str] | None) -> list[dict]:
+    def _select_sources(
+        self, source_ids: list[str] | None, *, due_only: bool = False
+    ) -> list[dict]:
         if not source_ids:
-            return self._registry.enabled_verified()
+            return self._registry.due() if due_only else self._registry.enabled_verified()
         selected: list[dict] = []
         missing: list[str] = []
         seen: set[str] = set()
@@ -616,11 +671,17 @@ class DiscoveryService:
     def _fetch_all(self, sources: list[dict]) -> list[_SourceResult]:
         if not sources:
             return []
+        # The stored ETag is read here, on the caller's thread: the fetch workers
+        # must not touch the shared MySQL connection.
+        etags = {source["source_id"]: self._stored_etag(source["source_id"]) for source in sources}
         deadline = time.monotonic() + self._max_run_seconds
         results: list[_SourceResult] = []
         pool = ThreadPoolExecutor(max_workers=self._max_workers)
         try:
-            futures = [(pool.submit(self._fetch_one, source), source) for source in sources]
+            futures = [
+                (pool.submit(self._fetch_one, source, etags[source["source_id"]]), source)
+                for source in sources
+            ]
             for future, source in futures:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -645,7 +706,7 @@ class DiscoveryService:
             pool.shutdown(wait=False, cancel_futures=True)
         return results
 
-    def _fetch_one(self, source: dict) -> _SourceResult:
+    def _fetch_one(self, source: dict, etag: str | None = None) -> _SourceResult:
         adapter = ADAPTERS.get(source["ats"])
         if adapter is None:
             return _SourceResult(
@@ -653,39 +714,89 @@ class DiscoveryService:
                 error=FetchError(
                     "source_unsupported", "Adapter ATS belum tersedia.", retryable=False
                 ),
+                requests=0,
             )
+        # An adapter that exposes `next_cursor` walks a paged feed; the others
+        # read one document per run.
+        paginated = hasattr(adapter, "next_cursor")
+        pages: list[FetchResponse] = []
         try:
-            response = fetch_source(
-                source, adapter, fetcher=self._fetcher, limiter=self._limiter
-            )
+            if paginated:
+                # A feed's ETag covers one page, not the walk, so it is not used:
+                # a 304 on page one would not prove the rest is unchanged.
+                pages, requests = fetch_pages(
+                    source,
+                    adapter,
+                    fetcher=self._fetcher,
+                    limiter=self._limiter,
+                )
+                response = pages[0]
+            else:
+                requests = 1
+                response = fetch_source(
+                    source,
+                    adapter,
+                    fetcher=self._fetcher,
+                    limiter=self._limiter,
+                    etag=etag,
+                )
         except FetchError as exc:
-            return _SourceResult(source=source, error=exc)
+            # The request was attempted, so it is spent even though it failed.
+            return _SourceResult(
+                source=source, error=exc, requests=getattr(exc, "requests", 1)
+            )
         except AdapterError as exc:
             return _SourceResult(
                 source=source,
                 error=FetchError("source_unavailable", str(exc), retryable=False),
+                requests=getattr(exc, "requests", max(1, len(pages))),
             )
-        except Exception:
+        except Exception as exc:
             return _SourceResult(
                 source=source,
                 error=FetchError("source_error", "Sumber gagal diambil.", retryable=True),
+                requests=getattr(exc, "requests", max(1, len(pages))),
+            )
+        if response.not_modified:
+            # Nothing changed on the board, so nothing to parse, store or close.
+            return _SourceResult(
+                source=source,
+                response=response,
+                jobs=[],
+                skipped=0,
+                not_modified=True,
+                requests=requests,
             )
         try:
-            jobs = adapter.parse(response.body, source)
+            if paginated:
+                jobs = adapter.parse_pages([page.body for page in pages], source)
+                raw = _pages_manifest(pages)
+            else:
+                jobs = adapter.parse(response.body, source)
+                raw = response.body
         except AdapterError as exc:
             return _SourceResult(
                 source=source,
                 response=response,
                 error=FetchError("source_parse_failed", str(exc), retryable=False),
+                requests=requests,
             )
         except Exception:
             return _SourceResult(
                 source=source,
                 response=response,
                 error=FetchError("source_error", "Payload sumber tidak dapat dibaca.", retryable=False),
+                requests=requests,
             )
         return _SourceResult(
-            source=source, response=response, jobs=jobs, skipped=jobs.skipped
+            source=source,
+            response=response,
+            jobs=jobs,
+            skipped=jobs.skipped,
+            complete=getattr(jobs, "complete", True),
+            requests=requests,
+            raw=raw,
+            skip_reasons=getattr(jobs, "skip_reasons", {}),
         )
 
     def _persist_source(self, run_id: str, result: _SourceResult) -> dict:
@@ -696,13 +807,37 @@ class DiscoveryService:
             error = _error_payload(result.error, run_id)
             raw = result.response.body if result.response else ""
             self._store_fetch(run_id, source["source_id"], result.response, raw, error)
+            # Health and the next slot are recorded for every attempt, so a
+            # failing board backs off instead of being retried on the next run.
+            self._registry.record_outcome(
+                source,
+                fetched_at,
+                error_code=result.error.code,
+                retry_after_s=result.error.retry_after_s,
+            )
             self._update_source_progress(
                 run_id, source["source_id"], status="failed", fetched=0, accepted=0,
                 duplicates=0, error=error, close_skipped=None, stats=None,
+                requests=result.requests,
             )
             return {"status": "failed", "fetched": 0, "accepted": 0, "duplicates": 0}
 
-        raw = result.response.body if result.response else ""
+        if result.not_modified:
+            # The board answered 304, so the stored snapshot still holds. Nothing
+            # is parsed and nothing is closed: an empty "seen" set would mark
+            # every job as missing. No fetch row is written because there is no
+            # payload to keep; the previous row still describes the content.
+            self._registry.record_outcome(source, fetched_at)
+            self._update_source_progress(
+                run_id, source["source_id"], status="completed", fetched=0, accepted=0,
+                duplicates=0, error=None, close_skipped=None,
+                stats={"not_modified": 1}, requests=result.requests,
+            )
+            return {"status": "completed", "fetched": 0, "accepted": 0, "duplicates": 0}
+
+        raw = result.raw if result.raw is not None else (
+            result.response.body if result.response else ""
+        )
         self._store_fetch(run_id, source["source_id"], result.response, raw, None)
         raw_sha = hashlib.sha256(raw.encode("utf-8")).hexdigest()
         fetched = 0
@@ -733,19 +868,30 @@ class DiscoveryService:
             # keeps its documented meaning of "already seen on this source".
             link_duplicate(self._connection, job_id, record)
         close_skipped = _close_decision(fetched, invalid, seen, result.response)
+        if close_skipped is None and not result.complete:
+            # A page is not the board. Closing on a partial snapshot would mark
+            # every job on another page as gone.
+            close_skipped = _skip_error(
+                "partial_snapshot",
+                "Payload hanya sebagian dari board; penutupan lowongan dilewati.",
+            )
         closed = 0 if close_skipped else self._close_missing(
             source["source_id"], seen, fetched_at
         )
+        self._registry.record_outcome(source, fetched_at)
         stats = {
             "skipped": result.skipped,
             "invalid": invalid,
             "truncated": truncated,
             "stale": stale,
+            "requests": result.requests,
         }
+        if result.skip_reasons:
+            stats["skip_reasons"] = result.skip_reasons
         self._update_source_progress(
             run_id, source["source_id"], status="completed", fetched=fetched,
             accepted=accepted, duplicates=duplicates, error=None,
-            close_skipped=close_skipped, stats=stats,
+            close_skipped=close_skipped, stats=stats, requests=result.requests,
         )
         return {
             "status": "completed",
@@ -769,8 +915,8 @@ class DiscoveryService:
         with self._connection:
             self._connection.execute(
                 "INSERT INTO source_fetch (fetch_id, run_id, source_id, status, http_status, "
-                "fetched_at, raw_sha256, raw_json, error_json, final_url) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "fetched_at, raw_sha256, raw_json, error_json, final_url, etag) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     new_id("fet"),
                     run_id,
@@ -782,8 +928,18 @@ class DiscoveryService:
                     raw,
                     json.dumps(error) if error else None,
                     response.final_url if response else None,
+                    response.etag if response else None,
                 ),
             )
+
+    def _stored_etag(self, source_id: str) -> str | None:
+        """Last ETag that came with a full payload for this source."""
+        row = self._connection.execute(
+            "SELECT etag FROM source_fetch WHERE source_id = ? AND etag IS NOT NULL "
+            "AND status = 'completed' ORDER BY fetched_at DESC LIMIT 1",
+            (source_id,),
+        ).fetchone()
+        return row["etag"] if row else None
 
     def _store_job(self, record: dict, raw_sha: str, fetched_at: str) -> tuple[bool, str]:
         existing = self._connection.execute(
@@ -806,7 +962,8 @@ class DiscoveryService:
                         "UPDATE job SET canonical_url = ?, apply_url = COALESCE(?, apply_url), "
                         "company = ?, "
                         "title = ?, location_json = ?, work_mode = ?, employment_type = ?, "
-                        "seniority = ?, market = ?, posted_at = ?, fetched_at = ?, "
+                        "seniority = ?, market = ?, posted_at = ?, posted_at_epoch = ?, "
+                        "fetched_at = ?, "
                         "last_seen_at = ?, latest_version_id = ?, description_truncated = ?, "
                         "stale = ?, fingerprint = ?, status = 'open', updated_at = ? "
                         "WHERE job_id = ?",
@@ -821,6 +978,7 @@ class DiscoveryService:
                             record["seniority"],
                             record["market"],
                             record["posted_at"],
+                            posted_epoch(record["posted_at"]),
                             fetched_at,
                             fetched_at,
                             latest,
@@ -835,18 +993,23 @@ class DiscoveryService:
                 # Same content: no new version, but a stored job may predate the
                 # adapter that supplies apply_url. COALESCE keeps an existing
                 # URL when this snapshot has none, so a source that drops the
-                # field never erases a valid link.
+                # field never erases a valid link. The fingerprint is derived
+                # from the record, so refreshing it keeps dedupe consistent
+                # after a normalisation change.
                 with self._connection:
                     self._connection.execute(
                         "UPDATE job SET fetched_at = ?, last_seen_at = ?, "
-                        "latest_version_id = ?, status = 'open', "
-                        "apply_url = COALESCE(?, apply_url), updated_at = ? "
+                        "latest_version_id = ?, status = 'open', fingerprint = ?, "
+                        "apply_url = COALESCE(?, apply_url), posted_at_epoch = ?, "
+                        "updated_at = ? "
                         "WHERE job_id = ?",
                         (
                             fetched_at,
                             fetched_at,
                             version["job_posting_version_id"],
+                            record["fingerprint"],
                             record["apply_url"],
+                            posted_epoch(record["posted_at"]),
                             timestamp,
                             existing["job_id"],
                         ),
@@ -859,10 +1022,11 @@ class DiscoveryService:
             self._connection.execute(
                 "INSERT INTO job (job_id, source_id, source_job_id, canonical_url, apply_url, "
                 "company, title, location_json, work_mode, employment_type, seniority, market, "
-                "posted_at, fetched_at, status, duplicate_of, fingerprint, latest_version_id, "
+                "posted_at, posted_at_epoch, fetched_at, status, duplicate_of, fingerprint, "
+                "latest_version_id, "
                 "description_truncated, stale, completeness_json, created_at, updated_at, "
                 "last_seen_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, ?, NULL, ?, ?, "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', NULL, ?, NULL, ?, ?, "
                 "?, ?, ?, ?)",
                 (
                     job_id,
@@ -878,6 +1042,7 @@ class DiscoveryService:
                     record["seniority"],
                     record["market"],
                     record["posted_at"],
+                    posted_epoch(record["posted_at"]),
                     fetched_at,
                     record["fingerprint"],
                     1 if record["description_truncated"] else 0,
@@ -944,17 +1109,20 @@ class DiscoveryService:
         error: dict | None,
         close_skipped: dict | None,
         stats: dict | None,
+        requests: int = 1,
     ) -> None:
         with self._connection:
             self._connection.execute(
                 "UPDATE discovery_run_source SET status = ?, fetched_count = ?, "
-                "accepted_count = ?, duplicate_count = ?, last_attempt_at = ?, error_json = ?, "
+                "accepted_count = ?, duplicate_count = ?, request_count = ?, "
+                "last_attempt_at = ?, error_json = ?, "
                 "close_skipped_json = ?, stats_json = ? WHERE run_id = ? AND source_id = ?",
                 (
                     status,
                     fetched,
                     accepted,
                     duplicates,
+                    requests,
                     now_iso(),
                     json.dumps(error) if error else None,
                     json.dumps(close_skipped) if close_skipped else None,
@@ -1050,19 +1218,78 @@ def _close_decision(
     return None
 
 
-def _skip_reason(source: dict) -> dict | None:
+def _pages_manifest(pages: list[FetchResponse]) -> str:
+    """Deterministic evidence for a paged walk: one row per page, no payload copy.
+
+    The records are already stored as jobs; keeping every page body again would
+    duplicate them. The manifest proves what was read and lets a rerun compare.
+    """
+    rows = [
+        {
+            "page": index,
+            "status": page.status_code,
+            "bytes": len(page.body.encode("utf-8")),
+            "sha256": hashlib.sha256(page.body.encode("utf-8")).hexdigest(),
+        }
+        for index, page in enumerate(pages, start=1)
+    ]
+    return json.dumps({"pages": rows}, sort_keys=True, separators=(",", ":"))
+
+
+def _planned_requests(source: dict) -> int:
+    """HTTP requests this source will spend in one run, at most.
+
+    The quota check must reserve the whole run: a paginated adapter that can
+    only pay for part of its pages would return a partial snapshot, which must
+    never be read as the whole board.
+    """
+    adapter = ADAPTERS.get(source.get("ats") or "")
+    return max(1, int(getattr(adapter, "MAX_REQUESTS", 1)))
+
+
+def _skip_reason(source: dict, *, planned_requests: int = 1) -> dict | None:
     if not source["enabled"]:
         return _skip_error("source_not_verified", "Sumber nonaktif.")
     if source["verification_status"] != FETCHABLE:
         return _skip_error("source_not_verified", "Sumber belum diverifikasi.")
-    if source["access_method"] != "ats_api":
+    if source["access_method"] not in ("ats_api", "aggregator"):
         return _skip_error("source_unsupported", "Adapter HTML belum tersedia.")
     if source["ats"] not in ADAPTERS:
         return _skip_error("source_unsupported", "Adapter ATS belum tersedia.")
+    quota = int(source.get("daily_request_quota") or 0)
+    if quota <= 0:
+        return None
+    used = int(source.get("requests_last_24h") or 0)
+    # Skip the source whole when the remaining quota cannot cover this run. A
+    # half-fetched page set would look like a partial board, and a partial board
+    # must never close absent jobs.
+    if quota_exhausted(used, quota) or used + planned_requests > quota:
+        return _skip_error(
+            "source_quota_exhausted",
+            "Kuota request harian sumber tidak cukup untuk kebutuhan run.",
+        )
     return None
 
 
+def posted_epoch(value: str | None) -> int:
+    """Unix seconds for an ISO timestamp; 0 when unknown (sorts last)."""
+    if not value:
+        return 0
+    try:
+        from datetime import datetime, timezone
+
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp())
+
+
 def _timeout_result(source: dict) -> _SourceResult:
+    # shortcut: a timed-out source is charged one request even when a paginated
+    # adapter already spent more pages; the page count lives in the worker thread
+    # that was abandoned. Upgrade if quota accounting must be exact on timeouts.
     return _SourceResult(
         source=source,
         error=FetchError(

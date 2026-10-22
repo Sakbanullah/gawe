@@ -141,7 +141,9 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 
 ### D17 — Sumber Indonesia
 
-- **Status:** `OPEN` (riset selesai 2026-10-20; keputusan belum final).
+- **Status:** `OPEN` untuk cakupan Indonesia; **tidak lagi memblokir Phase 4** (disetujui pengguna 2026-10-22).
+- **Keputusan 2026-10-22:** fokus produk adalah pencarian kerja **worldwide**. Indonesia adalah bonus, bukan prioritas. Karena itu Phase 4 berjalan dengan sumber global terverifikasi tanpa menunggu D17.
+- **Konsekuensi:** acceptance Phase 4 yang mensyaratkan "sumber Indonesia diverifikasi D17" menjadi **tidak berlaku**. Cakupan Indonesia tetap tidak boleh diklaim.
 - **Batas v1 (usulan sementara):** employer-hosted ATS yang aksesnya diizinkan, ditambah URL manual sebagai fallback opsional.
 - **Temuan riset:** tidak ada API lowongan Indonesia yang publik, terdokumentasi, dan mengizinkan akses otomatis tanpa kemitraan. Jalur yang tersedia: board ATS employer Indonesia (Xendit, Amartha, Ajaib) dan URL manual.
 - **Tidak dikejar untuk v1:** key Jooble, akun publisher Careerjet.
@@ -175,6 +177,21 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 - **Dibutuhkan sebelum:** implementasi override di Phase 3.
 - **Rujukan:** [`../domains/ELIGIBILITY-AND-SCORING.md`](../domains/ELIGIBILITY-AND-SCORING.md).
 
+### Blocker terbuka: retensi dan penghapusan salinan lowongan Himalayas
+
+Bukan keputusan, dan bukan salah satu dari D1–D22. Percakapan menyebutnya "D9", tetapi
+D9 di registry atas sudah dipakai untuk model reviewer, jadi nomor itu tidak dipakai
+ulang di sini.
+
+- **Status:** `OPEN`. Memblokir aktivasi sumber Himalayas dan rotasi cek status.
+- **Kewajiban sumber:** dokumentasi API Himalayas meminta lowongan yang tidak aktif dihapus. Tidak dijelaskan apakah "remove" berarti hapus salinan lokal atau cukup menyembunyikan.
+- **Posisi Gawe:** hide-only **tidak** dianggap memenuhi ketentuan. Tanpa jawaban tertulis, retensi salinan tidak dapat diklaim patuh.
+- **Yang tidak boleh dilakukan:** mengaktifkan sumber Himalayas, mengklaim kepatuhan, atau menandai Phase 4 lulus atas dasar adapter ini.
+- **Tidak memblokir:** implementasi adapter dan fixture (sudah ada); `FETCHABLE = "verified"` tidak berubah sehingga adapter tidak mengaktifkan sumber.
+- **Jalan keluar:** klarifikasi tertulis ke `hi@himalayas.app`; status email **BELUM TERKIRIM**.
+- **Rencana:** [`../notes/himalayas-clarification.md`](../notes/himalayas-clarification.md), [`../notes/himalayas-status-check-rotation.md`](../notes/himalayas-status-check-rotation.md).
+- **Rujukan:** [`../domains/JOB-DISCOVERY.md`](../domains/JOB-DISCOVERY.md) §4.3.
+
 ### D7, D8, D9, D11
 
 | ID | Ringkasan | Dampak bila belum diputuskan |
@@ -205,7 +222,7 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 | Phase 2B | D1 + consent | D1 sudah diputuskan 2026-10-19 (9Router via `openai_compatible`); consent cloud versioned tersedia 2026-10-19 (API + UI Settings). Acceptance 2B tetap menunggu uji live |
 | Phase 3 | D1 untuk uji live; D3 untuk aktivasi sumber; D17 untuk klaim cakupan Indonesia; D6 saat instalasi Tectonic; D21 sebelum override `ineligible` | D1 diputuskan 2026-10-19; D3 global-only disetujui 2026-10-21; D6 diputuskan 2026-10-21. Phase 3 mencakup discovery otomatis. D17 dan sumber Indonesia tetap terbuka |
 | Phase 4 (implementasi) | Tidak ada gate baru selain Phase 3 selesai | Perluasan sumber dan agregator |
-| Phase 4 (acceptance) | D17 untuk cakupan Indonesia penuh | Acceptance tidak boleh diklaim tanpa sumber terverifikasi |
+| Phase 4 (acceptance) | Tidak ada gate Indonesia; cakupan Indonesia tidak diklaim | Disetujui pengguna 2026-10-22: fokus worldwide, Indonesia bonus. Acceptance diukur pada sumber global terverifikasi |
 | Phase 5 | ToS/attribution per sumber | Tidak ada D baru |
 | Phase 6 | Keputusan terpisah per fitur | Opsional |
 

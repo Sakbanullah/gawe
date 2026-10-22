@@ -3,18 +3,30 @@
 Not a crawler. One URL, one fetch, no links followed. `robots.txt` is checked
 before the page is fetched (JOB-DISCOVERY.md §10), and the URL goes through the
 same guard as discovery. The parsed page is untrusted data.
+
+When the page cannot be fetched (403/429) or is a JavaScript shell, the user may
+paste the description instead: `from_text` builds the same record without any
+request, so `robots.txt` does not apply. The URL stays required, because it is
+the job's identity and its apply target.
 """
 
 from __future__ import annotations
 
 from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
+from ..normalize import canonical_url
 from .base import AdapterError, RawJob, html_to_text
 
 SOURCE_ID = "manual_url"
 COMPANY = "Manual URL"
-_META = {"og:title", "og:site_name", "og:description", "twitter:title"}
+_META = {"og:title", "og:site_name", "og:description", "og:url", "twitter:title"}
 _TITLE_TAGS = {"h1"}
+MIN_DESCRIPTION_CHARS = 40
+# A JavaScript shell ships markup but almost no text; the job text arrives after
+# hydration, so no amount of parsing here will find it.
+SCRIPT_SHELL_HTML_MIN = 2000
+SCRIPT_SHELL_TEXT_RATIO = 0.02
 
 
 class _PageParser(HTMLParser):
@@ -87,6 +99,32 @@ def _split_title(title: str) -> tuple[str | None, str | None]:
     return title.strip() or None, None
 
 
+def _canonical_url(url: str, og_url: str | None) -> str:
+    """Keep `og:url` only when it names the same site as the pasted URL.
+
+    `og:url` is often the homepage or a campaign link, which would point the
+    workspace at the wrong page and break canonical-URL dedupe.
+    """
+    if not og_url:
+        return url
+    pasted, declared = urlsplit(url), urlsplit(og_url)
+    if (
+        declared.scheme.lower() == "https"
+        and (declared.hostname or "").lower() == (pasted.hostname or "").lower()
+        and not declared.username
+        and not declared.password
+    ):
+        return og_url
+    return url
+
+
+def _looks_like_js_shell(body: str, text: str) -> bool:
+    """Markup-heavy page with almost no text: a client-rendered app shell."""
+    if len(body) < SCRIPT_SHELL_HTML_MIN:
+        return False
+    return len(text) / len(body) < SCRIPT_SHELL_TEXT_RATIO
+
+
 def parse(body: str, url: str) -> RawJob:
     parser = _PageParser()
     try:
@@ -95,6 +133,8 @@ def parse(body: str, url: str) -> RawJob:
     except Exception as exc:  # noqa: BLE001 - malformed HTML is a source error
         raise AdapterError("manual page could not be parsed") from exc
 
+    # Structured data first: a page whose only description lives in JSON-LD has a
+    # thin body, and must not be mistaken for a JavaScript shell.
     posting = _job_posting(parser.json_ld)
     title = posting.get("title") or parser.meta.get("og:title") or parser.title
     company = posting.get("company") or parser.meta.get("og:site_name")
@@ -102,20 +142,23 @@ def parse(body: str, url: str) -> RawJob:
         title, company = _split_title(title)
     if not title and parser.headings:
         title = parser.headings[0]
+
+    description_html = posting.get("description") or body or ""
+    description = html_to_text(description_html)
+    if len(description) < MIN_DESCRIPTION_CHARS:
+        if _looks_like_js_shell(body or "", description):
+            raise AdapterError("manual page renders its content with JavaScript")
+        raise AdapterError("manual page has no readable description")
     if not title:
         raise AdapterError("manual page has no title")
     if company:
         title = _strip_company(title, company)
 
-    description_html = posting.get("description") or body or ""
-    description = html_to_text(description_html)
-    if len(description) < 40:
-        raise AdapterError("manual page has no readable description")
-
+    canonical = _canonical_url(url, parser.meta.get("og:url"))
     return RawJob(
-        source_job_id=_stable_id(url),
+        source_job_id=_stable_id(canonical),
         title=title[:300],
-        canonical_url=url,
+        canonical_url=canonical,
         description_html=description_html,
         location_raw=posting.get("location"),
         extra={"company": company},
@@ -174,13 +217,34 @@ def _strip_company(title: str, company: str) -> str:
 
 
 def _stable_id(url: str) -> str:
+    """Hash the canonical form so tracking params never fork a job's identity."""
     import hashlib
 
-    return "manual_" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]
+    return "manual_" + hashlib.sha256(canonical_url(url).encode("utf-8")).hexdigest()[:24]
 
 
-def company_of(raw: RawJob) -> str:
-    value = (raw.extra or {}).get("company")
-    if value and value.strip():
-        return value.strip()
-    return COMPANY
+def from_text(text: str, url: str) -> RawJob:
+    """Build a job from text the user pasted, for pages that cannot be fetched.
+
+    The URL is still required and validated: `normalize` refuses a record without
+    an absolute https canonical URL, and inventing one would break the rule that
+    an apply URL is never fabricated. Nothing is fetched, so `robots.txt` does
+    not apply here.
+    """
+    body = (text or "").strip()
+    if len(body) < MIN_DESCRIPTION_CHARS:
+        raise AdapterError("pasted text is too short to be a job description")
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    title = lines[0][:300] if lines else ""
+    if not title:
+        raise AdapterError("pasted text has no title")
+    # `Role - Company` / `Role at Company` carries the company on the first line.
+    split_title, company = _split_title(title)
+    return RawJob(
+        source_job_id=_stable_id(url),
+        title=(split_title or title)[:300],
+        canonical_url=url,
+        description_html=body,
+        extra={"company": company},
+    )
+

@@ -125,6 +125,9 @@ class DiscoveryConfig(BaseModel):
 
     max_workers: int = Field(default=3, ge=1, le=8)
     max_run_seconds: int = Field(default=600, ge=30, le=3600)
+    # Off by default: a local app must not fetch boards until the operator asks.
+    scheduler_enabled: bool = False
+    schedule_interval_seconds: int = Field(default=900, ge=60, le=86_400)
 
 
 class FrontendConfig(BaseModel):

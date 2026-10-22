@@ -1195,6 +1195,78 @@ def test_jobs_absent_from_successful_fetch_are_closed_not_deleted(
     )
 
 
+def test_unchanged_board_is_not_downloaded_again(
+    setup_client, csrf, monkeypatch, connection
+) -> None:
+    """A 304 keeps the stored snapshot: nothing parsed, nothing closed."""
+    _confirm(setup_client, csrf)
+    source = _create_source(
+        setup_client, csrf, monkeypatch, company="Acme", board="acme"
+    )
+
+    class _EtagFetcher(_Fetcher):
+        def __call__(self, url: str) -> FetchResponse:
+            with self._lock:
+                self.calls.append(url)
+            if len(self.calls) > 1:
+                return FetchResponse(304, "", url, etag=ETAG, not_modified=True)
+            return FetchResponse(200, self.responses["boards-api"], url, etag=ETAG)
+
+    ETAG = 'W/"board-1"'
+    fetcher = _EtagFetcher({"boards-api": GREENHOUSE})
+    _use(setup_client, fetcher, monkeypatch)
+
+    first = setup_client.post(
+        "/api/discovery/runs", headers=csrf, json={"source_ids": [source["source_id"]]}
+    ).json()
+    assert setup_client.get(f"/api/discovery/runs/{first['run_id']}").json()[
+        "status"
+    ] == "completed"
+    assert connection.execute("SELECT COUNT(*) FROM job").fetchone()[0] == 2
+
+    second = setup_client.post(
+        "/api/discovery/runs", headers=csrf, json={"source_ids": [source["source_id"]]}
+    ).json()
+    run = setup_client.get(f"/api/discovery/runs/{second['run_id']}").json()
+    assert run["status"] == "completed"
+    assert run["counts"]["fetched"] == 0
+    # A 304 means "unchanged", not "every job disappeared".
+    assert (
+        connection.execute("SELECT COUNT(*) FROM job WHERE status = 'open'").fetchone()[0]
+        == 2
+    )
+    stored = connection.execute("SELECT etag FROM source_fetch").fetchall()
+    assert [row["etag"] for row in stored] == [ETAG]
+
+
+def test_http_fetch_sends_the_stored_etag_and_treats_304_as_unchanged(
+    monkeypatch,
+) -> None:
+    """The header name is the whole feature: a wrong one silently disables it."""
+    import urllib.error
+
+    from gawe.jobs import fetch as fetch_module
+
+    seen: list[dict] = []
+
+    class _Opener:
+        def open(self, request, timeout=None):  # noqa: ANN001
+            seen.append(dict(request.header_items()))
+            raise urllib.error.HTTPError(request.full_url, 304, "Not Modified", {}, None)
+
+    monkeypatch.setattr(fetch_module.urllib.request, "build_opener", lambda *a: _Opener())
+
+    response = fetch_module.http_fetch(
+        "https://api.ashbyhq.com/posting-api/job-board/acme",
+        frozenset({"api.ashbyhq.com"}),
+        etag='W/"board-1"',
+    )
+    assert seen[0]["If-none-match"] == 'W/"board-1"'
+    assert response.not_modified is True
+    assert response.status_code == 304
+    assert response.body == ""
+
+
 def test_restricted_and_disabled_sources_are_skipped(
     setup_client, csrf, monkeypatch
 ) -> None:

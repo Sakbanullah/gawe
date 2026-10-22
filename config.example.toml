@@ -58,6 +58,8 @@ diagnostics_days = 7
 [discovery]                      # batas aman untuk run manual
 max_workers = 3                  # 1-8; jumlah fetch paralel
 max_run_seconds = 600            # 30-3600; sisa sumber ditandai run_timeout
+scheduler_enabled = false        # true = jalankan discovery terjadwal di latar
+schedule_interval_seconds = 900  # 60-86400; jarak antar tick scheduler
 
 [frontend]
 dist_dir = "frontend/dist"

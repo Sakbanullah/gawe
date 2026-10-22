@@ -77,7 +77,20 @@ def create_app(
                 await run_in_threadpool(repo.migrate, startup)
             finally:
                 await run_in_threadpool(startup.close)
-        yield
+        scheduler = None
+        # The scheduler only runs against a real database connection of its own.
+        # An injected connection means tests or an embedded caller, who drive runs
+        # themselves.
+        if connection is None and config.discovery.scheduler_enabled:
+            from ..services.scheduler import DiscoveryScheduler
+
+            scheduler = DiscoveryScheduler(config)
+            scheduler.start()
+        try:
+            yield
+        finally:
+            if scheduler is not None:
+                await run_in_threadpool(scheduler.stop)
 
     app = FastAPI(
         title="Gawe",

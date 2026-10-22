@@ -138,7 +138,7 @@ def test_ats_api_requires_a_known_adapter(setup_client, csrf, monkeypatch) -> No
     assert error["details"][0]["code"] == "ats_unavailable"
 
 
-def test_html_source_may_stay_unverified_without_an_adapter(
+def test_html_source_is_rejected_because_no_adapter_can_fetch_it(
     setup_client, csrf, monkeypatch
 ) -> None:
     _allow_public_urls(monkeypatch)
@@ -152,9 +152,50 @@ def test_html_source_may_stay_unverified_without_an_adapter(
             "ats": "unknown",
         },
     )
-    assert response.status_code == 201, response.json()
-    assert response.json()["verification_status"] == "unverified"
-    assert response.json()["enabled"] is False
+    assert response.status_code == 400, response.json()
+    error = response.json()["error"]
+    assert error["code"] == "validation_failed"
+    assert error["details"][0]["field"] == "access_method"
+
+
+def test_an_aggregator_needs_its_own_access_method(setup_client, csrf, monkeypatch) -> None:
+    _allow_public_urls(monkeypatch)
+    payload = {
+        "company": "Himalayas",
+        "market": "global",
+        "careers_url": "https://himalayas.app/jobs",
+        "access_method": "ats_api",
+        "ats": "himalayas",
+    }
+    response = setup_client.post("/api/settings/sources", headers=csrf, json=payload)
+    assert response.status_code == 400, response.json()
+    assert response.json()["error"]["details"][0]["field"] == "access_method"
+
+
+def test_a_company_ats_cannot_claim_the_aggregator_method(
+    setup_client, csrf, monkeypatch
+) -> None:
+    _allow_public_urls(monkeypatch)
+    payload = {**BASE, "access_method": "aggregator"}
+    response = setup_client.post("/api/settings/sources", headers=csrf, json=payload)
+    assert response.status_code == 400, response.json()
+    assert response.json()["error"]["details"][0]["field"] == "ats"
+
+
+def test_the_aggregator_careers_url_must_be_its_own_host(
+    setup_client, csrf, monkeypatch
+) -> None:
+    _allow_public_urls(monkeypatch)
+    payload = {
+        "company": "Himalayas",
+        "market": "global",
+        "careers_url": "https://boards.greenhouse.io/acme",
+        "access_method": "aggregator",
+        "ats": "himalayas",
+    }
+    response = setup_client.post("/api/settings/sources", headers=csrf, json=payload)
+    assert response.status_code == 400, response.json()
+    assert response.json()["error"]["details"][0]["code"] == "ats_host_mismatch"
 
 
 def test_broken_or_restricted_source_cannot_stay_enabled(
@@ -217,3 +258,42 @@ def test_list_filters_and_pagination(setup_client, csrf, monkeypatch) -> None:
     assert len(page["items"]) == 1
     assert page["page"]["has_more"] is True
     assert page["page"]["next_cursor"] == page["items"][0]["source_id"]
+
+
+def test_a_legacy_html_row_can_still_be_updated(
+    setup_client, csrf, monkeypatch, connection
+) -> None:
+    """B7: the Edit modal resends the stored binding, so an unchanged value must not re-gate."""
+    _allow_public_urls(monkeypatch)
+    connection.execute(
+        "INSERT INTO source_registry (source_id, company, market, careers_url, "
+        "access_method, ats, verification_status, enabled, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "src_legacy",
+            "Legacy",
+            "global",
+            "https://careers.example.com/acme",
+            "html",
+            "unknown",
+            "unverified",
+            0,
+            "2026-10-01T00:00:00Z",
+            "2026-10-01T00:00:00Z",
+        ),
+    )
+    response = setup_client.patch(
+        "/api/settings/sources/src_legacy",
+        headers=csrf,
+        json={
+            "company": "Legacy",
+            "careers_url": "https://careers.example.com/acme",
+            "market": "global",
+            "ats": "unknown",
+            "verification_status": "verified",
+        },
+    )
+    assert response.status_code == 200, response.json()
+    assert response.json()["verification_status"] == "verified"
+
+

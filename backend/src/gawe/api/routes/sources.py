@@ -13,9 +13,12 @@ from ..errors import ApiError
 router = APIRouter(prefix="/api/settings/sources")
 
 Market = Literal["indonesia", "global"]
-AccessMethod = Literal["ats_api", "html"]
-Ats = Literal["greenhouse", "lever", "ashby", "unknown"]
+# `html` and `manual_url` are gone from the request contract: no adapter can
+# fetch them, and offering the option promised a run that always skipped.
+AccessMethod = Literal["ats_api", "aggregator"]
+Ats = Literal["greenhouse", "lever", "ashby", "himalayas", "unknown"]
 Verification = Literal["unverified", "verified", "restricted", "broken"]
+Health = Literal["unknown", "healthy", "degraded", "broken"]
 
 
 class SourceCreateRequest(BaseModel):
@@ -28,6 +31,9 @@ class SourceCreateRequest(BaseModel):
     ats: Ats
     tos_notes: str | None = Field(default=None, max_length=2000)
     enabled: bool = False
+    priority_order: int = Field(default=100, ge=1, le=1000)
+    fetch_interval_minutes: int = Field(default=360, ge=5, le=43200)
+    daily_request_quota: int = Field(default=24, ge=0, le=100_000)
 
 
 class SourceUpdateRequest(BaseModel):
@@ -41,6 +47,9 @@ class SourceUpdateRequest(BaseModel):
     verification_status: Verification | None = None
     tos_notes: str | None = Field(default=None, max_length=2000)
     enabled: bool | None = None
+    priority_order: int | None = Field(default=None, ge=1, le=1000)
+    fetch_interval_minutes: int | None = Field(default=None, ge=5, le=43200)
+    daily_request_quota: int | None = Field(default=None, ge=0, le=100_000)
 
 
 def _api_error(exc: SourceError) -> ApiError:
@@ -74,6 +83,33 @@ def list_sources(
     return {
         "items": items,
         "page": {"limit": limit, "next_cursor": next_cursor, "has_more": next_cursor is not None},
+    }
+
+
+@router.get("/health")
+def source_health(request: Request) -> dict:
+    """One row per source: health, failure streak, next slot, and quota use."""
+    items, _ = SourceRegistry(request.state.db).list(limit=200)
+    return {
+        "items": [
+            {
+                "source_id": item["source_id"],
+                "company": item["company"],
+                "enabled": item["enabled"],
+                "verification_status": item["verification_status"],
+                "health_status": item["health_status"],
+                "consecutive_failures": item["consecutive_failures"],
+                "last_error_code": item["last_error_code"],
+                "last_checked_at": item["last_checked_at"],
+                "last_success_at": item["last_success_at"],
+                "next_run_at": item["next_run_at"],
+                "fetch_interval_minutes": item["fetch_interval_minutes"],
+                "daily_request_quota": item["daily_request_quota"],
+                "requests_last_24h": item["requests_last_24h"],
+                "stale": item["stale"],
+            }
+            for item in items
+        ]
     }
 
 

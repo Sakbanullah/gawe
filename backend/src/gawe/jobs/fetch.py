@@ -15,6 +15,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from ..security.url_guard import MAX_RESPONSE_BYTES, TIMEOUT_S, UnsafeUrl, validate_url
+from .sources.base import AdapterError
 
 MAX_WORKERS = 3
 MIN_INTERVAL_S = 1.0
@@ -47,13 +48,20 @@ def _redirect_allowed(host: str, allowed_hosts: frozenset[str]) -> bool:
 
 class FetchError(Exception):
     def __init__(
-        self, code: str, message: str, *, retryable: bool, http_status: int | None = None
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool,
+        http_status: int | None = None,
+        retry_after_s: int | None = None,
     ) -> None:
         super().__init__(code)
         self.code = code
         self.message = message
         self.retryable = retryable
         self.http_status = http_status
+        self.retry_after_s = retry_after_s
 
 
 @dataclass(frozen=True)
@@ -63,6 +71,8 @@ class FetchResponse:
     final_url: str
     truncated: bool = False
     content_type: str | None = None
+    etag: str | None = None
+    not_modified: bool = False
 
 
 def _is_json_content_type(value: str | None) -> bool:
@@ -70,6 +80,36 @@ def _is_json_content_type(value: str | None) -> bool:
         return True
     media_type = value.split(";", 1)[0].strip().lower()
     return media_type == "application/json" or media_type.endswith("+json") or media_type == "text/json"
+
+
+MAX_RETRY_AFTER_S = 24 * 60 * 60
+
+
+def _retry_after(headers) -> int | None:  # noqa: ANN001 - email.message.Message
+    """Seconds the server asked us to wait, capped at one day.
+
+    `Retry-After` is either a delay in seconds or an HTTP date; anything else is
+    ignored rather than guessed.
+    """
+    value = (headers.get("Retry-After") or "").strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return min(int(value), MAX_RETRY_AFTER_S)
+    try:
+        from email.utils import parsedate_to_datetime
+
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when is None:
+        return None
+    from datetime import datetime, timezone
+
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    seconds = int((when - datetime.now(timezone.utc)).total_seconds())
+    return max(0, min(seconds, MAX_RETRY_AFTER_S))
 
 
 class HostRateLimiter:
@@ -113,7 +153,12 @@ class _ValidatingRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def http_fetch(url: str, allowed_hosts: frozenset[str]) -> FetchResponse:
+def http_fetch(
+    url: str,
+    allowed_hosts: frozenset[str],
+    etag: str | None = None,
+    extra_headers: dict[str, str] | None = None,
+) -> FetchResponse:
     try:
         safe = validate_url(url)
     except UnsafeUrl as exc:
@@ -122,7 +167,12 @@ def http_fetch(url: str, allowed_hosts: frozenset[str]) -> FetchResponse:
         raise FetchError("source_unavailable", "Host sumber tidak diizinkan.", retryable=False)
 
     opener = urllib.request.build_opener(_ValidatingRedirect(allowed_hosts))
-    request = urllib.request.Request(url, headers={"User-Agent": "Gawe/0.1 (local)"})
+    headers = {"User-Agent": "Gawe/0.1 (local)"}
+    if etag:
+        headers["If-None-Match"] = etag
+    if extra_headers:
+        headers.update(extra_headers)
+    request = urllib.request.Request(url, headers=headers)
     try:
         with opener.open(request, timeout=TIMEOUT_S) as response:
             body = response.read(MAX_RESPONSE_BYTES + 1)
@@ -140,20 +190,32 @@ def http_fetch(url: str, allowed_hosts: frozenset[str]) -> FetchResponse:
                 body=body.decode("utf-8", errors="replace"),
                 final_url=response.geturl(),
                 content_type=content_type,
+                etag=response.headers.get("ETag"),
             )
     except urllib.error.HTTPError as exc:
+        if exc.code == 304:
+            # The board is unchanged; the caller keeps the stored snapshot.
+            return FetchResponse(
+                status_code=304,
+                body="",
+                final_url=url,
+                etag=etag,
+                not_modified=True,
+            )
         if exc.code in (403, 429):
             raise FetchError(
                 "source_unavailable",
                 "Sumber menolak akses otomatis.",
                 retryable=False,
                 http_status=exc.code,
+                retry_after_s=_retry_after(exc.headers),
             ) from exc
         raise FetchError(
             "source_error",
             "Sumber mengembalikan status HTTP yang tidak diharapkan.",
             retryable=exc.code >= 500,
             http_status=exc.code,
+            retry_after_s=_retry_after(exc.headers),
         ) from exc
     except (TimeoutError, urllib.error.URLError) as exc:
         raise FetchError("source_unavailable", "Sumber tidak dapat dihubungi.", retryable=True) from exc
@@ -165,13 +227,65 @@ def fetch_source(
     *,
     fetcher: Callable[[str], FetchResponse] | None = None,
     limiter: HostRateLimiter | None = None,
+    etag: str | None = None,
 ) -> FetchResponse:
     url = adapter.build_url(source)
     host = (urlsplit(url).hostname or "").lower()
     (limiter or HostRateLimiter()).wait(host)
     if fetcher is None:
-        return http_fetch(url, frozenset(adapter.HOSTS))
+        return http_fetch(url, frozenset(adapter.HOSTS), etag=etag)
     return fetcher(url)
+
+
+def fetch_pages(
+    source: dict,
+    adapter,
+    *,
+    fetcher: Callable[[str], FetchResponse] | None = None,
+    limiter: HostRateLimiter | None = None,
+    etag: str | None = None,
+) -> tuple[list[FetchResponse], int]:
+    """Walk a paginated feed, at most ``adapter.MAX_REQUESTS`` pages.
+
+    Returns the pages and the number of HTTP requests actually spent. A feed that
+    answers 304 on the first page is unchanged, so the walk stops there with the
+    stored snapshot still valid. The loop stops when the adapter reports no next
+    cursor, or when the page budget is spent: an aggregator feed is never walked
+    whole, so its snapshot is always partial.
+    """
+    budget = max(1, int(getattr(adapter, "MAX_REQUESTS", 1)))
+    limiter = limiter or HostRateLimiter()
+    extra_headers = adapter.headers() if hasattr(adapter, "headers") else None
+    pages: list[FetchResponse] = []
+    cursor: str | None = None
+    requests = 0
+    while len(pages) < budget:
+        url = adapter.build_url(source, cursor)
+        host = (urlsplit(url).hostname or "").lower()
+        limiter.wait(host)
+        requests += 1
+        try:
+            if fetcher is None:
+                page = http_fetch(
+                    url,
+                    frozenset(adapter.HOSTS),
+                    etag=etag if not pages else None,
+                    extra_headers=extra_headers,
+                )
+            else:
+                page = fetcher(url)
+            pages.append(page)
+            if page.not_modified:
+                break
+            cursor = adapter.next_cursor(page.body)
+        except (FetchError, AdapterError) as exc:
+            # The caller counts spent requests from this, even though the walk
+            # stopped early.
+            exc.requests = requests
+            raise
+        if not cursor:
+            break
+    return pages, requests
 
 
 def fetch_document(
