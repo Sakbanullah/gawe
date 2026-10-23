@@ -114,7 +114,10 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 
 - **Status:** diputuskan sebagian 2026-10-21. Pengguna menyetujui **hanya sumber global** untuk Phase 3; daftar final ~20 belum ditetapkan.
 - **Global yang disetujui (terverifikasi di riset Phase 2B, adapter tersedia):** GitLab (Greenhouse), Stripe (Greenhouse), Binance (Lever), Linear (Ashby), PostHog (Ashby), Supabase (Ashby).
-  - Bukti fetch live 2026-10-21: GitLab 232 job, Binance 17 job, Linear 29 job dari 3 sumber yang diaktifkan.
+- **Bukti fetch live 2026-10-21:** GitLab 232 job, Binance 17 job, Linear 29 job dari 3 sumber yang diaktifkan.
+- **Stripe dipersempit 2026-10-23 (keputusan pengguna):** board Stripe tidak di-fetch; Stripe hanya lewat URL manual. Board API Greenhouse Stripe mengabaikan `per_page` dan `page` (selalu 726 job), sehingga respons melebihi batas 5 MB: 5,65 MB dengan `content=true`. Tanpa `content`, 453 KB tetapi deskripsi kosong sehingga eligibility tidak dapat dinilai. Bukti: [`../../temporary/api-results/`](../../temporary/api-results/).
+- **Himalayas dihapus 2026-10-23 (keputusan pengguna):** sumber `aggregator` tidak didukung lagi; adapter dan seluruh entri UI/konfigurasinya dihapus. Lihat "Blocker ditutup" di bawah.
+- **Sumber pengganti agregator:** `OPEN`. Pengguna menyatakan akan menyebutkan sumbernya; belum ada nama, jadi tidak ada sumber baru yang diaktifkan.
 - **Indonesia (tetap nonaktif):** Xendit (Greenhouse), Amartha (Workable), Ajaib (Workable). Menunggu D17 dan persetujuan ToS/atribusi. Workable belum punya adapter.
 - **Aturan verifikasi:** `verified` hanya bila kriteria proyek terpenuhi (adapter ada, endpoint diuji, bukti fetch tersimpan).
 - **Batas klaim:** daftar ini bukan cakupan lowongan Indonesia nasional dan bukan sumber yang mencakup seluruh lowongan.
@@ -177,20 +180,19 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 - **Dibutuhkan sebelum:** implementasi override di Phase 3.
 - **Rujukan:** [`../domains/ELIGIBILITY-AND-SCORING.md`](../domains/ELIGIBILITY-AND-SCORING.md).
 
-### Blocker terbuka: retensi dan penghapusan salinan lowongan Himalayas
+### Blocker ditutup: retensi dan penghapusan salinan lowongan Himalayas
 
 Bukan keputusan, dan bukan salah satu dari D1–D22. Percakapan menyebutnya "D9", tetapi
 D9 di registry atas sudah dipakai untuk model reviewer, jadi nomor itu tidak dipakai
 ulang di sini.
 
-- **Status:** `OPEN`. Memblokir aktivasi sumber Himalayas dan rotasi cek status.
-- **Kewajiban sumber:** dokumentasi API Himalayas meminta lowongan yang tidak aktif dihapus. Tidak dijelaskan apakah "remove" berarti hapus salinan lokal atau cukup menyembunyikan.
-- **Posisi Gawe:** hide-only **tidak** dianggap memenuhi ketentuan. Tanpa jawaban tertulis, retensi salinan tidak dapat diklaim patuh.
-- **Yang tidak boleh dilakukan:** mengaktifkan sumber Himalayas, mengklaim kepatuhan, atau menandai Phase 4 lulus atas dasar adapter ini.
-- **Tidak memblokir:** implementasi adapter dan fixture (sudah ada); `FETCHABLE = "verified"` tidak berubah sehingga adapter tidak mengaktifkan sumber.
-- **Jalan keluar:** klarifikasi tertulis ke `hi@himalayas.app`; status email **BELUM TERKIRIM**.
-- **Rencana:** [`../notes/himalayas-clarification.md`](../notes/himalayas-clarification.md), [`../notes/himalayas-status-check-rotation.md`](../notes/himalayas-status-check-rotation.md).
-- **Rujukan:** [`../domains/JOB-DISCOVERY.md`](../domains/JOB-DISCOVERY.md) §4.3.
+- **Status:** `CLOSED` 2026-10-23. Sumber **dihapus** dari daftar sumber yang didukung.
+- **Alasan penutupan:** kewajiban sumber (hapus lowongan tidak aktif) tidak dapat dipenuhi dengan jelas. Pengguna memilih berhenti mengejar klarifikasi dan tidak memakai sumber ini.
+- **Yang dihapus:** adapter `himalayas.py`, fixture, test adapter dan test run, entri `ats`/`access_method` `aggregator`, opsi UI, atribusi UI, variabel `GAWE_HIMALAYAS_API_KEY`, `fetch_pages`, `parse_pages`, manifest halaman, dan cabang `paginated` di `discovery_service`. Semua itu tidak punya pemanggil setelah adapter feed terakhir hilang. Feed Phase 5 menambahkannya kembali bersama adapter dan test-nya sendiri.
+- **Yang dipertahankan:** `ParsedJobs.complete` dan `skip_reasons` sebagai kontrak snapshot parsial, serta `MAX_REQUESTS` sebagai dasar reservasi kuota per sumber.
+- **Efek:** tidak ada sumber `aggregator` yang dapat dibuat. `access_method` yang boleh ditulis pengguna hanya `ats_api`. Baris lama `aggregator`/`html` tetap terbaca dan dapat dinonaktifkan.
+- **Klarifikasi ke `hi@himalayas.app` tidak dikirim dan tidak akan dikirim.**
+- **Rujukan:** [`../domains/JOB-DISCOVERY.md`](../domains/JOB-DISCOVERY.md) §4.3, [`../notes/himalayas-clarification.md`](../notes/himalayas-clarification.md).
 
 ### D7, D8, D9, D11
 

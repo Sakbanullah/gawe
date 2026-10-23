@@ -303,15 +303,6 @@ export function JobDetailDrawer({
           <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
             {data.job_detail.description_text || "Deskripsi tidak tersedia."}
           </Text>
-          {data.job_detail.source.access_method === "aggregator" ? (
-            <Text size="xs" c="dimmed">
-              Data lowongan dari{" "}
-              <Anchor href="https://himalayas.app" target="_blank" rel="noreferrer">
-                Himalayas
-              </Anchor>
-              . Tautan melamar dibuka apa adanya.
-            </Text>
-          ) : null}
 
           <Divider label="Koreksi tier" labelPosition="left" />
           <Stack gap="xs">

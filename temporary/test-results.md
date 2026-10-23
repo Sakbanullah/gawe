@@ -837,3 +837,27 @@ Perintah:
 - `CHECKLIST.md` tetap tidak diisi: butuh penilaian manusia. Gate 11 Phase 3 belum lulus.
 - Perbaikan data lama untuk baris `job_requirement` yang sudah salah versi tidak dilakukan otomatis;
   lowongan yang sudah punya assessment perlu dinilai ulang eksplisit.
+
+
+## Run 2026-10-23 - hapus sumber Himalayas dan plumbing pagination
+
+Command: `.\backend\.venv\Scripts\python.exe -m pytest backend/tests -q --tb=short --junit-xml=temporary/junit_full.xml`
+
+Working directory: `D:\gawe`
+
+- Hasil: **479 passed, 0 failed, 0 error, 2 skipped** dalam 99.52s (dari JUnit XML).
+- Frontend: `npm run typecheck` bersih; `npm test -- --run` **7 files / 45 tests passed** dalam 46.05s.
+- Cakupan selektif sebelum suite penuh: `test_sources.py test_discovery.py test_source_health.py`
+  75 passed dalam 29.68s (setelah perbaikan test `ats`).
+- Perubahan yang diuji: adapter `himalayas.py` dan test/fixture-nya dihapus; `ACCESS_METHODS`
+  hanya `{"ats_api"}`; `AGGREGATOR_ATS` dihapus; `AccessMethod`/`Ats` di `routes/sources.py`
+  menyusut; `fetch_pages`, `parse_pages`, `_pages_manifest`, dan cabang `paginated` di
+  `_fetch_one` dihapus karena tidak ada adapter yang memakainya; `_skip_reason` menolak
+  `access_method != "ats_api"`; UI tidak lagi menawarkan ATS Himalayas, metode Aggregator,
+  atau atribusi Himalayas.
+- Test yang diperbaiki: `test_an_unknown_ats_is_rejected` memakai `ats: "unknown"` (sebelumnya
+  `himalayas`, yang kini ditolak Pydantic dengan `literal_error`, bukan `ats_unavailable`).
+  Test baru `test_a_removed_ats_is_not_accepted_by_the_contract` memastikan `ats: "himalayas"`
+  ditolak pada field `ats`.
+- Tidak dijalankan: test live network (tetap dilarang), `verify_review_samples.py`
+  (tidak ada perubahan dokumen atau template), dan paket review manusia (tidak berubah).

@@ -1,10 +1,10 @@
 # Tahap G - rotasi cek status lowongan: BLOCKED
 
-Status: **BLOCKED**, bukan selesai.
+Status: **BLOCKED**, bukan selesai. Blokir B1 (retensi Himalayas) ditutup 2026-10-23 karena sumber itu dihapus; B2 dan B3 tetap berlaku.
 
-Alasan: pertanyaan retensi/penghapusan Himalayas masih `OPEN` (arti "remove" dan
-batas retensi belum dipastikan), dan tidak ada kolom penanda cek status pada `job`.
-Keduanya menghalangi implementasi yang dapat dipertanggungjawabkan.
+Alasan: tidak ada kolom penanda cek status pada `job`, dan perilaku `410` belum teramati pada sumber mana pun yang didukung. Keduanya menghalangi implementasi yang dapat dipertanggungjawabkan.
+
+Catatan 2026-10-23: desain ini tidak bergantung pada Himalayas. Sumber itu dihapus dari daftar yang didukung, sehingga kewajiban penghapusan lowongan kedaluwarsa miliknya tidak lagi menjadi pertanyaan proyek. Lihat [`DECISIONS.md`](../source-of-truth/DECISIONS.md) "Blocker ditutup".
 
 ## Desain yang disiapkan (belum diimplementasikan)
 
@@ -22,9 +22,7 @@ Keduanya menghalangi implementasi yang dapat dipertanggungjawabkan.
 
 ## Blokir konkret
 
-- **B1 - retensi dan penghapusan salinan.** Himalayas mewajibkan penghapusan
-  lowongan kedaluwarsa, tetapi tidak menjelaskan apakah "remove" berarti hapus
-  salinan lokal atau cukup menyembunyikan. Hide-only tidak dianggap patuh.
+- **B1 - retensi dan penghapusan salinan.** `CLOSED` 2026-10-23: Himalayas dihapus dari daftar sumber yang didukung, jadi kewajiban itu tidak lagi menjadi pertanyaan proyek.
 - **B2 - `410` belum teramati.** Tiga dari tiga sampel menjawab `200`. Perilaku
   `410` hanya berasal dari dokumentasi, belum dari bukti.
 - **B3 - kolom penanda tidak ada.** `job` tidak punya `status_checked_at`. Tanpa

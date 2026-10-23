@@ -26,7 +26,6 @@ from ..jobs.fetch import (
     FetchResponse,
     HostRateLimiter,
     fetch_document,
-    fetch_pages,
     fetch_source,
 )
 from ..jobs.health import quota_exhausted
@@ -97,10 +96,9 @@ class _SourceResult:
     # False when the payload is a page, not the whole board.
     complete: bool = True
     # HTTP requests actually spent, whatever the outcome. The daily quota counts
-    # these, not attempts: a paginated adapter spends one per page.
+    # these, not attempts.
     requests: int = 1
-    # Evidence body to store when it is not the raw page: a paged feed keeps a
-    # manifest of its pages instead of every record again.
+    # Evidence body to store, currently always the raw response body.
     raw: str | None = None
     # Why the adapter dropped records, keyed by reason.
     skip_reasons: dict[str, int] = field(default_factory=dict)
@@ -716,30 +714,15 @@ class DiscoveryService:
                 ),
                 requests=0,
             )
-        # An adapter that exposes `next_cursor` walks a paged feed; the others
-        # read one document per run.
-        paginated = hasattr(adapter, "next_cursor")
-        pages: list[FetchResponse] = []
+        requests = 1
         try:
-            if paginated:
-                # A feed's ETag covers one page, not the walk, so it is not used:
-                # a 304 on page one would not prove the rest is unchanged.
-                pages, requests = fetch_pages(
-                    source,
-                    adapter,
-                    fetcher=self._fetcher,
-                    limiter=self._limiter,
-                )
-                response = pages[0]
-            else:
-                requests = 1
-                response = fetch_source(
-                    source,
-                    adapter,
-                    fetcher=self._fetcher,
-                    limiter=self._limiter,
-                    etag=etag,
-                )
+            response = fetch_source(
+                source,
+                adapter,
+                fetcher=self._fetcher,
+                limiter=self._limiter,
+                etag=etag,
+            )
         except FetchError as exc:
             # The request was attempted, so it is spent even though it failed.
             return _SourceResult(
@@ -749,13 +732,13 @@ class DiscoveryService:
             return _SourceResult(
                 source=source,
                 error=FetchError("source_unavailable", str(exc), retryable=False),
-                requests=getattr(exc, "requests", max(1, len(pages))),
+                requests=1,
             )
-        except Exception as exc:
+        except Exception:
             return _SourceResult(
                 source=source,
                 error=FetchError("source_error", "Sumber gagal diambil.", retryable=True),
-                requests=getattr(exc, "requests", max(1, len(pages))),
+                requests=1,
             )
         if response.not_modified:
             # Nothing changed on the board, so nothing to parse, store or close.
@@ -768,12 +751,8 @@ class DiscoveryService:
                 requests=requests,
             )
         try:
-            if paginated:
-                jobs = adapter.parse_pages([page.body for page in pages], source)
-                raw = _pages_manifest(pages)
-            else:
-                jobs = adapter.parse(response.body, source)
-                raw = response.body
+            jobs = adapter.parse(response.body, source)
+            raw = response.body
         except AdapterError as exc:
             return _SourceResult(
                 source=source,
@@ -1218,30 +1197,11 @@ def _close_decision(
     return None
 
 
-def _pages_manifest(pages: list[FetchResponse]) -> str:
-    """Deterministic evidence for a paged walk: one row per page, no payload copy.
-
-    The records are already stored as jobs; keeping every page body again would
-    duplicate them. The manifest proves what was read and lets a rerun compare.
-    """
-    rows = [
-        {
-            "page": index,
-            "status": page.status_code,
-            "bytes": len(page.body.encode("utf-8")),
-            "sha256": hashlib.sha256(page.body.encode("utf-8")).hexdigest(),
-        }
-        for index, page in enumerate(pages, start=1)
-    ]
-    return json.dumps({"pages": rows}, sort_keys=True, separators=(",", ":"))
-
-
 def _planned_requests(source: dict) -> int:
     """HTTP requests this source will spend in one run, at most.
 
-    The quota check must reserve the whole run: a paginated adapter that can
-    only pay for part of its pages would return a partial snapshot, which must
-    never be read as the whole board.
+    The quota check must reserve the whole run, so a source is skipped whole
+    rather than fetched partially.
     """
     adapter = ADAPTERS.get(source.get("ats") or "")
     return max(1, int(getattr(adapter, "MAX_REQUESTS", 1)))
@@ -1252,8 +1212,8 @@ def _skip_reason(source: dict, *, planned_requests: int = 1) -> dict | None:
         return _skip_error("source_not_verified", "Sumber nonaktif.")
     if source["verification_status"] != FETCHABLE:
         return _skip_error("source_not_verified", "Sumber belum diverifikasi.")
-    if source["access_method"] not in ("ats_api", "aggregator"):
-        return _skip_error("source_unsupported", "Adapter HTML belum tersedia.")
+    if source["access_method"] != "ats_api":
+        return _skip_error("source_unsupported", "Sumber tanpa akses API tidak di-fetch.")
     if source["ats"] not in ADAPTERS:
         return _skip_error("source_unsupported", "Adapter ATS belum tersedia.")
     quota = int(source.get("daily_request_quota") or 0)
@@ -1261,7 +1221,7 @@ def _skip_reason(source: dict, *, planned_requests: int = 1) -> dict | None:
         return None
     used = int(source.get("requests_last_24h") or 0)
     # Skip the source whole when the remaining quota cannot cover this run. A
-    # half-fetched page set would look like a partial board, and a partial board
+    # half-fetched fetch would look like a partial board, and a partial board
     # must never close absent jobs.
     if quota_exhausted(used, quota) or used + planned_requests > quota:
         return _skip_error(
@@ -1287,9 +1247,8 @@ def posted_epoch(value: str | None) -> int:
 
 
 def _timeout_result(source: dict) -> _SourceResult:
-    # shortcut: a timed-out source is charged one request even when a paginated
-    # adapter already spent more pages; the page count lives in the worker thread
-    # that was abandoned. Upgrade if quota accounting must be exact on timeouts.
+    # shortcut: a timed-out source is charged one request even though it may have
+    # spent more. Upgrade if quota accounting must be exact on timeouts.
     return _SourceResult(
         source=source,
         error=FetchError(

@@ -284,7 +284,7 @@ Aturan kontrak:
   "market": "indonesia | global",
   "careers_url": "...",
   "access_method": "ats_api | aggregator | html | manual_url",
-  "ats": "greenhouse | lever | ashby | himalayas | unknown",
+  "ats": "greenhouse | lever | ashby | unknown",
   "verification_status": "unverified | verified | restricted | broken",
   "tos_notes": "...",
   "last_checked_at": null,
@@ -315,7 +315,7 @@ Aturan kontrak:
 - Sumber `broken` atau `restricted` tidak boleh diaktifkan.
 - Tidak ada hard delete pada v1.
 - `last_checked_at` diisi backend setelah percobaan fetch.
-- `access_method` untuk entri yang dikelola pengguna hanya `ats_api` (board satu perusahaan) dan `aggregator` (feed lintas perusahaan dengan adapter resmi, mis. Himalayas). `html` ditolak saat write (`400 validation_failed`, detail `access_method_unsupported`), karena tidak ada adapter yang dapat mengambilnya. `manual_url` bukan pilihan pengguna; nilai itu dipakai record sintetis. Baris lama bertipe `html` tetap dapat dibaca dan dinonaktifkan, tetapi tidak pernah di-fetch.
+- `access_method` untuk entri yang dikelola pengguna hanya `ats_api` (board satu perusahaan). `aggregator` ditolak saat write (`400 validation_failed`, detail `access_method_unsupported`) sampai ada feed dengan ketentuan tertulis dan adapter; feed Himalayas dihapus 2026-10-23. `html` juga ditolak saat write karena tidak ada adapter yang dapat mengambilnya. `manual_url` bukan pilihan pengguna; nilai itu dipakai record sintetis. Baris lama bertipe `aggregator` atau `html` tetap dapat dibaca dan dinonaktifkan, tetapi tidak pernah di-fetch.
 - `health_status` adalah turunan streak kegagalan, bukan penilaian terpisah: `unknown` belum ada percobaan, `healthy` percobaan terakhir sukses, `degraded` 1-2 gagal berurutan, `broken` 3 atau lebih gagal berurutan. `consecutive_failures` direset ke 0 setelah sukses.
 - `next_run_at` adalah slot berikutnya. `null` berarti sumber langsung due. Sumber yang gagal mendapat backoff eksponensial (`interval × 2^(failure-1)`, maksimum faktor 8); `Retry-After` dari server dipakai sebagai lantai, bukan pengganti.
 - `daily_request_quota` membatasi jumlah **HTTP request** per 24 jam, dihitung dari `SUM(discovery_run_source.request_count)` untuk baris yang `last_attempt_at` berada dalam 24 jam terakhir (bukan `source_fetch`, karena respons 304 dan kegagalan tidak menulis baris fetch). Setiap percobaan mencatat jumlah request yang benar-benar dipakai, jadi adapter berhalaman menghitung satu per halaman. `0` berarti tanpa batas. Sumber di-skip dengan `source_quota_exhausted` bila sisa kuota tidak cukup untuk seluruh kebutuhan run, sehingga tidak ada snapshot sebagian.

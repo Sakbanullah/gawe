@@ -9,7 +9,7 @@
 
 Memperluas sumber remote + operability:
 
-- Arbeitnow, Remotive, Jobicy, Himalayas, RemoteOK;
+- Arbeitnow, Remotive, Jobicy, RemoteOK;
 - attribution;
 - cache;
 - backup/restore/purge;
@@ -58,8 +58,8 @@ Lokasi mengikuti proposal `PLAN.md` §12.
 
 ## 5. Persyaratan dan Batasan
 
-- Attribution ditampilkan untuk Remotive, Jobicy, Himalayas, RemoteOK, dan Arbeitnow bila disyaratkan.
-- Batas harian dipatuhi: Remotive ~4 req/hari dengan delay 24 jam; Jobicy maks 1 poll/jam dengan jendela 7 hari; Himalayas 60/menit dan 10k/hari.
+- Attribution ditampilkan untuk Remotive, Jobicy, RemoteOK, dan Arbeitnow bila disyaratkan.
+- Batas harian dipatuhi: Remotive ~4 req/hari dengan delay 24 jam; Jobicy maks 1 poll/jam dengan jendela 7 hari.
 - Cache 24 jam; jangan polling.
 - Rate limit per sumber dipatuhi.
 - Backup/restore memakai dump MySQL; validasi schema version.

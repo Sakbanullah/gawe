@@ -1417,21 +1417,27 @@ export interface components {
         /**
          * @description `manual_url` adalah sumber sintetis sistem (`source_id: manual_url`), bukan
          *     entri registry yang dibuat pengguna. Entri registry buatan pengguna memakai
-         *     `UserManagedAccessMethod`. `aggregator` menandai feed lintas perusahaan
-         *     (mis. Himalayas) yang memakai adapter resmi.
+         *     `UserManagedAccessMethod`. `aggregator` dan `html` hanya muncul pada baris
+         *     lama: sejak 2026-10-23 tidak ada adapter feed, jadi keduanya tidak dapat
+         *     dibuat lagi.
          * @enum {string}
          */
         SourceAccessMethod: "ats_api" | "aggregator" | "html" | "manual_url";
         /**
          * @description Metode akses yang boleh dipilih pengguna saat membuat/mengubah entri source
-         *     registry. `ats_api` untuk board satu perusahaan, `aggregator` untuk feed
-         *     lintas perusahaan. `html` ditolak di write time karena tidak ada adapter
-         *     yang dapat mengambilnya. `manual_url` tidak termasuk karena dikelola sistem.
+         *     registry. Hanya `ats_api` untuk board satu perusahaan yang punya adapter.
+         *     `aggregator` ditolak sampai ada feed dengan ketentuan tertulis dan adapter.
+         *     `html` ditolak di write time karena tidak ada adapter yang dapat
+         *     mengambilnya. `manual_url` tidak termasuk karena dikelola sistem.
          * @enum {string}
          */
-        UserManagedAccessMethod: "ats_api" | "aggregator";
-        /** @enum {string} */
-        SourceAts: "greenhouse" | "lever" | "ashby" | "himalayas" | "unknown";
+        UserManagedAccessMethod: "ats_api";
+        /**
+         * @description Adapter ATS yang tersedia. `himalayas` dihapus 2026-10-23 bersama adapter
+         *     feed-nya.
+         * @enum {string}
+         */
+        SourceAts: "greenhouse" | "lever" | "ashby" | "unknown";
         /** @enum {string} */
         SourceMarket: "indonesia" | "global";
         /**

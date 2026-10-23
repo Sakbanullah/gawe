@@ -1,13 +1,16 @@
 # Klarifikasi ke Himalayas - penghapusan dan retensi lowongan
 
-Status email: **BELUM TERKIRIM**.
-Tujuan: menutup pertanyaan retensi sebelum sumber Himalayas boleh diaktifkan.
+Status: **DITUTUP 2026-10-23**. Catatan ini disimpan sebagai jejak keputusan.
+
+Keputusan pengguna: sumber Himalayas **dihapus** dari daftar sumber yang didukung. Klarifikasi tidak dikirim dan tidak akan dikirim.
+
+Tujuan asli: menutup pertanyaan retensi sebelum sumber Himalayas boleh diaktifkan.
 
 Catatan penomoran: percakapan menyebut pertanyaan ini "D9", tetapi
 [`DECISIONS.md`](../source-of-truth/DECISIONS.md) memakai D9 untuk model reviewer.
 Karena itu catatan ini memakai nama deskriptif, bukan nomor keputusan.
 
-## Mengapa perlu
+## Mengapa pertanyaan ini muncul
 
 `himalayas.app/api` mewajibkan penghapusan lowongan yang sudah tidak aktif, tetapi
 tidak menjelaskan apa arti "remove" bagi salinan lokal, dan tidak menyebut berapa
@@ -16,7 +19,7 @@ penyimpanan `job`, `job_posting_version`, dan `source_fetch` patuh. Hide-only
 (menyembunyikan lowongan dari daftar Matches tanpa menghapus barisnya) **tidak**
 dianggap memenuhi ketentuan.
 
-## Pertanyaan yang dikirim
+## Pertanyaan yang sempat disusun
 
 1. Apakah "remove" berarti menghapus seluruh salinan record dari penyimpanan lokal,
    atau cukup membuatnya tidak lagi ditampilkan?
@@ -28,13 +31,6 @@ dianggap memenuhi ketentuan.
 5. Apakah ada kewajiban tambahan bila salinan dipakai untuk analisis lokal yang tidak
    dipublikasikan ulang?
 
-## Kanal
+## Hasil
 
-`hi@himalayas.app` - alamat yang tercantum di halaman API resmi.
-
-## Dampak selama belum dijawab
-
-- Himalayas tetap tidak aktif: tidak ada entri source berstatus `verified` di DB dev.
-- `FETCHABLE = "verified"` tidak berubah; adapter yang ada tidak mengaktifkan sumber.
-- Retensi tetap sementara (D10), dan klaim kepatuhan tidak dibuat.
-- Rotasi cek status (Tahap G) tetap `BLOCKED` karena bergantung pada jawaban ini.
+Tidak ada jawaban yang diperoleh, dan tidak ada yang diperlukan lagi: sumber tidak dipakai. Adapter, fixture, test, opsi UI, atribusi, dan `GAWE_HIMALAYAS_API_KEY` sudah dihapus. Lihat [`DECISIONS.md`](../source-of-truth/DECISIONS.md) D3 dan bagian "Blocker ditutup".

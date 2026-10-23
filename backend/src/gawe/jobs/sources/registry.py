@@ -13,13 +13,10 @@ from ..health import is_due, next_run_at, retry_at, status_from
 
 FETCHABLE = "verified"
 VERIFICATION = {"unverified", "verified", "restricted", "broken"}
-# Only an ATS or aggregator with an adapter can be fetched, so only those may be
-# created. `html` and `manual_url` stay readable for rows written before this
-# rule.
-ACCESS_METHODS = {"ats_api", "aggregator"}
-# A company board and an aggregator feed are validated differently: the first
-# needs the company's own ATS host, the second its published feed host.
-AGGREGATOR_ATS = {"himalayas"}
+# Only a method with an adapter can be fetched, so only it may be created.
+# `html`, `aggregator`, and `manual_url` stay readable for rows written before
+# this rule.
+ACCESS_METHODS = {"ats_api"}
 # Synthetic source for the manual-URL fallback (API-CONTRACTS.md 3.4): managed
 # by the backend, never listed, never fetched by a discovery run.
 MANUAL_SOURCE_ID = "manual_url"
@@ -69,36 +66,9 @@ def _validate_ats(ats: str, access_method: str, careers_url: str) -> None:
                     "field": "access_method",
                     "code": "access_method_unsupported",
                     "message": (
-                        "Hanya `ats_api` dan `aggregator` yang dapat ditambahkan. Sumber "
-                        "tanpa API resmi memakai fallback URL manual di halaman Applications."
+                        "Hanya `ats_api` yang dapat ditambahkan. Sumber tanpa API resmi "
+                        "memakai fallback URL manual di halaman Applications."
                     ),
-                }
-            ],
-        )
-    if access_method == "aggregator" and ats not in AGGREGATOR_ATS:
-        raise SourceError(
-            "validation_failed",
-            "Aggregator tidak tersedia untuk akses feed.",
-            400,
-            details=[
-                {
-                    "field": "ats",
-                    "code": "ats_unavailable",
-                    "message": "Aggregator harus salah satu dari: "
-                    + ", ".join(sorted(AGGREGATOR_ATS)),
-                }
-            ],
-        )
-    if access_method == "ats_api" and ats in AGGREGATOR_ATS:
-        raise SourceError(
-            "validation_failed",
-            "Aggregator memakai metode akses `aggregator`.",
-            400,
-            details=[
-                {
-                    "field": "access_method",
-                    "code": "access_method_unsupported",
-                    "message": "Sumber aggregator memakai `aggregator`, bukan `ats_api`.",
                 }
             ],
         )

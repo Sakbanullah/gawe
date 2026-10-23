@@ -52,7 +52,7 @@ Setiap sumber adalah record yang dapat dikelola dari web UI:
   "market": "indonesia | global",
   "careers_url": "...",
   "access_method": "ats_api | aggregator | html | manual_url",
-  "ats": "greenhouse | lever | ashby | himalayas | unknown",
+  "ats": "greenhouse | lever | ashby | unknown",
   "verification_status": "unverified | verified | restricted | broken",
   "tos_notes": "...",
   "last_checked_at": null,
@@ -72,7 +72,7 @@ Setiap sumber adalah record yang dapat dikelola dari web UI:
 
 Operasi UI: tambah, edit, nonaktifkan, ubah status verifikasi, atur prioritas/interval/kuota.
 
-`access_method` yang boleh dibuat pengguna hanya `ats_api` (board satu perusahaan) dan `aggregator` (feed lintas perusahaan, mis. Himalayas). `html` ditolak saat write karena tidak ada adapter yang dapat mengambilnya; menyimpannya hanya menjanjikan fetch yang selalu di-skip. Baris lama bertipe `html` tetap terbaca dan dapat dinonaktifkan.
+`access_method` yang boleh dibuat pengguna hanya `ats_api` (board satu perusahaan yang punya adapter). `html` ditolak saat write karena tidak ada adapter yang dapat mengambilnya; menyimpannya hanya menjanjikan fetch yang selalu di-skip. `aggregator` juga ditolak sejak 2026-10-23: satu-satunya adapter feed (Himalayas) dihapus dari daftar sumber. Baris lama bertipe `html`/`aggregator` tetap terbaca dan dapat dinonaktifkan, tetapi tidak pernah di-fetch.
 
 ### Kesehatan dan penjadwalan
 
@@ -142,23 +142,21 @@ Ketiganya per-perusahaan. Cakupan luas membutuhkan daftar perusahaan (D3) yang d
 | Arbeitnow | `GET https://www.arbeitnow.com/api/job-board-api` | Tanpa key; board Jerman/EU; pagination; board penuh besar | Dokumentasi Postman resmi |
 | Remotive | `GET https://remotive.com/api/remote-jobs` | Tanpa key; maks ~4 req/hari; delay 24 jam; attribution + link-back wajib; tanpa redistribusi ke board pihak ketiga | `github.com/remotive-com/remote-jobs-api` |
 | Jobicy | `GET https://jobicy.com/api/v2/remote-jobs` | Tanpa key; jendela 7 hari; cursor; attribution; maks 1 poll/jam; batch status `/api/v2/remote-jobs/status?ids=` | `jobicy.com/jobs-rss-feed` |
-| Himalayas | `GET https://himalayas.app/jobs/api` (cursor, maks 20) dan `/jobs/api/search` | Tanpa key untuk dasar; free key 60/menit & 10k/hari; attribution; tanpa redistribusi; tanpa CORS | `himalayas.app/api`, OpenAPI resmi |
 
 Semua aggregator di atas remote/EU/US-centric. Tidak satu pun menyediakan cakupan Indonesia yang memadai.
 
-#### Adapter Himalayas (aktif di kode, sumber belum diaktifkan)
+#### Feed tanpa adapter (termasuk Himalayas)
 
-- `access_method` = `aggregator`, `ats` = `himalayas`. Host `careers_url` wajib `himalayas.app`.
-- Batas satu run: **5 halaman × 20 record = 100 record**, dinyatakan sebagai `MAX_REQUESTS = 5` pada adapter dan ikut dihitung oleh pemeriksaan kuota (`_planned_requests`). Sisa kuota yang tidak cukup untuk 5 request membuat sumber di-skip whole.
-- Snapshot selalu sebagian: `ParsedJobs.complete = False`, sehingga run tidak pernah menutup lowongan yang tidak terlihat (`partial_snapshot`).
-- `companyName` dipakai apa adanya. Bila kosong, slug dari `guid` (`/companies/<slug>/`) dipakai sebagai nama tampilan dan `company_name` masuk `missing_fields`; record tanpa keduanya di-drop dengan alasan `missing_company`.
-- `applicationLink` dipakai apa adanya, termasuk `?utm_source=api`. Tidak ada URL lamaran yang dikarang.
-- `posted_at` selalu `None` (O6): `pubDate` adalah waktu update terakhir, bukan tanggal posting. `posted_at` masuk `missing_fields`.
-- `locationRestrictions` adalah satu-satunya lokasi yang diterbitkan feed. Daftar kosong berarti sumber tidak menerbitkan batasan, bukan "worldwide": lokasi tetap `None`, masuk `missing_fields`, dan `geo_scope` menjadi `unknown` sehingga tier tidak naik tanpa bukti.
-- Bukti fetch untuk sumber berhalaman disimpan sebagai **manifest** deterministik (`{"pages": [{page, status, bytes, sha256}]}`), bukan salinan seluruh payload.
-- Kunci API opsional dibaca dari `GAWE_HIMALAYAS_API_KEY`; tidak disimpan di config, tidak masuk log, tidak dikembalikan endpoint mana pun. Tanpa kunci, feed tetap berjalan.
-- Atribusi: halaman Settings menampilkan tautan ke `https://himalayas.app` saat ada sumber Himalayas.
-- **Sumber ini belum diaktifkan** karena pertanyaan retensi/penghapusan masih terbuka. Lihat [`../notes/himalayas-clarification.md`](../notes/himalayas-clarification.md).
+Himalayas dihapus dari daftar sumber yang didukung pada 2026-10-23. Dokumentasi API-nya meminta lowongan tidak aktif dihapus, tanpa menjelaskan apakah artinya hapus salinan lokal atau cukup disembunyikan. Pengguna memutuskan tidak mengejar klarifikasi dan tidak memakai sumber ini.
+
+Konsekuensinya:
+
+- Tidak ada `access_method = aggregator` yang dapat dibuat pengguna. Nilai yang boleh ditulis hanya `ats_api`.
+- Adapter `himalayas.py`, fixture, test, opsi UI, atribusi UI, dan `GAWE_HIMALAYAS_API_KEY` dihapus.
+- Pagination generik (`fetch_pages`, `parse_pages`, manifest halaman) ikut dihapus karena tidak ada adapter yang memakainya. Feed Phase 5 menambahkannya kembali bersama adapter dan test-nya. Kontrak snapshot parsial (`ParsedJobs.complete`, `skip_reasons`) tetap ada.
+- Baris registry lama bertipe `aggregator` atau `html` tetap dapat dibaca dan dinonaktifkan, tetapi tidak pernah di-fetch.
+
+Keputusan: [`../source-of-truth/DECISIONS.md`](../source-of-truth/DECISIONS.md) D3 dan "Blocker ditutup".
 
 ### 4.4 Sumber yang tidak dapat dipakai v1
 
@@ -174,6 +172,7 @@ Semua aggregator di atas remote/EU/US-centric. Tidak satu pun menyediakan cakupa
 | LinkedIn, Indeed | Anti-bot/auth/ToS; tidak didukung |
 | Halaman karier perusahaan (HTML) | Satu perusahaan; tergantung robots/ToS; perlu verifikasi per situs |
 | URL manual | Satu lowongan; validasi per request; **fallback**, bukan jalur utama; dapat memakai teks tempel bila halaman menolak akses atau dirender JavaScript |
+| Himalayas | Dihapus 2026-10-23: API mewajibkan penghapusan lowongan tidak aktif tanpa menjelaskan cakupannya, dan klarifikasi tidak dikejar. Adapter dan konfigurasinya ikut dihapus. |
 
 ### 4.5 Catatan cakupan
 
@@ -293,7 +292,7 @@ Aturan:
 - Cache 24 jam; jangan polling melebihi batas sumber.
 - Fetch kondisional dipakai bila sumber mendukung: kirim `If-None-Match` berisi `ETag` snapshot terakhir. Balasan `304 Not Modified` berarti papan tidak berubah, jadi payload tidak diunduh, tidak diparse, dan lowongan **tidak** ditutup. Hanya baris `source_fetch` dengan payload penuh yang menyimpan `etag`.
 - `304` bukan kegagalan dan bukan snapshot kosong. Jangan pernah memperlakukannya sebagai "semua lowongan hilang".
-- Attribution ditampilkan untuk sumber yang mensyaratkannya (Remotive, Jobicy, Himalayas, Arbeitnow bila disyaratkan).
+- Attribution ditampilkan untuk sumber yang mensyaratkannya (Remotive, Jobicy, Arbeitnow bila disyaratkan).
 - Setiap sumber menyimpan catatan ToS dan status verifikasi.
 - Hanya sumber dengan dokumentasi akses resmi yang boleh diimplementasikan.
 

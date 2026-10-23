@@ -1,12 +1,11 @@
 """Source adapters. Only sources with official access documentation live here."""
 
-from . import ashby, greenhouse, himalayas, lever
+from . import ashby, greenhouse, lever
 
 ADAPTERS = {
     greenhouse.ATS: greenhouse,
     lever.ATS: lever,
     ashby.ATS: ashby,
-    himalayas.ATS: himalayas,
 }
 
-__all__ = ["ADAPTERS", "ashby", "greenhouse", "himalayas", "lever"]
+__all__ = ["ADAPTERS", "ashby", "greenhouse", "lever"]

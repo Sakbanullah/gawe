@@ -237,57 +237,6 @@ def fetch_source(
     return fetcher(url)
 
 
-def fetch_pages(
-    source: dict,
-    adapter,
-    *,
-    fetcher: Callable[[str], FetchResponse] | None = None,
-    limiter: HostRateLimiter | None = None,
-    etag: str | None = None,
-) -> tuple[list[FetchResponse], int]:
-    """Walk a paginated feed, at most ``adapter.MAX_REQUESTS`` pages.
-
-    Returns the pages and the number of HTTP requests actually spent. A feed that
-    answers 304 on the first page is unchanged, so the walk stops there with the
-    stored snapshot still valid. The loop stops when the adapter reports no next
-    cursor, or when the page budget is spent: an aggregator feed is never walked
-    whole, so its snapshot is always partial.
-    """
-    budget = max(1, int(getattr(adapter, "MAX_REQUESTS", 1)))
-    limiter = limiter or HostRateLimiter()
-    extra_headers = adapter.headers() if hasattr(adapter, "headers") else None
-    pages: list[FetchResponse] = []
-    cursor: str | None = None
-    requests = 0
-    while len(pages) < budget:
-        url = adapter.build_url(source, cursor)
-        host = (urlsplit(url).hostname or "").lower()
-        limiter.wait(host)
-        requests += 1
-        try:
-            if fetcher is None:
-                page = http_fetch(
-                    url,
-                    frozenset(adapter.HOSTS),
-                    etag=etag if not pages else None,
-                    extra_headers=extra_headers,
-                )
-            else:
-                page = fetcher(url)
-            pages.append(page)
-            if page.not_modified:
-                break
-            cursor = adapter.next_cursor(page.body)
-        except (FetchError, AdapterError) as exc:
-            # The caller counts spent requests from this, even though the walk
-            # stopped early.
-            exc.requests = requests
-            raise
-        if not cursor:
-            break
-    return pages, requests
-
-
 def fetch_document(
     url: str,
     *,

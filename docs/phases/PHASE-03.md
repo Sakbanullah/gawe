@@ -48,7 +48,7 @@ Scope:
 
 Di luar scope:
 
-- aggregator remote/EU dengan attribution (Arbeitnow, Remotive, Jobicy, Himalayas) → Phase 5;
+- aggregator remote/EU dengan attribution (Arbeitnow, Remotive, Jobicy) → Phase 5;
 - perluasan sumber Indonesia dan skala tabel lanjutan → Phase 4;
 - Playwright, OCR, sumber tambahan yang belum terverifikasi → Phase 6;
 - auto-submit, auto-email;

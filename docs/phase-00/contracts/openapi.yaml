@@ -2803,22 +2803,27 @@ components:
       description: |
         `manual_url` adalah sumber sintetis sistem (`source_id: manual_url`), bukan
         entri registry yang dibuat pengguna. Entri registry buatan pengguna memakai
-        `UserManagedAccessMethod`. `aggregator` menandai feed lintas perusahaan
-        (mis. Himalayas) yang memakai adapter resmi.
+        `UserManagedAccessMethod`. `aggregator` dan `html` hanya muncul pada baris
+        lama: sejak 2026-10-23 tidak ada adapter feed, jadi keduanya tidak dapat
+        dibuat lagi.
       enum: [ats_api, aggregator, html, manual_url]
 
     UserManagedAccessMethod:
       type: string
       description: |
         Metode akses yang boleh dipilih pengguna saat membuat/mengubah entri source
-        registry. `ats_api` untuk board satu perusahaan, `aggregator` untuk feed
-        lintas perusahaan. `html` ditolak di write time karena tidak ada adapter
-        yang dapat mengambilnya. `manual_url` tidak termasuk karena dikelola sistem.
-      enum: [ats_api, aggregator]
+        registry. Hanya `ats_api` untuk board satu perusahaan yang punya adapter.
+        `aggregator` ditolak sampai ada feed dengan ketentuan tertulis dan adapter.
+        `html` ditolak di write time karena tidak ada adapter yang dapat
+        mengambilnya. `manual_url` tidak termasuk karena dikelola sistem.
+      enum: [ats_api]
 
     SourceAts:
       type: string
-      enum: [greenhouse, lever, ashby, himalayas, unknown]
+      description: |
+        Adapter ATS yang tersedia. `himalayas` dihapus 2026-10-23 bersama adapter
+        feed-nya.
+      enum: [greenhouse, lever, ashby, unknown]
 
     SourceMarket:
       type: string

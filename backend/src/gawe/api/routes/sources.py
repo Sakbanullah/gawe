@@ -13,10 +13,11 @@ from ..errors import ApiError
 router = APIRouter(prefix="/api/settings/sources")
 
 Market = Literal["indonesia", "global"]
-# `html` and `manual_url` are gone from the request contract: no adapter can
-# fetch them, and offering the option promised a run that always skipped.
-AccessMethod = Literal["ats_api", "aggregator"]
-Ats = Literal["greenhouse", "lever", "ashby", "himalayas", "unknown"]
+# `html`, `aggregator`, and `manual_url` are gone from the request contract: no
+# adapter can fetch them, and offering the option promised a run that always
+# skipped. `aggregator` returns when a feed with documented terms has an adapter.
+AccessMethod = Literal["ats_api"]
+Ats = Literal["greenhouse", "lever", "ashby", "unknown"]
 Verification = Literal["unverified", "verified", "restricted", "broken"]
 Health = Literal["unknown", "healthy", "degraded", "broken"]
 

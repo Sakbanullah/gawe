@@ -115,7 +115,6 @@ Alasan:
 | Remotive API | 200; attribution; maks. ~4 request/hari; data delay 24 jam | Legal notice di response |
 | Jobicy API | 200; attribution; redirect ke URL asli | `friendlyNotice` |
 | RemoteOK API | 200; link-back attribution | Field `legal` |
-| Himalayas API | 200; cursor pagination | Response API |
 | Tectonic 0.17.0 | MIT; Windows single executable; auto-download paket | Dokumentasi resmi |
 | PyMuPDF | AGPL atau komersial | Dokumentasi resmi |
 | MarkItDown | MIT; PDF/DOCX; Python 3.10–3.14 | Repo resmi |
@@ -694,7 +693,6 @@ Setiap sumber adalah record yang dapat dikelola dari web UI:
 | Arbeitnow | JSON API publik | Tidak | Board Jerman/EU, banyak remote | Board penuh ~2 MB; pagination | Terprobe, Phase 5 |
 | Remotive | JSON API | Tidak | Remote global | Attribution; maks. ~4 req/hari; delay 24 jam | Terprobe, Phase 5 |
 | Jobicy | JSON API | Tidak | Remote | Attribution; maks. 1 poll/jam; jendela 7 hari | Terprobe, Phase 5 |
-| Himalayas | JSON API | Tidak (free key opsional) | Remote | Cursor; 60/menit & 10k/hari dengan key; attribution | Terdokumentasi, Phase 5 |
 | RemoteOK | JSON API | Tidak | Remote | Link-back attribution | Belum diverifikasi ulang |
 | Halaman karier perusahaan | HTML | Tidak | Satu perusahaan | Tergantung robots/ToS | Perlu verifikasi per situs |
 | URL manual | HTTP GET | Tidak | Satu lowongan | Hormati robots/ToS; tanpa bypass | Fallback opsional |
@@ -1842,7 +1840,6 @@ D:\gawe\
           arbeitnow.py      # Phase 5
           remotive.py       # Phase 5
           jobicy.py         # Phase 5
-          himalayas.py      # Phase 5
           remoteok.py       # Phase 5
         fetch.py
         normalize.py
@@ -2100,7 +2097,7 @@ Estimasi kasar, bukan komitmen. Urutan build tidak sama dengan urutan produk: pr
 ### Phase 5 — Aggregator dan operasi
 
 - **Tujuan:** perluas sumber remote + operability.
-- **Fitur:** Arbeitnow, Remotive, Jobicy, Himalayas, RemoteOK; attribution; cache; backup/restore/purge; laporan biaya per provider; hardening ekspor dan metadata.
+- **Fitur:** Arbeitnow, Remotive, Jobicy, RemoteOK; attribution; cache; backup/restore/purge; laporan biaya per provider; hardening ekspor dan metadata.
 - **Komponen:** adapter tambahan, `backup`, `purge`.
 - **Dependensi:** Phase 4.
 - **Risiko:** ToS/attribution; data kedaluwarsa; batas harian per sumber.

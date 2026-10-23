@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
   Alert,
-  Anchor,
   Badge,
   Button,
   Card,
@@ -29,12 +28,7 @@ const ATS = [
   { value: "greenhouse", label: "Greenhouse" },
   { value: "lever", label: "Lever" },
   { value: "ashby", label: "Ashby" },
-  { value: "himalayas", label: "Himalayas" },
   { value: "unknown", label: "Lainnya" },
-];
-const ACCESS = [
-  { value: "ats_api", label: "ATS API" },
-  { value: "aggregator", label: "Aggregator" },
 ];
 const VERIFICATION = [
   { value: "unverified", label: "unverified" },
@@ -74,7 +68,6 @@ function CreateSourceForm() {
   const [careersUrl, setCareersUrl] = useState("");
   const [market, setMarket] = useState<string>("global");
   const [ats, setAts] = useState<string>("greenhouse");
-  const [accessMethod, setAccessMethod] = useState<string>("ats_api");
   const [tosNotes, setTosNotes] = useState("");
 
   const ready = company.trim().length > 0 && careersUrl.trim().length > 0;
@@ -131,15 +124,6 @@ function CreateSourceForm() {
             setAts(value ?? "unknown");
           }}
         />
-        <Select
-          label="Akses"
-          data={ACCESS}
-          value={accessMethod}
-          onChange={(value) => {
-            resetError();
-            setAccessMethod(value ?? "ats_api");
-          }}
-        />
       </Group>
       <Textarea
         label="Catatan ToS"
@@ -160,8 +144,8 @@ function CreateSourceForm() {
               company: company.trim(),
               careers_url: careersUrl.trim(),
               market: market as "indonesia" | "global",
-              ats: ats as "greenhouse" | "lever" | "ashby" | "himalayas" | "unknown",
-              access_method: accessMethod as "ats_api" | "aggregator",
+              ats: ats as "greenhouse" | "lever" | "ashby" | "unknown",
+              access_method: "ats_api",
               tos_notes: tosNotes.trim() || undefined,
               enabled: false,
               priority_order: 100,
@@ -189,7 +173,6 @@ function EditSourceModal({
   const [careersUrl, setCareersUrl] = useState(source.careers_url);
   const [market, setMarket] = useState<string>(source.market);
   const [ats, setAts] = useState<string>(source.ats);
-  const [accessMethod, setAccessMethod] = useState<string>(source.access_method);
   const [verification, setVerification] = useState<string>(source.verification_status);
   const [enabled, setEnabled] = useState(source.enabled);
   const [priority, setPriority] = useState<number>(source.priority_order);
@@ -246,16 +229,6 @@ function EditSourceModal({
             onChange={(value) => {
               resetError();
               setAts(value ?? "unknown");
-            }}
-          />
-          <Select
-            label="Akses"
-            data={ACCESS}
-            value={accessMethod}
-            error={fieldError(error, "access_method")}
-            onChange={(value) => {
-              resetError();
-              setAccessMethod(value ?? "ats_api");
             }}
           />
         </Group>
@@ -340,12 +313,6 @@ function EditSourceModal({
                     careers_url: careersUrl.trim(),
                     market: market as "indonesia" | "global",
                     ats: ats as SourceRegistryEntry["ats"],
-                    // A legacy row may still hold `html`, which the request
-                    // contract no longer accepts. Sending it back unchanged would
-                    // make the row unsavable, so only a real change is sent.
-                    ...(accessMethod === source.access_method
-                      ? {}
-                      : { access_method: accessMethod as "ats_api" | "aggregator" }),
                     verification_status: verification as SourceRegistryEntry["verification_status"],
                     enabled,
                     priority_order: priority,
@@ -461,15 +428,6 @@ export function SourceRegistry({ editable = false }: { editable?: boolean }) {
             </Table.Tbody>
           </Table>
         )}
-        {items.some((source) => source.ats === "himalayas") ? (
-          <Text size="xs" c="dimmed">
-            Data lowongan dari{" "}
-            <Anchor href="https://himalayas.app" target="_blank" rel="noreferrer">
-              Himalayas
-            </Anchor>
-            . Tautan melamar dibuka apa adanya.
-          </Text>
-        ) : null}
         {update.error ? <Alert color="red">{errorText(update.error)}</Alert> : null}
         {editable ? <CreateSourceForm /> : null}
         {editing ? <EditSourceModal source={editing} onClose={() => setEditing(null)} /> : null}
