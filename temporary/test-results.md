@@ -776,3 +776,25 @@ Perintah:
 - `docs/README.md` dipulihkan lewat `git checkout`; `README.md` root dihapus, sehingga link relatif kembali benar.
 - `prompts/` dipindah ke `temporary/prompts-stray/` (gitignored, tidak ikut commit).
 - `test_fit_count_skips_closed_jobs` diverifikasi dengan mutasi balik: menghapus filter `j.status = 'open'` membuat test gagal (`assert 2 == 1`), lalu file dipulihkan.
+
+## Run 2026-10-23 - penutupan Tahap 1 Phase 3 (paket review ulang)
+
+### Backend
+- `cd backend; .\.venv\Scripts\python.exe -m pytest tests -o addopts="" -q -p no:warnings --ignore=tests/test_live_9router.py`
+- Hasil: **500 passed, 0 failed, 0 skipped in 98.69s** (exit 0). Naik 3 dari 497 karena test yang
+  ditambahkan pada commit sebelumnya kini ikut terhitung; tidak ada test yang diubah pada run ini.
+- Satu warning deprecation httpx/testclient disembunyikan oleh `-p no:warnings`, sudah ada sebelumnya.
+
+### Paket review manusia (bukan test suite)
+- `backend\.venv\Scripts\python.exe temporary\review_package.py` -> selesai; discovery
+  `run_6584f4035f71` (3 sumber, 388 job di-fetch/diterima), 2 sampel dokumen lengkap sampai ekspor,
+  1 URL manual.
+- `backend\.venv\Scripts\python.exe temporary\verify_review_samples.py` -> 4 PDF OK
+  (1/1, 1/2, 1/1, 1/2 halaman), `problems: 0`.
+- Paket 2026-10-21 diarsipkan di `temporary/review-samples-2026-10-21/` karena kedua lowongannya
+  kini `region_locked` dan tidak bisa `eligible` lagi.
+
+### Yang belum dijalankan
+- Frontend `vitest` dan `tsc --noEmit` tidak dijalankan ulang: tidak ada perubahan frontend pada
+  run ini. Bukti terakhir tetap 7 files / 45 passed.
+- `CHECKLIST.md` tidak diisi: butuh penilaian manusia. Gate 11 Phase 3 tetap belum lulus.

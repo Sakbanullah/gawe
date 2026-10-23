@@ -334,10 +334,41 @@ Batasan: tidak ada uji UI manual; tidak ada data kandidat nyata di log; kualitas
 - `status/projector.py` belum ada; proyeksi status tetap di `ApplicationService` dan `DocumentService`.
 - Retensi dokumen mengikuti D10 yang masih `OPEN`; semua durasi tetap sementara.
 - Kualitas isi draft belum diuji dengan reviewer manusia; paket sampel siap di `temporary/review-samples/` (README + CHECKLIST, belum diisi). Tailoring deterministik hanya memilih dan mengurutkan fakta yang ada.
+- Paket sampel dibuat ulang 2026-10-23 karena paket 2026-10-21 (GitLab, Linear) tidak lagi valid: aturan geo 2026-10-22 hanya mengizinkan `indonesia`/`worldwide` menjadi `eligible`, sedangkan kedua lowongan itu `region_locked`. Paket baru memakai Supabase (Ashby) dan Canonical (Greenhouse) yang `worldwide`; keduanya `eligible` dengan dokumen versi 1 `approved` dan PDF 1/1 serta 1/2 halaman. Paket lama diarsipkan di `temporary/review-samples-2026-10-21/`. Gate 11 tetap **belum** lulus: CHECKLIST belum diisi manusia.
 - Dua temuan dari penyiapan sampel **sudah diperbaiki 2026-10-21** (tanpa commit): (a) `apply_url` kosong untuk job Greenhouse — adapter kini memakai `absolute_url` sebagai `apply_url` karena Job Board API tidak punya endpoint apply terpisah dan form lamaran dirender di halaman posting itu; (b) ekstraksi requirement memisahkan section, membuang section benefit/EEO/`about`/`responsibilities`, dan menolak kalimat benefit atau boilerplate sebagai gate. Bukti: `tests/test_discovery_adapters.py`, `tests/test_assessment.py`, dan evaluasi ulang sampel di `temporary/test-results.md`. Gate lain di bawah tetap terbuka.
 - Adapter `html` untuk sumber registry tidak diimplementasikan dan tidak akan: sejak 2026-10-22 `access_method: html` ditolak saat write (`400 validation_failed`, detail `access_method_unsupported`), karena menyimpannya hanya menjanjikan fetch yang selalu di-skip. Run discovery terjadwal sudah ada (`DiscoveryScheduler`, default mati).
 - Sumber Indonesia belum aktif (D17 + ToS/atribusi).
 
+### 8.3 Paket review 2026-10-23 (menggantikan paket 2026-10-21)
+
+Paket 2026-10-21 memakai GitLab (Strategic Account Executive) dan Linear (Product Engineer).
+Keduanya tercatat `eligible` dengan fit 68/57, tetapi aturan geo 2026-10-22 hanya mengizinkan
+`indonesia`/`worldwide` menjadi `eligible`; mengevaluasi ulang keduanya dengan kode sekarang
+menghasilkan `needs_review` (`region_locked`). Paket itu karena itu tidak lagi sah sebagai bukti
+3D dan diarsipkan apa adanya di `temporary/review-samples-2026-10-21/`.
+
+Paket baru dibuat ulang dengan kode sekarang, alur `/setup` sampai ekspor, dan network nyata:
+
+| Sampel | Lowongan | Lokasi | Eligibility | Fit | CV | Cover letter |
+|---|---|---|---|---|---|---|
+| `1-supabase` | Supabase — GRC Analyst | `Remote, Global` | `eligible` | 88 | 1/2 halaman | 1/1 halaman |
+| `2-canonical` | Canonical — Site Reliability / Gitops Engineer | `Home based - Worldwide` | `eligible` | 88 | 1/2 halaman | 1/1 halaman |
+| `manual-url` | Stripe via fallback URL manual | — | `needs_review` | — | tidak dibuat (benar) | tidak dibuat (benar) |
+
+- Discovery: `run_6584f4035f71`, 3 sumber, 388 job di-fetch, 388 diterima (Binance 17, Canonical 312, Supabase 59).
+- Matches: 383 total, 104 `eligible`, 262 `needs_review`, 17 `ineligible`.
+- Dokumen: 4 versi (CV + cover letter × 2), semua `approved`, review deterministik `pass`, 0 findings, ekspor `exported`.
+- PDF: `backend\.venv\Scripts\python.exe temporary\verify_review_samples.py` → 4 PDF OK, `problems: 0`; Tectonic 0.17.0.
+- Profil: `prv_90855b912635`, sintetis dari `docs/phase-00/fixtures/master_cv/candidate_001.md`.
+
+Catatan untuk reviewer, bukan cacat yang diperbaiki: kedua lowongan mendapat fit 88 walau
+profil hanya berisi pengalaman backend. Angka itu mengikuti formula yang berlaku
+(`must_coverage` 1.0 karena hanya satu requirement terekstrak, `nice_coverage` 1.0 karena tidak
+ada nice-to-have, `experience_fit` fallback 0.5). Ini alasan skor fit belum bisa dipakai sebagai
+bukti relevansi, dan tetap `OPEN` di `ELIGIBILITY-AND-SCORING.md` §4.
+
+Gate 11 tetap **belum** lulus: `CHECKLIST.md` belum diisi manusia, dan tidak ada klaim kualitas
+dibuat di sini.
 
 ---
 
