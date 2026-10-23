@@ -798,3 +798,42 @@ Perintah:
 - Frontend `vitest` dan `tsc --noEmit` tidak dijalankan ulang: tidak ada perubahan frontend pada
   run ini. Bukti terakhir tetap 7 files / 45 passed.
 - `CHECKLIST.md` tidak diisi: butuh penilaian manusia. Gate 11 Phase 3 tetap belum lulus.
+
+## Run 2026-10-23 (lanjutan) - perbaikan PK `job_requirement` + paket review dibuat ulang
+
+### Perubahan yang diuji
+- Migrasi baru `backend/src/gawe/db/migrations/0015_requirement_version_key.sql`: primary key
+  `job_requirement` menjadi `(job_posting_version_id, requirement_id)`.
+- Test regresi `tests/test_assessment.py::test_two_jobs_sharing_requirement_text_keep_their_own_rows`.
+- Paket `temporary/review-samples/` dibuat ulang setelah migrasi diterapkan.
+
+### Backend
+- `cd backend; .\.venv\Scripts\python.exe -m pytest tests -o addopts="" -q -p no:warnings --ignore=tests/test_live_9router.py`
+- Hasil: **501 passed, 0 failed, 0 skipped in 99.49s** (exit 0). Naik 1 dari 500 karena satu test
+  regresi baru; tidak ada test lama yang diubah.
+- `tests/test_db.py` + `tests/test_assessment.py`: 117 passed in 10.75s.
+- `tests/test_documents.py tests/test_applications.py tests/test_manual_fallback.py tests/test_closed_jobs.py`:
+  69 passed in 23.03s.
+- Bukti test menangkap cacat: dengan migrasi 0015 dipindahkan keluar sementara, test regresi gagal
+  (`AssertionError: [{'job_posting_version_id': 'jpv_8481813ead0b', 'total': 1}]`, `assert 1 == 2`);
+  setelah migrasi dikembalikan, test lulus.
+- Idempotensi migrasi diverifikasi langsung pada schema scratch (`temporary/_check_upgrade_path.py`):
+  database di 0014 punya PK `['requirement_id']`; migrasi ke 0015 menghasilkan
+  `['job_posting_version_id', 'requirement_id']`; menghapus baris `schema_version` 0015 dan
+  menjalankan ulang tidak mengubah PK.
+
+### Paket review manusia (bukan test suite)
+- `backend\.venv\Scripts\python.exe temporary\review_package.py` -> selesai; discovery
+  `run_e438035fae5b` (Supabase 59, GitLab 230, Stripe gagal 5.65 MB > 5 MB), run `partial`,
+  283 matches (28 eligible / 236 needs_review / 19 ineligible).
+- Sampel 2 kini menampilkan 3 requirement (sebelum perbaikan: 0).
+- `backend\.venv\Scripts\python.exe temporary\verify_review_samples.py` -> 4 PDF OK
+  (CV 1 halaman dari batas 2, cover letter 1 halaman dari batas 1, untuk kedua sampel),
+  `problems: 0`.
+
+### Yang belum dijalankan
+- Frontend `vitest` dan `tsc --noEmit` tidak dijalankan ulang: tidak ada perubahan frontend.
+  Bukti terakhir tetap 7 files / 45 passed.
+- `CHECKLIST.md` tetap tidak diisi: butuh penilaian manusia. Gate 11 Phase 3 belum lulus.
+- Perbaikan data lama untuk baris `job_requirement` yang sudah salah versi tidak dilakukan otomatis;
+  lowongan yang sudah punya assessment perlu dinilai ulang eksplisit.

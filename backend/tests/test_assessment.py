@@ -614,6 +614,52 @@ def test_reassessment_is_idempotent(setup_client, csrf, monkeypatch, connection)
     ).fetchone()["total"] == len(after["items"])
 
 
+def test_two_jobs_sharing_requirement_text_keep_their_own_rows(
+    setup_client, csrf, monkeypatch, connection
+) -> None:
+    """requirement_id hashes category and text, so two jobs share one id.
+
+    The primary key used to be requirement_id alone, so the second job's row
+    was folded into the first job's version and its detail lost the requirement.
+    """
+    _confirm(setup_client, csrf)
+    requirement = "5+ years backend experience"
+    board = json.dumps(
+        {
+            "jobs": [
+                {
+                    "id": 2001,
+                    "title": "Backend Engineer",
+                    "absolute_url": "https://boards.greenhouse.io/acme/jobs/2001",
+                    "location": {"name": "Remote - Worldwide"},
+                    "content": f"<p>Requirements:</p><ul><li>{requirement}</li></ul>",
+                },
+                {
+                    "id": 2002,
+                    "title": "Data Engineer",
+                    "absolute_url": "https://boards.greenhouse.io/acme/jobs/2002",
+                    "location": {"name": "Remote - Worldwide"},
+                    "content": f"<p>Requirements:</p><ul><li>{requirement}</li></ul>",
+                },
+            ]
+        }
+    )
+    source = _create_source(setup_client, csrf, monkeypatch, company="Acme", board="acme")
+    _use(setup_client, _Fetcher({"boards-api": board}), monkeypatch)
+    _run(setup_client, csrf, source["source_id"])
+
+    rows = connection.execute(
+        "SELECT job_posting_version_id, COUNT(*) AS total FROM job_requirement "
+        "GROUP BY job_posting_version_id"
+    ).fetchall()
+    assert len(rows) == 2, rows
+    assert all(row["total"] == 1 for row in rows), rows
+
+    for item in setup_client.get("/api/matches").json()["items"]:
+        detail = setup_client.get(f"/api/matches/{item['job']['job_id']}").json()
+        assert detail["job_detail"]["requirements"], item["job"]["job_id"]
+
+
 # -- 3D contract gaps --------------------------------------------------------
 def test_matches_hidden_count_and_search_run_in_sql(
     setup_client, csrf, monkeypatch, connection

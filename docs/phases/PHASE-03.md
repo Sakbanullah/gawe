@@ -334,7 +334,7 @@ Batasan: tidak ada uji UI manual; tidak ada data kandidat nyata di log; kualitas
 - `status/projector.py` belum ada; proyeksi status tetap di `ApplicationService` dan `DocumentService`.
 - Retensi dokumen mengikuti D10 yang masih `OPEN`; semua durasi tetap sementara.
 - Kualitas isi draft belum diuji dengan reviewer manusia; paket sampel siap di `temporary/review-samples/` (README + CHECKLIST, belum diisi). Tailoring deterministik hanya memilih dan mengurutkan fakta yang ada.
-- Paket sampel dibuat ulang 2026-10-23 karena paket 2026-10-21 (GitLab, Linear) tidak lagi valid: aturan geo 2026-10-22 hanya mengizinkan `indonesia`/`worldwide` menjadi `eligible`, sedangkan kedua lowongan itu `region_locked`. Paket baru memakai Supabase (Ashby) dan Canonical (Greenhouse) yang `worldwide`; keduanya `eligible` dengan dokumen versi 1 `approved` dan PDF 1/1 serta 1/2 halaman. Paket lama diarsipkan di `temporary/review-samples-2026-10-21/`. Gate 11 tetap **belum** lulus: CHECKLIST belum diisi manusia.
+- Paket sampel dibuat ulang 2026-10-23 karena paket 2026-10-21 (GitLab, Linear) tidak lagi valid: aturan geo 2026-10-22 hanya mengizinkan `indonesia`/`worldwide` menjadi `eligible`, sedangkan kedua lowongan itu `region_locked`. Paket baru hanya memakai sumber yang disetujui D3 dan mengambil dua hasil teratas ranking (Supabase GRC Analyst fit 88, Supabase Customer Solution Architect fit 57), keduanya `eligible` dengan dokumen versi 1 `approved` dan PDF 1/1 serta 1/2 halaman. Paket lama diarsipkan di `temporary/review-samples-2026-10-21/`. Gate 11 tetap **belum** lulus: CHECKLIST belum diisi manusia.
 - Dua temuan dari penyiapan sampel **sudah diperbaiki 2026-10-21** (tanpa commit): (a) `apply_url` kosong untuk job Greenhouse — adapter kini memakai `absolute_url` sebagai `apply_url` karena Job Board API tidak punya endpoint apply terpisah dan form lamaran dirender di halaman posting itu; (b) ekstraksi requirement memisahkan section, membuang section benefit/EEO/`about`/`responsibilities`, dan menolak kalimat benefit atau boilerplate sebagai gate. Bukti: `tests/test_discovery_adapters.py`, `tests/test_assessment.py`, dan evaluasi ulang sampel di `temporary/test-results.md`. Gate lain di bawah tetap terbuka.
 - Adapter `html` untuk sumber registry tidak diimplementasikan dan tidak akan: sejak 2026-10-22 `access_method: html` ditolak saat write (`400 validation_failed`, detail `access_method_unsupported`), karena menyimpannya hanya menjanjikan fetch yang selalu di-skip. Run discovery terjadwal sudah ada (`DiscoveryScheduler`, default mati).
 - Sumber Indonesia belum aktif (D17 + ToS/atribusi).
@@ -351,21 +351,47 @@ Paket baru dibuat ulang dengan kode sekarang, alur `/setup` sampai ekspor, dan n
 
 | Sampel | Lowongan | Lokasi | Eligibility | Fit | CV | Cover letter |
 |---|---|---|---|---|---|---|
-| `1-supabase` | Supabase — GRC Analyst | `Remote, Global` | `eligible` | 88 | 1/2 halaman | 1/1 halaman |
-| `2-canonical` | Canonical — Site Reliability / Gitops Engineer | `Home based - Worldwide` | `eligible` | 88 | 1/2 halaman | 1/1 halaman |
+| `1-supabase-grc-analyst` | Supabase — GRC Analyst | `Remote, Global` | `eligible` | 88 | 1/2 halaman | 1/1 halaman |
+| `2-supabase-customer-solution-architect-au` | Supabase — Customer Solution Architect (AU, NZ, SG) | `Remote, APAC` | `eligible` | 57 | 1/2 halaman | 1/1 halaman |
 | `manual-url` | Stripe via fallback URL manual | — | `needs_review` | — | tidak dibuat (benar) | tidak dibuat (benar) |
 
-- Discovery: `run_6584f4035f71`, 3 sumber, 388 job di-fetch, 388 diterima (Binance 17, Canonical 312, Supabase 59).
-- Matches: 383 total, 104 `eligible`, 262 `needs_review`, 17 `ineligible`.
-- Dokumen: 4 versi (CV + cover letter × 2), semua `approved`, review deterministik `pass`, 0 findings, ekspor `exported`.
-- PDF: `backend\.venv\Scripts\python.exe temporary\verify_review_samples.py` → 4 PDF OK, `problems: 0`; Tectonic 0.17.0.
-- Profil: `prv_90855b912635`, sintetis dari `docs/phase-00/fixtures/master_cv/candidate_001.md`.
+- Discovery: `run_e438035fae5b`, sumber yang disetujui D3 saja (Supabase, GitLab, Stripe).
+  Supabase 59 job, GitLab 230 job, **Stripe gagal** (payload 5.65 MB > batas 5 MB di
+  `security/url_guard.py`), run berstatus `partial`.
+- Matches: 283 total, 28 `eligible`, 236 `needs_review`, 19 `ineligible`.
+- Dokumen: 4 versi (CV + cover letter × 2), semua `approved`, review deterministik `pass`,
+  0 findings, ekspor `exported`.
+- PDF: `backend\.venv\Scripts\python.exe temporary\verify_review_samples.py` → 4 PDF OK,
+  `problems: 0`; Tectonic 0.17.0.
+- Profil: `prv_4571e7c7bb29`, sintetis dari `docs/phase-00/fixtures/master_cv/candidate_001.md`.
+- Cacat yang ditemukan saat menyiapkan paket dan **sudah diperbaiki**: `job_requirement` memakai
+  `requirement_id` (hash kategori + teks) sebagai primary key tunggal, sehingga dua lowongan dengan
+  teks requirement sama berbagi satu baris. `ON DUPLICATE KEY UPDATE` tidak memindahkan
+  `job_posting_version_id`, jadi versi kedua kehilangan requirement-nya; pada paket sebelumnya
+  sampel 2 tampil tanpa requirement padahal eligibility-nya memakai tiga. Migrasi
+  `0015_requirement_version_key.sql` menjadikan primary key gabungan
+  `(job_posting_version_id, requirement_id)`, dan `tests/test_assessment.py` mengunci perilakunya
+  lewat dua lowongan berteks sama. Paket di atas dibuat setelah perbaikan.
 
-Catatan untuk reviewer, bukan cacat yang diperbaiki: kedua lowongan mendapat fit 88 walau
-profil hanya berisi pengalaman backend. Angka itu mengikuti formula yang berlaku
-(`must_coverage` 1.0 karena hanya satu requirement terekstrak, `nice_coverage` 1.0 karena tidak
-ada nice-to-have, `experience_fit` fallback 0.5). Ini alasan skor fit belum bisa dipakai sebagai
-bukti relevansi, dan tetap `OPEN` di `ELIGIBILITY-AND-SCORING.md` §4.
+Sisa data lama: baris `job_requirement` yang sudah telanjur menempel di versi yang salah tidak
+dipindahkan otomatis oleh migrasi. Lowongan yang sudah punya assessment tidak dinilai ulang oleh
+`assess_pending`, jadi requirement-nya baru lengkap setelah dinilai ulang secara eksplisit. Paket
+review di atas dibuat pada schema baru, jadi tidak membawa data lama.
+
+Catatan untuk reviewer, bukan cacat yang diperbaiki:
+
+- Kedua sampel berasal dari satu perusahaan. Dari enam sumber yang disetujui D3, hanya
+  Supabase yang masih punya lowongan `worldwide`/`APAC` yang dapat `eligible`; GitLab,
+  Stripe, Linear, dan PostHog seluruhnya `region_locked`/`unknown`. Menambah perusahaan
+  berarti mengaktifkan sumber di luar D3, yang belum disetujui.
+- Sampel 1 mendapat fit 88 untuk peran GRC Analyst padahal profil hanya berisi pengalaman
+  backend. Angka itu mengikuti formula yang berlaku: satu `must_have` terekstrak dan
+  terpenuhi (bobot 60), tidak ada `nice_to_have` (bobot 15 dihitung penuh), dan
+  `experience_fit` memakai fallback 0.5 (bobot 12.5). Ini alasan skor fit belum bisa
+  dipakai sebagai bukti relevansi, dan tetap `OPEN` di `ELIGIBILITY-AND-SCORING.md` §4.
+- Board Stripe (726 lowongan) tidak dapat diambil utuh karena payload 5.65 MB melebihi batas
+  5 MB. Menaikkan batas itu keputusan keamanan, bukan perbaikan rutin; dicatat sebagai
+  blocker skala untuk Phase 4, bukan cacat paket review.
 
 Gate 11 tetap **belum** lulus: `CHECKLIST.md` belum diisi manusia, dan tidak ada klaim kualitas
 dibuat di sini.
