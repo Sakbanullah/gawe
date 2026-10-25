@@ -157,13 +157,42 @@ class DocumentService:
         document_version_id: str,
         base_content_hash: str,
         reason: str,
+        finding_ids: list[str] | None = None,
     ) -> dict:
+        """New version from a checked subset of findings.
+
+        `finding_ids=None` keeps the old behaviour (every open finding is passed
+        as an instruction). A list narrows the writer to those findings only; the
+        review gates still judge the whole new version, so an unchecked blocker
+        keeps the new version unapprovable.
+        """
         record = self._application(application_id)
         parent = self._version(application_id, document_version_id)
         if parent["content_hash"] != base_content_hash:
             raise DocumentError(
                 "version_conflict", "Hash versi berubah; muat ulang sebelum regenerate.", 409
             )
+        selected = finding_ids
+        if selected is not None:
+            known = {
+                str(item.get("finding_id"))
+                for item in (parent.get("findings") or {}).get("findings") or []
+                if item.get("finding_id")
+            }
+            unknown = [item for item in selected if item not in known]
+            if unknown:
+                raise DocumentError(
+                    "unknown_finding",
+                    "Finding yang dipilih tidak ada di versi ini.",
+                    400,
+                    details=[
+                        {
+                            "field": "finding_ids",
+                            "code": "unknown_finding",
+                            "message": ", ".join(unknown[:5]),
+                        }
+                    ],
+                )
         self._require_eligible(record)
         self._require_no_active_task(application_id)
         if self._iteration_index(document_version_id) >= MAX_ITERATIONS:
@@ -196,7 +225,7 @@ class DocumentService:
                 language=parent["content"].get("language") or "en",
                 template_version=parent["template_version"],
                 parent=parent,
-                revision_instructions=_revision_instructions(parent),
+                revision_instructions=_revision_instructions(parent, only_ids=selected),
             )
         except DocumentError as exc:
             self._tasks.fail(task_id, exc.code, exc.message, "draft")
@@ -989,11 +1018,12 @@ def _version_row(row: dict) -> dict:
     return record
 
 
-def _revision_instructions(report: dict) -> str:
+def _revision_instructions(report: dict, only_ids: set[str] | None = None) -> str:
     """Turn open findings into instructions for the next write call.
 
     Only findings the writer can act on are passed: the writer cannot add facts,
     so a factuality blocker becomes a request to remove or soften the claim.
+    `only_ids` restricts the list to the findings the user checked.
 
     `report` is either a review report or a stored document version. The version
     keeps its review under `findings.findings`, a report keeps it at `findings`;
@@ -1005,6 +1035,8 @@ def _revision_instructions(report: dict) -> str:
     lines: list[str] = []
     for finding in raw or []:
         if not isinstance(finding, dict):
+            continue
+        if only_ids is not None and str(finding.get("finding_id")) not in only_ids:
             continue
         if finding.get("severity") not in {"blocker", "major", "minor"}:
             continue

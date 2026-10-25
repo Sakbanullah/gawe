@@ -55,6 +55,10 @@ class RegenerateRequest(BaseModel):
 
     base_content_hash: str = Field(min_length=1, max_length=128)
     reason: Literal["user_requested", "review_changes", "outdated_source"]
+    # Checked findings for the next write call. Omitted keeps the old behaviour
+    # (every open finding is passed as an instruction).
+    finding_ids: list[str] | None = Field(default=None, min_length=1, max_length=200)
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class ApprovalRequest(BaseModel):
@@ -168,7 +172,45 @@ def regenerate_document(
 ) -> dict:
     try:
         task = _service(request).regenerate(
-            application_id, document_version_id, body.base_content_hash, body.reason
+            application_id,
+            document_version_id,
+            body.base_content_hash,
+            body.reason,
+            finding_ids=body.finding_ids,
+        )
+    except DocumentError as exc:
+        _raise(exc, "draft")
+    return _task_payload(task, "document_generation", application_id)
+
+
+@router.post(
+    "/{application_id}/documents/{document_version_id}/revision-request", status_code=202
+)
+def request_document_revision(
+    request: Request, application_id: str, document_version_id: str, body: RegenerateRequest
+) -> dict:
+    """New version built only from the findings the user checked.
+
+    Same loop as regenerate, but `finding_ids` is required: an unchecked finding
+    is not passed to the writer. The approval gates still judge the whole version.
+    """
+    if not body.finding_ids:
+        raise ApiError(
+            400,
+            "validation_failed",
+            "Pilih minimal satu temuan.",
+            stage="validation",
+            details=[
+                {"field": "finding_ids", "code": "empty", "message": "Minimal satu."}
+            ],
+        )
+    try:
+        task = _service(request).regenerate(
+            application_id,
+            document_version_id,
+            body.base_content_hash,
+            body.reason,
+            finding_ids=body.finding_ids,
         )
     except DocumentError as exc:
         _raise(exc, "draft")

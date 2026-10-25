@@ -2,6 +2,7 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   Divider,
   Group,
   Paper,
@@ -11,7 +12,7 @@ import {
   Textarea,
   Title,
 } from "@mantine/core";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ApiError, type DocumentVersion } from "../app/apiClient";
 import { documentPdfUrl, exportDownloadUrl } from "../app/apiClient";
@@ -22,6 +23,7 @@ import {
   useDocumentFindings,
   useDocumentVersion,
   useExports,
+  useRequestDocumentRevision,
   useRunDocumentReview,
 } from "../app/queries";
 
@@ -84,10 +86,12 @@ export function DocumentReviewPanel({
   const review = useRunDocumentReview();
   const approve = useApproveDocument();
   const revise = useCreateDocumentRevision();
+  const requestRevision = useRequestDocumentRevision();
   const exportDocument = useCreateExport();
   const exports = useExports(applicationId);
   const [note, setNote] = useState("");
   const [summary, setSummary] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
 
   const data: DocumentVersion | undefined = version.data;
   const content = (data?.content ?? {}) as unknown as Content;
@@ -96,6 +100,28 @@ export function DocumentReviewPanel({
     documentVersionId,
     data?.review_status === "completed",
   );
+  const allFindings = findings.data?.findings ?? [];
+  const actionable = allFindings.filter(
+    (item) => item.severity === "blocker" || item.severity === "major",
+  );
+
+  // Default to the ones the gate really blocks on; nothing is preselected when
+  // the review has no actionable finding yet.
+  useEffect(() => {
+    setSelected(actionable.map((item) => item.finding_id));
+  }, [findings.data]);
+
+  function toggleFinding(findingId: string) {
+    setSelected((current) =>
+      current.includes(findingId)
+        ? current.filter((item) => item !== findingId)
+        : [...current, findingId],
+    );
+  }
+
+  function selectAllFindings() {
+    setSelected(allFindings.map((item) => item.finding_id));
+  }
   const diff = (data?.diff ?? {}) as { base?: string; items?: DiffItem[] };
   const missing = content.missing ?? [];
   const verdict = findings.data?.verdict;
@@ -256,18 +282,38 @@ export function DocumentReviewPanel({
                 {(findings.data?.findings ?? []).filter((item) => item.severity === "major").length}
               </Text>
             </Group>
-            {(findings.data?.findings ?? []).map((finding) => (
-              <Alert
-                key={finding.finding_id}
-                color={finding.severity === "blocker" ? "red" : "orange"}
-                title={`${finding.severity}: ${finding.category}`}
-              >
-                <Text size="sm">{finding.problem}</Text>
-                <Text size="xs" c="dimmed">
-                  {finding.quote}
-                </Text>
-              </Alert>
-            ))}
+            {(findings.data?.findings ?? []).map((finding) => {
+              const checked = selected.includes(finding.finding_id);
+              return (
+                <Alert
+                  key={finding.finding_id}
+                  color={finding.severity === "blocker" ? "red" : "orange"}
+                  title={`${finding.severity}: ${finding.category}`}
+                >
+                  <Checkbox
+                    checked={checked}
+                    onChange={() => toggleFinding(finding.finding_id)}
+                    label={
+                      <Text size="sm" fw={500}>
+                        {finding.problem}
+                      </Text>
+                    }
+                    description={finding.quote ?? undefined}
+                  />
+                </Alert>
+              );
+            })}
+            <Group gap="xs">
+              <Button size="xs" variant="subtle" onClick={selectAllFindings}>
+                Pilih semua
+              </Button>
+              <Button size="xs" variant="subtle" onClick={() => setSelected([])}>
+                Kosongkan
+              </Button>
+              <Text size="xs" c="dimmed">
+                Hanya temuan bercentang yang diminta diperbaiki ke versi baru.
+              </Text>
+            </Group>
           </>
         ) : null}
 
@@ -301,15 +347,15 @@ export function DocumentReviewPanel({
           <Button
             variant="light"
             color="orange"
-            loading={approve.isPending}
-            disabled={data.review_status !== "completed" || data.approved}
+            loading={requestRevision.isPending}
+            disabled={!selected.length || data.approved}
             onClick={() =>
-              void approve.mutateAsync({
+              void requestRevision.mutateAsync({
                 applicationId,
                 documentVersionId,
                 contentHash: data.content_hash,
-                decision: "changes_requested",
-                note,
+                findingIds: selected,
+                note: note.trim() || undefined,
               })
             }
           >

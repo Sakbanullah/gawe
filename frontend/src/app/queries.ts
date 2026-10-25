@@ -36,6 +36,7 @@ import {
   approveDocumentVersion,
   createDocumentRevision,
   generateDocuments,
+  requestDocumentRevision,
   runDocumentReview,
   type MatchQuery,
   type ExportRequest,
@@ -262,6 +263,24 @@ export function useCreateDocumentRevision() {
       createDocumentRevision(args.applicationId, args.documentVersionId, {
         base_content_hash: args.baseContentHash,
         edits: [{ path: args.path, value: args.value }],
+      }),
+  );
+}
+
+export function useRequestDocumentRevision() {
+  return useSetupMutation(
+    (args: {
+      applicationId: string;
+      documentVersionId: string;
+      contentHash: string;
+      findingIds: string[];
+      note?: string;
+    }) =>
+      requestDocumentRevision(args.applicationId, args.documentVersionId, {
+        base_content_hash: args.contentHash,
+        reason: "review_changes",
+        finding_ids: args.findingIds,
+        ...(args.note ? { note: args.note } : {}),
       }),
   );
 }
