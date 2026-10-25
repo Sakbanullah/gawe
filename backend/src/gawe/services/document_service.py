@@ -804,7 +804,8 @@ class DocumentService:
     def _require_no_active_task(self, application_id: str) -> None:
         row = self._connection.execute(
             "SELECT task_id FROM task WHERE application_id = ? "
-            "AND status IN ('queued','processing') ORDER BY created_at DESC LIMIT 1",
+            "AND type = 'document_generation' AND status IN ('queued','processing') "
+            "ORDER BY created_at DESC LIMIT 1",
             (application_id,),
         ).fetchone()
         if row is not None:
@@ -993,9 +994,18 @@ def _revision_instructions(report: dict) -> str:
 
     Only findings the writer can act on are passed: the writer cannot add facts,
     so a factuality blocker becomes a request to remove or soften the claim.
+
+    `report` is either a review report or a stored document version. The version
+    keeps its review under `findings.findings`, a report keeps it at `findings`;
+    both shapes reach this function, so accept one level of nesting.
     """
+    raw = report.get("findings")
+    if isinstance(raw, dict):
+        raw = raw.get("findings")
     lines: list[str] = []
-    for finding in report.get("findings") or []:
+    for finding in raw or []:
+        if not isinstance(finding, dict):
+            continue
         if finding.get("severity") not in {"blocker", "major", "minor"}:
             continue
         if finding.get("status") == "resolved":

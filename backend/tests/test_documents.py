@@ -545,3 +545,20 @@ def test_revision_rejects_unknown_path(setup_client, csrf, monkeypatch) -> None:
         },
     )
     assert evidence_edit.status_code == 400
+
+
+def test_analysis_task_does_not_block_document_generation(
+    setup_client, csrf, monkeypatch, connection
+) -> None:
+    """An unrelated analysis task must not lock the document workflow."""
+    application_id, _ = _application(setup_client, csrf, monkeypatch)
+    with connection:
+        connection.execute(
+            "INSERT INTO task (task_id, type, status, application_id, progress_json, "
+            "result_json, error_json, created_at, updated_at, finished_at, attempt, "
+            "retried_from_task_id) VALUES ('tsk_running_analysis', 'analysis', 'processing', "
+            "?, '{}', NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL, 1, NULL)",
+            (application_id,),
+        )
+    documents = _generate(setup_client, csrf, application_id, kinds=("cv",))
+    assert len(documents) == 1

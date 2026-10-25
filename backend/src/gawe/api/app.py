@@ -20,6 +20,7 @@ from ..llm.providers.openai_compatible import OpenAICompatibleProvider
 from ..llm.providers.synthetic import SyntheticExtractProvider
 from ..security import csrf
 from ..security.consent import ConsentStore
+from ..services.tasks import TaskStore
 from .errors import ApiError, error_payload, payload_for
 from .routes import (
     applications,
@@ -38,6 +39,17 @@ from .routes import (
 logger = logging.getLogger(__name__)
 
 FRONTEND_FALLBACK = "index.html"
+
+
+def _reap_orphan_tasks(config: Config) -> None:
+    """Fail every unfinished task at startup; nothing owns them yet."""
+    conn = repo.connect(config.database)
+    try:
+        tasks = TaskStore(conn)
+        tasks.reap_stale(exclude=set(), older_than_s=0)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _make_provider(config: Config):
@@ -77,6 +89,10 @@ def create_app(
                 await run_in_threadpool(repo.migrate, startup)
             finally:
                 await run_in_threadpool(startup.close)
+        # A task row says nothing about who owns it. After a crash or restart no
+        # process owns any `queued`/`processing` row, so fail them now instead of
+        # leaving a workspace locked forever.
+        await run_in_threadpool(_reap_orphan_tasks, config)
         scheduler = None
         # The scheduler only runs against a real database connection of its own.
         # An injected connection means tests or an embedded caller, who drive runs

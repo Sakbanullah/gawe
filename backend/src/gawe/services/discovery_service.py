@@ -564,7 +564,9 @@ class DiscoveryService:
         """Fail discovery tasks whose heartbeat stopped and that no live run owns."""
         with _ACTIVE_LOCK:
             active = set(_ACTIVE_TASKS)
-        stale = self._tasks.reap_stale(exclude=active, older_than_s=STALE_AFTER_S)
+        stale = self._tasks.reap_stale(
+            exclude=active, older_than_s=STALE_AFTER_S, types=("discovery",)
+        )
         if not stale:
             return
         error = {
