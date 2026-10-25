@@ -134,7 +134,7 @@ def get_provider_settings(request: Request) -> dict:
 @router.put("/provider")
 def update_provider_settings(request: Request, body: ProviderUpdateBody) -> dict:
     try:
-        return _provider_service(request).update(
+        result = _provider_service(request).update(
             body.provider_id,
             body.base_url,
             body.roles,
@@ -143,6 +143,14 @@ def update_provider_settings(request: Request, body: ProviderUpdateBody) -> dict
         )
     except ProviderSettingsError as exc:
         raise _provider_error(exc) from exc
+    # `update` mutates the Config object in place, so the service already sees
+    # the new endpoint. The client built at startup still holds the old provider
+    # object, so it is rebuilt here: otherwise the next real request keeps
+    # calling the endpoint that was just replaced.
+    state = request.app.state
+    if state.llm_client is not None:
+        state.llm_client.provider = state.provider_factory(state.config)
+    return result
 
 
 @router.post("/provider/test")

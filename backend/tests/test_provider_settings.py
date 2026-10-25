@@ -169,3 +169,12 @@ def test_connection_test_maps_401_to_a_readable_error(
     response = setup_client.post("/api/settings/provider/test", headers=csrf)
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "test_unauthorized"
+
+
+def test_update_rebuilds_the_live_client(setup_client, csrf, keyring_stub) -> None:
+    """The client built at startup must not keep calling the old endpoint."""
+    client = setup_client.app.state.llm_client
+    before = client.provider
+    assert _put(setup_client, csrf, api_key="sk-secret-value").status_code == 200
+    assert client.provider is not before
+    assert client.provider.base_url == BASE
