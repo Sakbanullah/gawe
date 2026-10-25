@@ -140,22 +140,32 @@ class TaskStore:
             query += f" AND type IN ({placeholders})"
             params = types
         rows = self._connection.execute(query, params).fetchall()
-        stale = [
-            row["task_id"]
-            for row in rows
-            if row["task_id"] not in exclude and (row["updated_at"] or "") < cutoff
-        ]
-        error = {
-            "code": "stale_run",
-            "message": "Run discovery berhenti sebelum selesai.",
-            "stage": "fetch",
-            "retryable": True,
-            "run_id": None,
-            "request_id": None,
-            "details": [],
+        # The message names the owning stage: a reaped task of any type used to
+        # report "Run discovery berhenti sebelum selesai." and misled the user.
+        messages = {
+            "discovery": ("Run discovery berhenti sebelum selesai.", "fetch"),
+            "analysis": ("Analisis berhenti sebelum selesai.", "fetch"),
+            "document_generation": ("Pembuatan dokumen berhenti sebelum selesai.", "draft"),
         }
-        for task_id in stale:
+        stale: list[str] = []
+        for row in rows:
+            task_id = row["task_id"]
+            if task_id in exclude or (row["updated_at"] or "") >= cutoff:
+                continue
+            message, stage = messages.get(
+                row["type"], ("Task berhenti sebelum selesai.", "fetch")
+            )
+            error = {
+                "code": "stale_run",
+                "message": message,
+                "stage": stage,
+                "retryable": True,
+                "run_id": None,
+                "request_id": None,
+                "details": [],
+            }
             self.finish(task_id, "failed", error=error)
+            stale.append(task_id)
         return stale
 
     def fail(self, task_id: str, code: str, message: str, stage: str) -> dict:
