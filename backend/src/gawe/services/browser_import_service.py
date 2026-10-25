@@ -252,6 +252,9 @@ class BrowserImportService:
             "rejected": len(rejected),
             "rejected_details": rejected[:20],
             "job_ids": job_ids,
+            # The row was refreshed either way; `accepted` only counts a new job
+            # or a new posting version, so say which happened.
+            "updated": len(job_ids),
             "eligibility": (
                 self._assessments.eligibility_for(job_id, profile["profile_version_id"])
                 if len(job_ids) == 1
