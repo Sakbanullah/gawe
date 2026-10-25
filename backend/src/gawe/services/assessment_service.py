@@ -53,12 +53,18 @@ class AssessmentService:
         return eligibility
 
     def assess_pending(self, limit: int = 500) -> dict:
-        """Assess open jobs that have no assessment for the active profile yet."""
+        """Assess open jobs with no row for the active profile and latest posting.
+
+        Joining on job alone skipped a job whose row belonged to an older posting
+        version: a re-import stored the new version but the rules never saw it,
+        so the page kept showing the previous version's verdict.
+        """
         profile = self._profiles.require_confirmed()
         rows = self._connection.execute(
             "SELECT j.job_id FROM job j "
             "LEFT JOIN eligibility_assessment e "
             "  ON e.job_id = j.job_id AND e.profile_version_id = ? "
+            "  AND e.job_posting_version_id = j.latest_version_id "
             "WHERE j.status = 'open' AND j.duplicate_of IS NULL "
             "  AND (e.assessment_id IS NULL OR e.status_outdated = 1) "
             "ORDER BY j.created_at, j.job_id LIMIT ?",
@@ -137,8 +143,18 @@ class AssessmentService:
 
     # -- reads -----------------------------------------------------------
     def eligibility_for(self, job_id: str, profile_version_id: str) -> dict | None:
+        # One row exists per (posting version, profile version). Reading without
+        # the posting version returned whichever row MySQL chose, so after a
+        # re-import the caller could see the previous posting's decision. Prefer
+        # the row for the latest posting version; fall back to the newest row,
+        # which is what a posting stored before the rules ran has.
         row = self._connection.execute(
-            "SELECT * FROM eligibility_assessment WHERE job_id = ? AND profile_version_id = ?",
+            "SELECT e.* FROM eligibility_assessment e "
+            "JOIN job j ON j.job_id = e.job_id "
+            "JOIN job_posting_version v ON v.job_posting_version_id = e.job_posting_version_id "
+            "WHERE e.job_id = ? AND e.profile_version_id = ? "
+            "ORDER BY (e.job_posting_version_id = j.latest_version_id) DESC, "
+            "v.created_at DESC LIMIT 1",
             (job_id, profile_version_id),
         ).fetchone()
         return _eligibility_payload(row) if row else None
@@ -533,8 +549,11 @@ class AssessmentService:
             for check in result["checks"]
         ]
         # A fresh assessment only replaces the automatic result. A human override
-        # stays: the user already read the posting and decided, and re-running the
-        # rules must not silently undo that.
+        # stays only when the row being updated already belongs to this posting
+        # version: for a new version the INSERT creates a row with the rules'
+        # verdict, and re-running the rules on the same version must not undo the
+        # decision. (The unique key is posting version plus profile version, so a
+        # new version never collides with the old row.)
         self._connection.execute(
             "INSERT INTO eligibility_assessment (assessment_id, job_id, job_posting_version_id, "
             "profile_version_id, status, auto_status, checks_json, reason_summary, confidence, "
@@ -611,14 +630,20 @@ class AssessmentService:
         )
 
     def _candidates(self, profile_version_id: str) -> list[dict]:
+        # Both sides must describe the latest posting version: joining on job
+        # alone paired a stale eligibility row with a fit row from another
+        # version, or with no fit row at all, and rank() then rejected the
+        # eligible candidate for having no score, failing the whole run.
         rows = self._connection.execute(
             "SELECT j.job_id, j.posted_at, j.priority_tier, j.priority_tier_override, "
             "e.status AS eligibility_status, e.reason_summary, f.fit_score "
             "FROM job j "
             "JOIN eligibility_assessment e ON e.job_id = j.job_id "
             "  AND e.profile_version_id = ? "
+            "  AND e.job_posting_version_id = j.latest_version_id "
             "LEFT JOIN fit_assessment f ON f.job_id = j.job_id "
             "  AND f.profile_version_id = e.profile_version_id "
+            "  AND f.job_posting_version_id = j.latest_version_id "
             "WHERE j.duplicate_of IS NULL AND j.status = 'open' "
             "ORDER BY j.job_id",
             (profile_version_id,),

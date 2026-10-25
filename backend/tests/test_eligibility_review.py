@@ -183,8 +183,8 @@ def test_review_can_be_cleared(setup_client, csrf) -> None:
     assert cleared.json()["eligibility"]["override_reason"] is None
 
 
-def test_review_survives_a_reassessment(setup_client, csrf) -> None:
-    """Re-running the rules must not silently undo a human decision."""
+def test_review_is_scoped_to_the_posting_version(setup_client, csrf) -> None:
+    """A re-import stores a new posting version; the old decision stays there."""
     payload = _import_card(setup_client, csrf)
     job_id = payload["job_ids"][0]
     assert _review(setup_client, csrf, job_id, "eligible", "sudah saya baca").status_code == 200
@@ -196,8 +196,42 @@ def test_review_survives_a_reassessment(setup_client, csrf) -> None:
         headers=token,
     )
     assert again.status_code == 200, again.json()
-    assert again.json()["eligibility"]["status"] == "eligible"
-    assert again.json()["eligibility"]["auto_status"] in {"needs_review", "eligible"}
+    # The detail import stores a new posting version, so the new version is
+    # judged by the rules alone; the decision stays with the version the
+    # reviewer actually read.
+    eligibility = again.json()["eligibility"]
+    assert eligibility["override_reason"] is None
+    assert eligibility["status"] == eligibility["auto_status"]
+
+
+def test_review_is_dropped_when_the_posting_changes(setup_client, csrf) -> None:
+    """A new posting version changes the requirements the reviewer read."""
+    payload = _import_card(setup_client, csrf)
+    job_id = payload["job_ids"][0]
+    assert _review(setup_client, csrf, job_id, "eligible", "sudah saya baca").status_code == 200
+
+    token = _token(setup_client, csrf)
+    changed = _detail()["description"].replace(
+        "Build and maintain the payment service.",
+        "Build and maintain the payment service. Wajib onsite 5 hari di Jakarta.",
+    )
+    again = setup_client.post(
+        "/api/import/browser",
+        json={
+            "source": "jobstreet",
+            "page_url": DETAIL_URL,
+            "mode": "detail",
+            "detail": {**_detail(), "description": changed},
+        },
+        headers=token,
+    )
+    assert again.status_code == 200, again.json()
+
+    # The re-import assesses the new posting version; the override belonged to
+    # the old one and must not follow it.
+    eligibility = setup_client.get(f"/api/matches/{job_id}").json()["eligibility"]
+    assert eligibility["override_reason"] is None
+    assert eligibility["status"] == eligibility["auto_status"]
 
 
 def test_review_of_an_unknown_job_is_404(setup_client, csrf) -> None:
