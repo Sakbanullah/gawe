@@ -37,6 +37,8 @@ KEY_REF_RE = re.compile(r"^[A-Za-z0-9_./-]{1,100}$")
 MODEL_RE = re.compile(r"^[A-Za-z0-9_.:/@+-]{1,120}$")
 DEFAULT_KEY_REF = "gawe/llm/provider"
 TEST_TIMEOUT_S = 10
+# A model listing is kilobytes; this only stops a runaway or hostile body.
+TEST_BODY_MAX_BYTES = 256 * 1024
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
@@ -276,7 +278,11 @@ class ProviderSettingsService:
         started = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=TEST_TIMEOUT_S) as response:
-                body = json.loads(response.read().decode("utf-8"))
+                # A listing is small; anything past the cap is not a model list
+                # and must not be pulled into memory whole.
+                body = json.loads(
+                    response.read(TEST_BODY_MAX_BYTES).decode("utf-8")
+                )
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
                 raise ProviderSettingsError(

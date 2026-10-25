@@ -178,3 +178,17 @@ def test_update_rebuilds_the_live_client(setup_client, csrf, keyring_stub) -> No
     assert _put(setup_client, csrf, api_key="sk-secret-value").status_code == 200
     assert client.provider is not before
     assert client.provider.base_url == BASE
+
+
+def test_connection_test_caps_the_response_body(setup_client, csrf, keyring_stub, monkeypatch) -> None:
+    """A huge body must not be read whole; the cap is what stops it."""
+    assert _put(setup_client, csrf, api_key="sk-abc").status_code == 200
+
+    def fake_urlopen(request, timeout=None):
+        oversized = json.dumps({"data": [{"id": "x" * (300 * 1024)}]}).encode("utf-8")
+        return _Response(oversized)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    response = setup_client.post("/api/settings/provider/test", headers=csrf)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "test_invalid_response"
