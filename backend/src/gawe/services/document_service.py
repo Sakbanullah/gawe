@@ -174,16 +174,12 @@ class DocumentService:
             )
         selected = finding_ids
         if selected is not None:
-            known = {
-                str(item.get("finding_id"))
-                for item in (parent.get("findings") or {}).get("findings") or []
-                if item.get("finding_id")
-            }
+            known = _selectable_findings(parent)
             unknown = [item for item in selected if item not in known]
             if unknown:
                 raise DocumentError(
                     "unknown_finding",
-                    "Finding yang dipilih tidak ada di versi ini.",
+                    "Finding yang dipilih sudah selesai atau tidak ada di versi ini.",
                     400,
                     details=[
                         {
@@ -1020,6 +1016,20 @@ def _version_row(row: dict) -> dict:
         json.loads(record["findings_json"]) if record.get("findings_json") else None
     )
     return record
+
+
+def _selectable_findings(parent: dict) -> set[str]:
+    """Findings a revision may target: stored version, unresolved only.
+
+    A version keeps its review under `findings.findings`. A finding the last
+    review already resolved has nothing left to fix, so submitting it is a stale
+    selection and the caller answers 400 unknown_finding.
+    """
+    return {
+        str(item.get("finding_id"))
+        for item in (parent.get("findings") or {}).get("findings") or []
+        if item.get("finding_id") and item.get("status") != "resolved"
+    }
 
 
 def _revision_instructions(report: dict, only_ids: set[str] | None = None) -> str:

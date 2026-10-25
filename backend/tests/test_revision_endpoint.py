@@ -112,3 +112,18 @@ def test_revision_request_creates_a_new_version(setup_client, csrf, monkeypatch)
         # No finding on this version: the id is unknown, so it must be rejected.
         assert response.status_code == 400
         assert response.json()["error"]["code"] == "unknown_finding"
+
+
+def test_resolved_findings_are_not_a_valid_selection() -> None:
+    """A checked finding the review already resolved has nothing left to fix."""
+    parent = {
+        "findings": {
+            "findings": [
+                {"finding_id": "f1", "status": "resolved"},
+                {"finding_id": "f2", "status": "open"},
+            ]
+        }
+    }
+    known = document_service._selectable_findings(parent)
+    assert "f1" not in known
+    assert "f2" in known
