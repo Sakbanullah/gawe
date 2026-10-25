@@ -130,12 +130,29 @@ def write_config(path: Path, config: Config) -> None:
 
 
 def key_writable() -> bool:
-    """True when a real keyring backend is installed, not the null fallback."""
+    """True when a keyring backend can actually store a secret.
+
+    Checking the class name alone is not enough: `keyring.get_keyring()` can
+    return a back end whose `priority` is above zero but whose store is not
+    usable (for example SecretService without a running daemon). A round-trip on
+    a probe account is the only reliable answer.
+    """
     try:
         import keyring
+        from keyring.errors import KeyringError
 
         backend = keyring.get_keyring()
-        return backend is not None and "fail" not in type(backend).__name__.lower()
+        if backend is None or "fail" in type(backend).__name__.lower():
+            return False
+        probe = f"{DEFAULT_KEY_REF}#probe"
+        keyring.set_password(KEYRING_SERVICE, probe, "probe")
+        try:
+            return keyring.get_password(KEYRING_SERVICE, probe) == "probe"
+        finally:
+            try:
+                keyring.delete_password(KEYRING_SERVICE, probe)
+            except KeyringError:
+                pass
     except Exception:
         return False
 
@@ -202,19 +219,9 @@ class ProviderSettingsService:
         llm.active_provider = provider_id
         llm.roles = models
 
-        if new_key:
-            try:
-                import keyring
-
-                keyring.set_password(KEYRING_SERVICE, ref, new_key)
-            except Exception as exc:
-                self._config = previous
-                raise ProviderSettingsError(
-                    "keyring_unavailable",
-                    "Tidak dapat menulis API key ke Windows Credential Manager.",
-                    500,
-                ) from exc
-
+        # Config first: if config.toml cannot be written, the key must not land in
+        # the keyring either, or the next read would report a key for an endpoint
+        # that was never saved.
         path = self._config.source_path
         if path is not None:
             try:
@@ -223,6 +230,24 @@ class ProviderSettingsService:
                 self._config = previous
                 raise ProviderSettingsError(
                     "config_write_failed", "Gagal menyimpan config.toml.", 500
+                ) from exc
+
+        if new_key:
+            try:
+                import keyring
+
+                keyring.set_password(KEYRING_SERVICE, ref, new_key)
+            except Exception as exc:
+                self._config = previous
+                if path is not None:
+                    try:
+                        write_config(Path(path), previous)
+                    except Exception:  # noqa: BLE001 - best effort rollback
+                        pass
+                raise ProviderSettingsError(
+                    "keyring_unavailable",
+                    "Tidak dapat menulis API key ke Windows Credential Manager.",
+                    500,
                 ) from exc
         return self.read()
 
