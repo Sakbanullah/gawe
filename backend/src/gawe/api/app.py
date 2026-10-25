@@ -49,7 +49,12 @@ EXTENSION_IMPORT_PATH = "/api/import/browser"
 
 
 def _is_extension_import(request: Request) -> bool:
-    return request.url.path == EXTENSION_IMPORT_PATH
+    # Method matters: only the extension's own POST may skip the SPA pair.
+    # Exempting the path alone would also drop CSRF from any future GET/PUT
+    # handler added under /api/import/browser.
+    return (
+        request.url.path == EXTENSION_IMPORT_PATH and request.method.upper() == "POST"
+    )
 
 
 def _reap_orphan_tasks(config: Config) -> None:
