@@ -203,6 +203,41 @@ export function revokeConsent(consentId: string): Promise<ConsentRecord> {
   return apiSend<ConsentRecord>("DELETE", `/api/settings/consent/${consentId}`);
 }
 
+export type ProviderSettingsView = {
+  provider_id: string;
+  configured: boolean;
+  base_url: string | null;
+  roles: Record<string, { model: string | null }>;
+  key_source: "keyring" | "env" | "missing";
+  key_writable: boolean;
+  providers: string[];
+};
+
+export type ProviderTestResult = {
+  ok: boolean;
+  latency_ms: number;
+  model_count: number;
+  models: string[];
+  key_source: string;
+};
+
+export function getProviderSettings(): Promise<ProviderSettingsView> {
+  return apiGet<ProviderSettingsView>("/api/settings/provider");
+}
+
+export function updateProviderSettings(body: {
+  provider_id: string;
+  base_url: string;
+  roles: Record<string, string>;
+  api_key?: string;
+}): Promise<ProviderSettingsView> {
+  return apiSend<ProviderSettingsView>("PUT", "/api/settings/provider", body);
+}
+
+export function testProviderConnection(): Promise<ProviderTestResult> {
+  return apiSend<ProviderTestResult>("POST", "/api/settings/provider/test", {});
+}
+
 export function listSources(): Promise<SourceList> {
   return apiGet<SourceList>("/api/settings/sources?limit=200");
 }

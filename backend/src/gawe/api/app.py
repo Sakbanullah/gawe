@@ -27,6 +27,7 @@ from .routes import (
     discovery,
     documents,
     exports,
+    import_browser,
     matches,
     overview,
     session,
@@ -40,6 +41,16 @@ logger = logging.getLogger(__name__)
 
 FRONTEND_FALLBACK = "index.html"
 
+# The browser extension cannot hold the SPA's cookie pair: it posts from a
+# `chrome-extension://` page. That single path authenticates with its own bearer
+# token plus an extension-only Origin check instead, and every other mutating
+# route keeps the CSRF pair.
+EXTENSION_IMPORT_PATH = "/api/import/browser"
+
+
+def _is_extension_import(request: Request) -> bool:
+    return request.url.path == EXTENSION_IMPORT_PATH
+
 
 def _reap_orphan_tasks(config: Config) -> None:
     """Fail every unfinished task at startup; nothing owns them yet."""
@@ -50,6 +61,7 @@ def _reap_orphan_tasks(config: Config) -> None:
         conn.commit()
     finally:
         conn.close()
+
 
 
 def _make_provider(config: Config):
@@ -119,6 +131,7 @@ def create_app(
     app.state.db = connection
     app.state.sessions = {}
     app.state.llm_client = llm_client or build_llm_client(config)
+    app.state.provider_factory = _make_provider
     app.state.discovery_fetcher = None
     app.state.manual_url_fetcher = None
     # One limiter per app: the per-host interval must survive across requests.
@@ -169,7 +182,7 @@ def create_app(
 
     @app.middleware("http")
     async def csrf_guard(request: Request, call_next):
-        if request.method.upper() not in csrf.SAFE_METHODS:
+        if request.method.upper() not in csrf.SAFE_METHODS and not _is_extension_import(request):
             session_id = request.cookies.get(csrf.SESSION_COOKIE)
             active = app.state.sessions.get(session_id)
             try:
@@ -212,6 +225,7 @@ def create_app(
     app.include_router(documents.router)
     app.include_router(exports.router)
     app.include_router(tasks.router)
+    app.include_router(import_browser.router)
 
     dist = config.dist_dir
     if dist.is_dir():

@@ -7,12 +7,15 @@ from typing import Literal
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from ...security import browser_token
 from ...security.consent import (
     CONSENT_TYPE,
     REQUIRED_DATA_CLASSES,
     ConsentAlreadyRevoked,
     ConsentNotFound,
 )
+from ...services.browser_import_service import MAX_JOBS_PER_REQUEST
+from ...services.provider_service import ProviderSettingsError, ProviderSettingsService
 from ..deps import consent_store
 from ..errors import ApiError
 
@@ -86,3 +89,66 @@ def revoke_consent(request: Request, consent_id: str) -> dict:
         raise ApiError(
             409, "conflict", "Consent sudah dicabut.", stage="validation"
         ) from exc
+
+
+@router.get("/browser-import-token")
+def get_browser_import_token(request: Request) -> dict:
+    """Return the pairing token for the extension. Session-authenticated only."""
+    config = request.app.state.config
+    token = browser_token.issue(config)
+    return {"token": token, "header": browser_token.TOKEN_HEADER}
+
+
+@router.get("/browser-import")
+def get_browser_import_status() -> dict:
+    return {
+        "supported_sources": ["jobstreet"],
+        "max_jobs_per_request": MAX_JOBS_PER_REQUEST,
+    }
+
+
+class ProviderUpdateBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider_id: str = Field(min_length=1, max_length=64)
+    base_url: str = Field(min_length=8, max_length=500)
+    roles: dict[str, str]
+    # Write-only. Stored in the OS keyring, never echoed back (D24).
+    api_key: str | None = Field(default=None, max_length=512)
+    api_key_ref: str | None = Field(default=None, max_length=100)
+
+
+def _provider_service(request: Request) -> ProviderSettingsService:
+    return ProviderSettingsService(request.app.state.config)
+
+
+def _provider_error(exc: ProviderSettingsError) -> ApiError:
+    return ApiError(exc.status_code, exc.code, exc.message, stage="validation")
+
+
+@router.get("/provider")
+def get_provider_settings(request: Request) -> dict:
+    return _provider_service(request).read()
+
+
+@router.put("/provider")
+def update_provider_settings(request: Request, body: ProviderUpdateBody) -> dict:
+    try:
+        return _provider_service(request).update(
+            body.provider_id,
+            body.base_url,
+            body.roles,
+            api_key=body.api_key,
+            api_key_ref=body.api_key_ref,
+        )
+    except ProviderSettingsError as exc:
+        raise _provider_error(exc) from exc
+
+
+@router.post("/provider/test")
+def test_provider_connection(request: Request) -> dict:
+    """One `GET /models` with the stored key. No candidate data is sent."""
+    try:
+        return _provider_service(request).test_connection()
+    except ProviderSettingsError as exc:
+        raise _provider_error(exc) from exc

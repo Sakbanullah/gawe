@@ -13,8 +13,9 @@ import {
   Textarea,
 } from "@mantine/core";
 
-import { useConsent, useGrantConsent, useOverview, useRevokeConsent } from "../app/queries";
+import { useConsent, useGrantConsent, useImportToken, useOverview, useRevokeConsent } from "../app/queries";
 import { PageFrame } from "../components/PageFrame";
+import { ProviderSettings } from "../components/ProviderSettings";
 import { SourceRegistry } from "../components/SourceRegistry";
 import type { PageState } from "../components/states";
 
@@ -23,7 +24,16 @@ export function SettingsPage() {
   const consent = useConsent();
   const grant = useGrantConsent();
   const revoke = useRevokeConsent();
+  const importToken = useImportToken();
   const [accepted, setAccepted] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  async function copyImportToken() {
+    const token = importToken.data?.token;
+    if (!token) return;
+    await navigator.clipboard.writeText(token);
+    setCopied(true);
+  }
 
   const loading = overview.isPending || consent.isPending;
   const failed = overview.isError || consent.isError;
@@ -43,15 +53,16 @@ export function SettingsPage() {
     >
       {overview.data ? (
         <Stack gap="md">
+          <ProviderSettings />
           <Card withBorder>
             <Group justify="space-between">
-              <Text fw={500}>Provider</Text>
+              <Text fw={500}>Status provider</Text>
               <Badge variant="light">
                 {overview.data.provider_configured ? "configured" : "missing"}
               </Badge>
             </Group>
             <Text size="sm" c="dimmed">
-              Provider dan model per role dibaca dari config lokal. Tidak ada model default.
+              Ringkasan dari config yang sedang dipakai proses ini.
             </Text>
           </Card>
 
@@ -168,6 +179,50 @@ export function SettingsPage() {
           </Card>
 
           <SourceRegistry editable />
+
+          <Card withBorder>
+            <Text fw={500}>Impor dari ekstensi browser</Text>
+            <Text size="sm" c="dimmed" mt={4}>
+              Ekstensi Gawe membaca lowongan yang sudah tampil di halaman
+              Jobstreet di browsermu, lalu mengirimnya ke sini. Tidak ada
+              browser otomatis dan tidak ada login tersimpan.
+            </Text>
+            <Group mt="sm" gap="xs">
+              <Button
+                size="xs"
+                variant="light"
+                loading={importToken.isPending}
+                onClick={() => importToken.mutate()}
+              >
+                Buat token baru
+              </Button>
+              {importToken.data ? (
+                <Button
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => void copyImportToken()}
+                >
+                  Salin token
+                </Button>
+              ) : null}
+            </Group>
+            {importToken.data ? (
+              <>
+                <Text size="xs" mt="sm">
+                  Tempel token ini ke popup ekstensi. Token lama langsung tidak
+                  berlaku.
+                </Text>
+                <Code block mt={4}>
+                  {importToken.data.token}
+                </Code>
+              </>
+            ) : null}
+            {copied ? (
+              <Text size="xs" c="teal" mt={4}>
+                Token disalin.
+              </Text>
+            ) : null}
+          </Card>
         </Stack>
       ) : null}
     </PageFrame>
