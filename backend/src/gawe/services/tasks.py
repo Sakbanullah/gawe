@@ -123,13 +123,23 @@ class TaskStore:
                 "UPDATE task SET updated_at = ? WHERE task_id = ?", (now_iso(), task_id)
             )
 
-    def reap_stale(self, *, exclude: set[str], older_than_s: int) -> list[str]:
-        """Fail discovery tasks whose heartbeat stopped and that no live run owns."""
+    def reap_stale(
+        self, *, exclude: set[str], older_than_s: int, types: tuple[str, ...] | None = None
+    ) -> list[str]:
+        """Fail tasks whose heartbeat stopped and that no live run owns.
+
+        `types=None` covers every task type: a `processing` row with no heartbeat
+        means the process that owned it died (for example a backend restart in
+        the middle of a synchronous run).
+        """
         cutoff = _iso_before(older_than_s)
-        rows = self._connection.execute(
-            "SELECT task_id, updated_at FROM task "
-            "WHERE type = 'discovery' AND status IN ('queued','processing')"
-        ).fetchall()
+        query = "SELECT task_id, type, updated_at FROM task WHERE status IN ('queued','processing')"
+        params: tuple = ()
+        if types is not None:
+            placeholders = ", ".join("?" for _ in types)
+            query += f" AND type IN ({placeholders})"
+            params = types
+        rows = self._connection.execute(query, params).fetchall()
         stale = [
             row["task_id"]
             for row in rows
