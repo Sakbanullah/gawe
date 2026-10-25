@@ -22,6 +22,7 @@ import {
   useCreateApplication,
   useMatchDetail,
   useOverrideMatchTier,
+  useReviewEligibility,
 } from "../app/queries";
 
 /** A job that closed after the list was loaded is a state change, not a failure. */
@@ -54,6 +55,8 @@ const STATUS_COLOR: Record<string, string> = {
   needs_review: "yellow",
   ineligible: "red",
 };
+
+type ReviewArgs = { jobId: string; status: "eligible" | "ineligible"; reason: string };
 
 const RESULT_COLOR: Record<string, string> = {
   met: "green",
@@ -95,10 +98,12 @@ export function JobDetailDrawer({
 }) {
   const detail = useMatchDetail(jobId);
   const override = useOverrideMatchTier();
+  const review = useReviewEligibility();
   const createApplication = useCreateApplication();
   const navigate = useNavigate();
   const [tier, setTier] = useState<string | null>(null);
   const [reason, setReason] = useState("");
+  const [reviewReason, setReviewReason] = useState("");
 
   const data: MatchDetail | undefined = detail.data;
 
@@ -205,7 +210,9 @@ export function JobDetailDrawer({
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Buka halaman lamaran resmi
+                {data.job_detail.job.apply_url === data.job_detail.job.canonical_url
+                  ? "Buka halaman lowongan"
+                  : "Buka halaman lamaran resmi"}
               </Button>
               <Text size="xs" c="dimmed">
                 Gawe tidak mengirim lamaran. Submit dilakukan di situs resmi.
@@ -216,6 +223,67 @@ export function JobDetailDrawer({
           )}
 
           <Divider label="Eligibility" labelPosition="left" />
+          {data.eligibility.override_reason ? (
+            <Alert color="blue" title="Diputuskan manual">
+              <Text size="sm">{data.eligibility.override_reason}</Text>
+              <Text size="xs" c="dimmed">
+                Hasil aturan: {data.eligibility.auto_status ?? "tidak tercatat"}.
+              </Text>
+            </Alert>
+          ) : null}
+          {data.eligibility.status === "needs_review" &&
+          !data.eligibility.override_reason ? (
+            <Alert color="yellow" title="Perlu tinjauan manusia">
+              <Text size="sm">
+                Aturan tidak dapat memastikan kecocokan. Buka halaman lowongan,
+                baca persyaratannya, lalu putuskan.
+              </Text>
+              <TextInput
+                mt="sm"
+                label="Alasan keputusan"
+                placeholder="Contoh: syarat 3 tahun pengalaman terpenuhi."
+                value={reviewReason}
+                onChange={(event) => setReviewReason(event.currentTarget.value)}
+              />
+              <Group mt="xs">
+                <Button
+                  size="xs"
+                  loading={review.isPending}
+                  disabled={!reviewReason.trim()}
+                  onClick={() =>
+                    review.mutate({
+                      jobId,
+                      status: "eligible",
+                      reason: reviewReason.trim(),
+                    } as ReviewArgs)
+                  }
+                >
+                  Tandai eligible
+                </Button>
+                <Button
+                  size="xs"
+                  color="red"
+                  variant="light"
+                  loading={review.isPending}
+                  disabled={!reviewReason.trim()}
+                  onClick={() =>
+                    review.mutate({
+                      jobId,
+                      status: "ineligible",
+                      reason: reviewReason.trim(),
+                    } as ReviewArgs)
+                  }
+                >
+                  Tandai ineligible
+                </Button>
+              </Group>
+              {review.error ? (
+                <Alert color="red" mt="xs">
+                  {errorMessage(review.error)}
+                </Alert>
+              ) : null}
+            </Alert>
+          ) : null}
           <Stack gap="sm">
             {data.eligibility.checks.map((check) => (
               <Stack key={check.requirement_id} gap={4}>

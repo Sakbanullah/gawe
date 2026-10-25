@@ -11,6 +11,7 @@ import json
 from ..db.repo import Connection
 from ..eligibility.evaluate import evaluate
 from ..jobs import requirements as requirement_rules
+from ..master_cv.store import MasterCvError
 from ..jobs.priority import effective_tier
 from ..master_cv import new_id, now_iso
 from ..match.score import score as fit_score
@@ -352,6 +353,59 @@ class AssessmentService:
         ).fetchone()
         return _match_row(rows, profile_version_id) if rows else None
 
+    def override_eligibility(
+        self, job_id: str, status: str, reason: str | None
+    ) -> dict | None:
+        """Record a human decision on a `needs_review` job (D21).
+
+        Only `needs_review` may be reviewed by a person: `eligible` needs no
+        help, and letting a human lift `ineligible` would delete the `not_met`
+        checks a document can be challenged on. `ineligible` is out of scope for
+        this decision, so the guard lives here and not in the route.
+
+        The automatic result is kept in `auto_status`; nothing is recomputed and
+        no fit score changes. Passing `None` clears the override.
+        """
+        previous = self.eligibility_for(job_id, self._profiles.require_confirmed()["profile_version_id"])
+        if previous is None:
+            return None
+        if previous["status_outdated"]:
+            raise MasterCvError(
+                "assessment_outdated",
+                "Eligibility berasal dari profil atau lowongan lama; analisis ulang dulu.",
+                409,
+            )
+        if status is not None and previous["status"] != "needs_review":
+            raise MasterCvError(
+                "override_not_allowed",
+                "Hanya eligibility needs_review yang dapat ditinjau manual.",
+                409,
+            )
+        if status is not None and status not in {"eligible", "ineligible"}:
+            raise MasterCvError(
+                "invalid_status", "Status harus eligible atau ineligible.", 400
+            )
+        if status is not None and not (reason or "").strip():
+            raise MasterCvError(
+                "reason_required", "Alasan wajib diisi untuk keputusan tinjauan.", 400
+            )
+        stored_auto = previous["auto_status"]
+        with self._connection:
+            self._connection.execute(
+                "UPDATE eligibility_assessment SET status = ?, override_status = ?, "
+                "override_reason = ?, overridden_at = ? "
+                "WHERE job_id = ? AND profile_version_id = ?",
+                (
+                    status or stored_auto,
+                    status,
+                    (reason or "").strip() or None,
+                    now_iso() if status else None,
+                    job_id,
+                    previous["profile_version_id"],
+                ),
+            )
+        return self.eligibility_for(job_id, previous["profile_version_id"])
+
     def job_status(self, job_id: str) -> str | None:
         """Stored job status, or ``None`` when no such job exists.
 
@@ -478,12 +532,17 @@ class AssessmentService:
             {key: value for key, value in check.items() if key != "kind"}
             for check in result["checks"]
         ]
+        # A fresh assessment only replaces the automatic result. A human override
+        # stays: the user already read the posting and decided, and re-running the
+        # rules must not silently undo that.
         self._connection.execute(
             "INSERT INTO eligibility_assessment (assessment_id, job_id, job_posting_version_id, "
-            "profile_version_id, status, checks_json, reason_summary, confidence, "
+            "profile_version_id, status, auto_status, checks_json, reason_summary, confidence, "
             "status_outdated, outdated_reason, computed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?) "
-            "ON DUPLICATE KEY UPDATE assessment_id = VALUES(assessment_id), status = VALUES(status), "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?) "
+            "ON DUPLICATE KEY UPDATE assessment_id = VALUES(assessment_id), "
+            "status = COALESCE(eligibility_assessment.override_status, VALUES(status)), "
+            "auto_status = VALUES(status), "
             "checks_json = VALUES(checks_json), reason_summary = VALUES(reason_summary), "
             "confidence = VALUES(confidence), status_outdated = 0, outdated_reason = NULL, "
             "computed_at = VALUES(computed_at)",
@@ -492,6 +551,7 @@ class AssessmentService:
                 job["job_id"],
                 job["job_posting_version_id"],
                 profile["profile_version_id"],
+                result["status"],
                 result["status"],
                 json.dumps(checks, ensure_ascii=False),
                 result["reason_summary"],
@@ -614,6 +674,9 @@ def _eligibility_payload(row: dict) -> dict:
         "job_posting_version_id": row["job_posting_version_id"],
         "profile_version_id": row["profile_version_id"],
         "status": row["status"],
+        "auto_status": row.get("auto_status") or row["status"],
+        "override_reason": row.get("override_reason"),
+        "overridden_at": row.get("overridden_at"),
         "checks": json.loads(row["checks_json"]),
         "confidence": row["confidence"],
         "reason_summary": row["reason_summary"],

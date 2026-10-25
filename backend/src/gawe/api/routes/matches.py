@@ -13,6 +13,7 @@ import json
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
+from typing import Literal
 
 from ...jobs.priority import TIERS
 from ...master_cv.store import MasterCvError
@@ -32,6 +33,11 @@ CURSOR_VERSION = 1
 
 class TierOverrideRequest(BaseModel):
     tier: str | None = Field(default=None)
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class EligibilityOverrideRequest(BaseModel):
+    status: Literal["eligible", "ineligible"] | None = None
     reason: str | None = Field(default=None, max_length=1000)
 
 
@@ -206,6 +212,51 @@ def override_tier(request: Request, job_id: str, body: TierOverrideRequest) -> d
             404, "not_found", "Job tidak ditemukan atau belum dianalisis.", stage="eligibility"
         )
     return row
+
+
+@router.patch("/{job_id}/eligibility")
+def review_eligibility(
+    request: Request, job_id: str, body: EligibilityOverrideRequest
+) -> dict:
+    """Record a human decision on a `needs_review` job (D21).
+
+    Two outcomes, both explicit and both carrying a note: `eligible` lets the
+    job continue, `ineligible` closes it. The rules' own result stays in
+    `auto_status`, so the override is visible rather than replacing history.
+    `status: null` clears the override. A job the rules marked `ineligible`
+    cannot be lifted here.
+    """
+    if body.status is not None and not (body.reason or "").strip():
+        raise ApiError(
+            400,
+            "validation_failed",
+            "Alasan wajib diisi untuk keputusan tinjauan.",
+            stage="validation",
+            details=[{"field": "reason", "code": "required", "message": "Alasan wajib diisi."}],
+        )
+    profile = _confirmed(request)
+    service = _service(request)
+    status = service.job_status(job_id)
+    if status is None:
+        raise ApiError(404, "not_found", "Job tidak ditemukan.", stage="eligibility")
+    if status != "open":
+        raise ApiError(
+            409,
+            "job_not_open",
+            "Lowongan sudah ditutup; tinjauan eligibility tidak lagi berlaku.",
+            stage="eligibility",
+        )
+    try:
+        result = service.override_eligibility(
+            job_id, body.status, (body.reason or "").strip() or None
+        )
+    except MasterCvError as exc:
+        raise ApiError(exc.status_code, exc.code, exc.message, stage="eligibility") from exc
+    if result is None:
+        raise ApiError(
+            404, "not_found", "Job belum dinilai; analisis dulu.", stage="eligibility"
+        )
+    return service.detail(job_id, profile["profile_version_id"])
 
 
 def _encode_cursor(key: tuple, sort: str, ranking_run_id: str | None) -> str:
