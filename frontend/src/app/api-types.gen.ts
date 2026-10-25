@@ -391,6 +391,34 @@ export interface paths {
         patch: operations["overrideMatchTier"];
         trace?: never;
     };
+    "/api/matches/{job_id}/eligibility": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Tinjauan manusia atas eligibility needs_review (D21)
+         * @description Mencatat keputusan manusia untuk lowongan berstatus `needs_review`.
+         *     Hanya status itu yang boleh ditinjau: `eligible` tidak perlu bantuan, dan
+         *     `ineligible` tidak dapat dinaikkan karena hasil `not_met` tetap harus
+         *     terbaca. Job tertutup ditolak `409 job_not_open`.
+         *
+         *     `status` diperbarui, hasil aturan tetap di `auto_status`, dan `reason`
+         *     wajib untuk kedua keputusan. Kirim `status: null` untuk menghapus
+         *     tinjauan dan kembali ke hasil aturan. Tidak ada fit score yang dihitung
+         *     ulang dan tidak ada ranking yang berubah.
+         */
+        patch: operations["reviewEligibility"];
+        trace?: never;
+    };
     "/api/applications": {
         parameters: {
             query?: never;
@@ -648,6 +676,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/applications/{application_id}/documents/{document_version_id}/revision-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Minta perubahan pada temuan tertentu
+         * @description Membuat versi baru yang hanya memperbaiki temuan bercentang. Sama seperti
+         *     regenerate, tetapi `finding_ids` wajib dan minimal satu.
+         *
+         *     Temuan yang tidak dicentang tidak dikirim ke writer. Gate review dan
+         *     approval tetap menilai seluruh versi baru, jadi blocker yang tidak
+         *     dicentang membuat versi baru tetap `changes_required`.
+         *
+         *     `base_content_hash` mencegah permintaan dari versi yang sudah berubah
+         *     (`409 version_conflict`). `finding_id` yang tidak ada di versi ini
+         *     menghasilkan `400 validation_failed` dengan `details[].code = unknown_finding`.
+         */
+        post: operations["requestDocumentRevision"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/applications/{application_id}/documents/{document_version_id}/review": {
         parameters: {
             query?: never;
@@ -716,8 +773,12 @@ export interface paths {
          *     mengembalikan `200` dengan record approval yang sudah ada dan header
          *     `Idempotency-Replayed: true`. Approval pertama mengembalikan `201`.
          *
-         *     `rejected` dan `changes_requested` saat ini diterima sebagai nilai enum,
-         *     tetapi efek kontraknya belum dibedakan; lihat `API-CONTRACTS.md` §4.11.
+         *     `rejected` dan `changes_requested` hanya mencatat keputusan; keduanya tidak
+         *     memberikan approval, sehingga gate review di atas hanya berlaku untuk
+         *     `approved`. Catatan wajib diisi untuk kedua keputusan itu (`400
+         *     validation_failed` bila kosong), karena replay memakai kunci
+         *     `document_version_id` + `content_hash` + `decision`. Lihat
+         *     `API-CONTRACTS.md` §4.11.
          */
         post: operations["approveDocumentVersion"];
         delete?: never;
@@ -1683,6 +1744,15 @@ export interface components {
         };
         /** @enum {string} */
         EligibilityStatus: "eligible" | "ineligible" | "needs_review";
+        EligibilityOverrideRequest: {
+            /**
+             * @description Keputusan manusia. `null` menghapus tinjauan.
+             * @enum {string|null}
+             */
+            status: "eligible" | "ineligible" | null;
+            /** @description Wajib bila `status` tidak null. */
+            reason?: string | null;
+        };
         EligibilityCheck: {
             requirement_id: string;
             /** @enum {string} */
@@ -1701,6 +1771,12 @@ export interface components {
             job_posting_version_id: string;
             profile_version_id: string;
             status: components["schemas"]["EligibilityStatus"];
+            /** @description Hasil aturan sebelum tinjauan manusia. Tetap tercatat walau `status` di-override. */
+            auto_status?: components["schemas"]["EligibilityStatus"];
+            /** @description Alasan keputusan manusia (D21). Hanya ada bila tinjauan manual dilakukan. */
+            override_reason?: string | null;
+            /** Format: date-time */
+            overridden_at?: string | null;
             checks: components["schemas"]["EligibilityCheck"][];
             /** @enum {string} */
             confidence: "low" | "medium" | "high";
@@ -2129,8 +2205,13 @@ export interface components {
                 write: components["schemas"]["ProviderRoleConfig"];
                 review: components["schemas"]["ProviderRoleConfig"];
             };
-            /** @description Nama referensi keyring. API tidak menerima nilai secret. */
+            /** @description Nama referensi keyring, bukan nilai secret. */
             api_key_ref?: string;
+            /**
+             * @description Opsional (D24). Nilainya ditulis ke Windows Credential Manager dan
+             *     tidak pernah dikembalikan. Kosongkan untuk mempertahankan key lama.
+             */
+            api_key?: string;
         };
         /** @enum {string} */
         ConsentType: "cloud_data_processing";
@@ -2993,6 +3074,38 @@ export interface operations {
             500: components["responses"]["InternalError"];
         };
     };
+    reviewEligibility: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EligibilityOverrideRequest"];
+            };
+        };
+        responses: {
+            /** @description Detail match setelah tinjauan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatchDetail"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
     listApplications: {
         parameters: {
             query?: {
@@ -3358,11 +3471,65 @@ export interface operations {
                     base_content_hash: string;
                     /** @enum {string} */
                     reason: "user_requested" | "review_changes" | "outdated_source";
+                    /**
+                     * @description Temuan yang dicentang. Bila diisi, hanya temuan itu yang
+                     *     dikirim ke writer sebagai instruksi. Bila dihilangkan, semua
+                     *     temuan terbuka dikirim (perilaku lama).
+                     */
+                    finding_ids?: string[];
+                    note?: string;
                 };
             };
         };
         responses: {
             /** @description Task regenerate dibuat. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskCreated"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    requestDocumentRevision: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description Opsional. Bila dikirim, request dengan key dan body identik dalam 24 jam
+                 *     mengembalikan response pertama dengan header `Idempotency-Replayed: true`.
+                 *     Key sama dengan body berbeda menghasilkan 409 `idempotency_conflict`.
+                 */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                application_id: components["parameters"]["ApplicationId"];
+                document_version_id: components["parameters"]["DocumentVersionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    base_content_hash: string;
+                    /** @enum {string} */
+                    reason: "user_requested" | "review_changes" | "outdated_source";
+                    finding_ids: string[];
+                    /** @description Catatan bebas, disimpan bersama permintaan. */
+                    note?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Task pembuatan versi revisi dibuat. */
             202: {
                 headers: {
                     [name: string]: unknown;

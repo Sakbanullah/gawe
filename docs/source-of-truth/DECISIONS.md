@@ -83,8 +83,10 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 | D18 | Kebijakan data provider? | Consent sebelum cloud; minimisasi; tanpa klaim retensi/training; opsi lokal belum diverifikasi | **Diputuskan (prinsip)**; detail provider `OPEN` (butuh riset) | Ya untuk provider |
 | D19 | Bahasa CV/cover letter? | Mengikuti bahasa lowongan bila memungkinkan; jika tidak, pengguna memilih | **Diputuskan** | Tidak |
 | D20 | Perlu autentikasi lokal sederhana? | Tidak untuk single-user; bind localhost + CSRF | Menunggu konfirmasi | Tidak |
-| D21 | Override pembuatan dokumen untuk `ineligible`? | Default tidak. Jika dipertahankan: aksi eksplisit, peringatan, alasan tercatat, status tetap `ineligible`, bukan tombol utama | Menunggu konfirmasi | Tidak untuk Phase 1–2; ya sebelum Phase 3 jika override diimplementasikan |
+| D21 | Override pembuatan dokumen untuk `ineligible`? | Hanya `needs_review` yang dapat ditinjau manusia; `ineligible` tidak dapat dinaikkan. Alasan wajib, hasil aturan tetap di `auto_status` | `CLOSED` 2026-10-25 | Ya, sebelum Phase 3 jika override diimplementasikan |
+| D24 | Apakah provider endpoint dan API key dapat diedit dari browser? | Ya. `PUT /api/settings/provider` menerima `base_url`, provider id, model per role, dan `api_key` write-only. Key ditulis ke Windows Credential Manager via `keyring`, tidak pernah masuk `config.toml`, DB, log, atau response. `POST /api/settings/provider/test` melakukan satu `GET /models` tanpa data kandidat | `CLOSED` 2026-10-25 | — |
 | D22 | Library komponen UI? | **Mantine** satu-satunya library komponen UI utama; React + TS + Vite; styling bawaan; CSS manual hanya pengecualian terdokumentasi; tidak mencampur library UI utama | **Diputuskan** | Tidak |
+| D23 | Boleh mengambil lowongan dari jobboard yang menolak fetch anonim? | **Disetujui pengguna 2026-10-25.** Jalur `browser` memakai Playwright dengan profil Chromium lokal yang pengguna login sendiri (headed sekali, headless saat crawl). Password dan 2FA tidak pernah disimpan Gawe; cookie tidak dibaca atau dikirim ke klien; tidak ada rotasi proxy, penyamaran identitas browser, login otomatis, atau retry otomatis setelah diblokir. `robots.txt` tidak berlaku untuk jalur ini karena permintaan datang dari sesi pengguna sendiri. ToS tiap situs tetap berlaku dan risiko pembatasan akun ditanggung pengguna. Implementasi: Phase 7; menambah dependency `playwright` + Chromium. | **Diputuskan** 2026-10-25 | Tidak; tapi situs pertama yang diaktifkan wajib dicatat `tos_notes`-nya |
 
 ---
 
@@ -174,11 +176,51 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 
 ### D21 — Override `ineligible`
 
-- **Status:** menunggu konfirmasi.
-- **Default sementara:** tidak ada override; `ineligible` tidak masuk alur dokumen normal.
-- **Jika dipertahankan:** aksi eksplisit terpisah, peringatan, alasan tercatat, status tetap `ineligible`, ranking tidak berubah.
-- **Dibutuhkan sebelum:** implementasi override di Phase 3.
+- **Status:** `CLOSED` 2026-10-25. Diputuskan pengguna: hanya `needs_review` yang dapat ditinjau manusia.
+- **Keputusan:**
+  - Tinjauan manual berlaku **hanya** untuk `needs_review`. `eligible` tidak perlu bantuan.
+  - `ineligible` **tidak** dapat dinaikkan menjadi `eligible`. Hasil `not_met` tetap terbaca dan tetap menjadi dasar tantangan reviewer dokumen.
+  - Dua aksi eksplisit di UI: "Tandai eligible" dan "Tandai ineligible". Keduanya wajib membawa alasan yang tidak kosong.
+  - Hasil aturan tetap disimpan di `auto_status`. `status` adalah hasil akhir. UI menampilkan keduanya.
+  - Analisis ulang **tidak** menghapus tinjauan: `_store_eligibility` memakai `COALESCE(override_status, status)`, dan tinjauan hanya berlaku untuk `job_posting_version_id` + `profile_version_id` yang sama.
+  - Tinjauan tidak mengubah fit score, ranking, atau priority tier. Eligibility tetap bukan bagian dari skor.
+  - Tinjauan hanya dapat dihapus lewat `status: null` pada endpoint yang sama, dan hanya bila statusnya masih `needs_review`.
+- **Kontrak:** `PATCH /api/matches/{job_id}/eligibility` (`openapi.yaml`), field `auto_status`, `override_reason`, `overridden_at` pada `EligibilityAssessment`.
+- **Migrasi:** `0016_eligibility_override.sql`.
+- **Bukti:** `backend/tests/test_eligibility_review.py`.
 - **Rujukan:** [`../domains/ELIGIBILITY-AND-SCORING.md`](../domains/ELIGIBILITY-AND-SCORING.md).
+
+### D24 — Provider endpoint dan API key dari browser
+
+- **Status:** `CLOSED` 2026-10-25. Diputuskan pengguna.
+- **Konteks:** kontrak `GET`/`PUT /api/settings/provider` sudah ada sejak Phase 0, tetapi tidak pernah diimplementasikan. Kartu Provider di Settings hanya menampilkan badge. Pengguna meminta endpoint dan API key dapat diedit dari browser.
+- **Keputusan:**
+  - `GET /api/settings/provider` mengembalikan `provider_id`, `base_url`, model per role, `key_source`, `key_writable`, dan daftar provider. **Tidak pernah** mengembalikan nilai key.
+  - `PUT /api/settings/provider` menerima `provider_id`, `base_url`, `roles`, dan `api_key` opsional. Ini memperluas klausa lama ("API tidak pernah menerima nilai API key") pada `API-CONTRACTS.md`.
+  - Nilai key ditulis ke Windows Credential Manager via `keyring.set_password("gawe", api_key_ref, value)`. Tidak pernah masuk `config.toml`, DB, log, atau response.
+  - `base_url` wajib `https`, tanpa kredensial, tanpa query, dan bukan host lokal. `provider_id` bebas diubah.
+  - Hanya tabel `[llm*]` pada `config.toml` yang ditulis ulang; bagian lain dipertahankan apa adanya. Penulisan atomik lewat `os.replace`, dan TOML divalidasi sebelum menggantikan file lama.
+  - `POST /api/settings/provider/test` melakukan satu `GET {base_url}/models` dengan header `Authorization`. Tidak ada data kandidat yang dikirim, sehingga consent tidak diperlukan. Timeout 10 detik.
+  - Client LLM di `app.state` dibangun ulang per request bila `base_url` atau `provider_id` berbeda dari config aktif, jadi perubahan langsung berlaku tanpa restart.
+- **Alasan diterima:** backend bind `127.0.0.1`, semua request mutasi lewat CSRF, dan aplikasi single-user lokal. Keyring tetap menjadi satu-satunya tempat penyimpanan secret, jadi tidak ada penurunan keamanan dibanding menulis key lewat CLI.
+- **Bukti:** `backend/tests/test_provider_settings.py`, `frontend/src/components/ProviderSettings.test.tsx`.
+- **Rujukan:** `API-CONTRACTS.md` §Provider, [`SECURITY.md`](SECURITY.md), [`DATA-AND-PRIVACY.md`](DATA-AND-PRIVACY.md).
+
+### D25 — Eligibility hanya diblokir oleh skill wajib yang tidak ada
+
+- **Status:** `CLOSED` 2026-10-25. Diputuskan pengguna.
+- **Konteks:** gate lama memblokir eligibility atas `experience`, `location`, `work_authorization`, `education`, `certification`, `language`, `timezone`, dan `travel`, sementara skill tidak pernah memblokir. Pengguna ingin pengalaman tidak menjadi alasan `ineligible`, dan hanya skill yang tidak ada yang boleh memblokir.
+- **Keputusan:**
+  - `ELIGIBILITY_CATEGORIES` = `{"other"}` (skill). Hanya kutipan `must_have` pada kategori itu yang dapat membuat lowongan `ineligible`.
+  - Skill memblokir hanya bila **tidak ada satu pun** skill yang diminta lowongan tercantum di profil. Tidak ada ambang "separuh cocok".
+  - Bila skill disebut lowongan tetapi profil belum menyebutnya secara khusus, hasilnya `unknown` → `needs_review`, bukan `ineligible`. Profil adalah teks bebas; "tidak tertulis" bukan "tidak punya".
+  - Pengalaman tidak pernah memblokir. Kekurangan tahun pengalaman dicatat sebagai `unknown` beserta angka profil dan angka permintaan.
+  - Lokasi, work authorization, kualifikasi, bahasa, zona waktu, dan perjalanan tetap dicatat sebagai `checks` dan memengaruhi fit score, tetapi tidak mengubah status eligibility.
+  - Fit score tetap hanya untuk kandidat `eligible`; eligibility tetap bukan bagian dari skor dan tetap tidak memakai priority tier.
+- **Konsekuensi:** `ineligible` menjadi jauh lebih jarang. Sebagian besar lowongan berakhir `eligible` atau `needs_review`. Ini disengaja: pengguna ingin memutuskan sendiri mana yang layak dikejar.
+- **Migrasi data:** data lowongan lama dihapus (job, posting version, requirement, assessment, fit, ranking, aplikasi, dokumen, approval, export, discovery run, task non-profil) agar penilaian ulang dimulai dari nol. Master CV, profil, consent, dan `source_registry` dipertahankan.
+- **Bukti:** `backend/tests/test_assessment.py` (skill `not_met`/`met`, pengalaman tidak memblokir, work authorization tidak memblokir), `backend/tests/test_eligibility_review.py`.
+- **Rujukan:** `PLAN.md` §Eligibility gate, [`../domains/ELIGIBILITY-AND-SCORING.md`](../domains/ELIGIBILITY-AND-SCORING.md) §3.2.
 
 ### Blocker ditutup: retensi dan penghapusan salinan lowongan Himalayas
 
@@ -235,7 +277,7 @@ Aturan tambahan:
 - D1 sudah diputuskan: 9Router lewat adapter `openai_compatible`, dengan `base_url` dan model per role sebagai konfigurasi. Prasyarat provider untuk fitur live terpenuhi; consent dan D18 tetap berlaku.
 - D10 tidak memblokir implementasi, tetapi retensi tetap sementara.
 - D20 tidak memblokir implementasi.
-- D21 hanya memblokir jika override akan diimplementasikan.
+- D21 sudah ditutup 2026-10-25: override berlaku untuk `needs_review` saja; `ineligible` tidak dapat dinaikkan.
 
 ---
 
@@ -252,7 +294,7 @@ Aturan tambahan:
 | "Seed 20 perusahaan sudah ada" | Salah. Target, daftar final belum ada |
 | "Discovery baru ada di Phase 4" | Salah. Discovery otomatis adalah bagian Phase 3; Phase 4 memperluas sumber |
 | "Retensi 90/30/7 hari final" | Salah. Sementara sampai D10 disetujui |
-| "Override ineligible adalah fitur default" | Salah. D21 terbuka; default tidak ada override |
+| "Override ineligible adalah fitur default" | Salah. D21 `CLOSED`: hanya `needs_review` yang dapat ditinjau manusia, `ineligible` tidak dapat dinaikkan |
 | "Phase 2 selesai tanpa D1" | Salah. Hanya 2A/fondasi yang selesai. D1 kini sudah diputuskan, tetapi Phase 2 tetap menunggu persetujuan eksplisit |
 | "Acceptance discovery bisa diclaim tanpa D3/D17" | Salah. Tidak boleh |
 | "URL manual adalah jalur utama discovery" | Salah. Discovery otomatis adalah jalur utama; URL manual hanya fallback |

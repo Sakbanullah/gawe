@@ -50,7 +50,7 @@ Di luar scope:
 
 - aggregator remote/EU dengan attribution (Arbeitnow, Remotive, Jobicy) → Phase 5;
 - perluasan sumber Indonesia dan skala tabel lanjutan → Phase 4;
-- Playwright, OCR, sumber tambahan yang belum terverifikasi → Phase 6;
+- Playwright, OCR, sumber tambahan yang belum terverifikasi → Phase 6, kecuali sumber `browser` yang disetujui terpisah pada 2026-10-25 (lihat `PHASE-07.md`);
 - auto-submit, auto-email;
 - override `ineligible` (D21 tetap `OPEN`).
 
@@ -446,6 +446,34 @@ Phase 4 tidak boleh dimulai tanpa:
 - human review menyetujui kualitas output;
 - daftar keputusan `OPEN` yang tersisa dilaporkan;
 - persetujuan eksplisit pengguna.
+
+### 11.1 Penundaan human review (keputusan sementara pengguna, 2026-10-25)
+
+Syarat "human review menyetujui kualitas output" **ditunda**, bukan dipenuhi.
+`temporary/review-samples/CHECKLIST.md` tetap kosong dan tidak diisi atas nama pengguna.
+
+- Keputusan: pengguna memilih menunda penilaian manusia atas kualitas output.
+- Akibat: gate Phase 3 **belum lulus**. Phase 3 tidak boleh dinyatakan selesai, dan
+  milestone 3D belum punya bukti kualitas isi.
+- Phase 4 boleh dimulai dengan gate ini berstatus ditunda. Klaim "Phase 3 selesai" dan
+  klaim kualitas CV/cover letter tetap dilarang.
+
+Satu cacat terverifikasi yang belum dinilai manusia maupun diperbaiki:
+
+1. Requirement sampel A diekstrak sebagai satu blok gabungan, bukan empat requirement terpisah,
+   sehingga bobot `must_have` 60 jatuh pada satu item dan mendorong fit 88.
+
+Dua dugaan cacat sebelumnya **dicabut** setelah diperiksa ulang (2026-10-25):
+
+- Dugaan "cover letter PDF terpotong" salah. PDF utuh: 5 paragraf, semua span teks ada,
+  1 halaman; `text_chars` 534 memang panjang teks cover letter. Kesalahan ada pada cara
+  ekstraksi teks saat pemeriksaan, bukan pada `render.py`.
+- Dugaan "panah hilang" salah. Fixture `docs/phase-00/fixtures/master_cv/candidate_001.md`
+  baris 17 berbunyi `from 850 ms to 220 ms`; panah tidak pernah ada di sumber mana pun.
+  `factcheck.to_text()` dan `render.build_cv()` mempertahankan teks verbatim.
+
+Teks checklist 1.2 di `temporary/review-samples/CHECKLIST.md` menulis "850 ms → 220 ms",
+sehingga item itu tidak cocok dengan sumber. Perlu dikoreksi sebelum checklist dipakai.
 
 ---
 

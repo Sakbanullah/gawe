@@ -16,7 +16,7 @@ Memperluas sumber remote + operability:
 - laporan biaya per provider;
 - hardening ekspor dan metadata.
 
-Di luar scope: Playwright, OCR, model lokal (Phase 6). Sumber Indonesia terverifikasi sudah ditangani Phase 4.
+Di luar scope: OCR, model lokal (Phase 6). Sumber `browser` dengan sesi login pengguna berada di Phase 7. Sumber Indonesia terverifikasi sudah ditangani Phase 4.
 
 ---
 

@@ -81,6 +81,7 @@ Konvensi umum:
 | GET | `/api/matches` | `listMatches` | Daftar job teranking + filter/sort |
 | GET | `/api/matches/{job_id}` | `getMatch` | Detail job untuk side panel |
 | PATCH | `/api/matches/{job_id}/tier` | `overrideMatchTier` | Koreksi priority tier pengguna |
+| PATCH | `/api/matches/{job_id}/eligibility` | `reviewEligibility` | Tinjauan manusia atas eligibility `needs_review` (D21) |
 
 ### 2.5 Applications (`/applications`, `/applications/:id`)
 
@@ -315,7 +316,7 @@ Aturan kontrak:
 - Sumber `broken` atau `restricted` tidak boleh diaktifkan.
 - Tidak ada hard delete pada v1.
 - `last_checked_at` diisi backend setelah percobaan fetch.
-- `access_method` untuk entri yang dikelola pengguna hanya `ats_api` (board satu perusahaan). `aggregator` ditolak saat write (`400 validation_failed`, detail `access_method_unsupported`) sampai ada feed dengan ketentuan tertulis dan adapter; feed Himalayas dihapus 2026-10-23. `html` juga ditolak saat write karena tidak ada adapter yang dapat mengambilnya. `manual_url` bukan pilihan pengguna; nilai itu dipakai record sintetis. Baris lama bertipe `aggregator` atau `html` tetap dapat dibaca dan dinonaktifkan, tetapi tidak pernah di-fetch.
+- `access_method` untuk entri yang dikelola pengguna hanya `ats_api` (board satu perusahaan). `aggregator` ditolak saat write (`400 validation_failed`, detail `access_method_unsupported`) sampai ada feed dengan ketentuan tertulis dan adapter; feed Himalayas dihapus 2026-10-23. `html` juga ditolak saat write karena tidak ada adapter yang dapat mengambilnya. `manual_url` bukan pilihan pengguna; nilai itu dipakai record sintetis. `browser` ditambahkan 2026-10-25 (D23) untuk sumber dengan sesi login pengguna; syaratnya tercatat di `docs/domains/JOB-DISCOVERY.md` §4.6. Baris lama bertipe `aggregator` atau `html` tetap dapat dibaca dan dinonaktifkan, tetapi tidak pernah di-fetch.
 - `health_status` adalah turunan streak kegagalan, bukan penilaian terpisah: `unknown` belum ada percobaan, `healthy` percobaan terakhir sukses, `degraded` 1-2 gagal berurutan, `broken` 3 atau lebih gagal berurutan. `consecutive_failures` direset ke 0 setelah sukses.
 - `next_run_at` adalah slot berikutnya. `null` berarti sumber langsung due. Sumber yang gagal mendapat backoff eksponensial (`interval × 2^(failure-1)`, maksimum faktor 8); `Retry-After` dari server dipakai sebagai lantai, bukan pengganti.
 - `daily_request_quota` membatasi jumlah **HTTP request** per 24 jam, dihitung dari `SUM(discovery_run_source.request_count)` untuk baris yang `last_attempt_at` berada dalam 24 jam terakhir (bukan `source_fetch`, karena respons 304 dan kegagalan tidak menulis baris fetch). Setiap percobaan mencatat jumlah request yang benar-benar dipakai, jadi adapter berhalaman menghitung satu per halaman. `0` berarti tanpa batas. Sumber di-skip dengan `source_quota_exhausted` bila sisa kuota tidak cukup untuk seluruh kebutuhan run, sehingga tidak ada snapshot sebagian.
@@ -801,6 +802,16 @@ Aturan:
 - Response adalah `MatchItem` setelah koreksi, sehingga UI tidak perlu menebak nilai baru.
 - Mengubah tier tidak mengubah urutan daftar sampai ranking dihitung ulang; UI harus menandai hal ini.
 
+**Tinjauan eligibility manusia (`PATCH /api/matches/{job_id}/eligibility`, D21).**
+
+- Body: `status` (`eligible`, `ineligible`, atau `null` untuk menghapus tinjauan) dan `reason` (teks ≤ 1000, wajib saat `status` diisi).
+- Hanya job berstatus `needs_review` yang boleh ditinjau. `eligible` yang ditinjau ulang dan `ineligible` yang akan dinaikkan sama-sama ditolak `409 override_not_allowed`.
+- `status` diperbarui; hasil aturan tetap disimpan pada `auto_status`. `override_reason` dan `overridden_at` mencatat keputusan manusia.
+- `reason` kosong saat `status` diisi → `400 validation_failed`.
+- Job yang belum dianalisis → `404 not_found`. Job tertutup → `409 job_not_open`. Assessment `status_outdated` → `409 assessment_outdated`.
+- Response adalah `MatchDetail` setelah tinjauan. `fit_score`, ranking, dan priority tier tidak berubah.
+- Analisis ulang tidak menghapus tinjauan selama `job_posting_version_id` dan `profile_version_id` masih sama.
+
 ### 4.9 Batas ukuran respons dan streaming
 
 - Response JSON tunggal ≤ 2 MiB. Daftar wajib dipaginasi.
@@ -832,8 +843,10 @@ Aturan:
 **Provider dan role.**
 
 - `GET /api/settings/provider` mengembalikan `provider_id`, `display_name`, `configured`, `base_url`, `roles` (`extract`, `classify`, `write`, `review`), `key_source`, `consent_renewal_required`, `updated_at`.
-- `PUT /api/settings/provider` menerima provider/model/role dan `api_key_ref` (nama referensi keyring), bukan nilai secret. Perubahan model pada role mana pun memicu `consent_renewal_required`.
-- API tidak pernah mengembalikan atau menerima nilai API key. `key_source` hanya `keyring`, `env`, atau `missing`.
+- `PUT /api/settings/provider` menerima provider/model/role dan `api_key_ref` (nama referensi keyring). Perubahan model pada role mana pun memicu `consent_renewal_required`.
+- Sejak D24 (2026-10-25), `PUT /api/settings/provider` juga menerima `api_key` (write-only). Nilainya ditulis ke Windows Credential Manager dan tidak pernah dikembalikan, dicatat di log, atau disimpan di config/DB.
+- API tidak pernah mengembalikan nilai API key. `key_source` hanya `keyring`, `env`, atau `missing`.
+- `POST /api/settings/provider/test` melakukan satu `GET {base_url}/models` dengan key tersimpan. Tidak mengirim data kandidat, jadi consent tidak diperlukan. Error: `provider_not_configured` dan `api_key_missing` (`409`), `test_unauthorized`, `test_failed`, `test_timeout`, `test_unreachable`, `test_invalid_response` (`400`).
 - Tidak ada vendor atau model default. Tanpa konfigurasi, `configured: false` dan aksi LLM ditolak `409 provider_not_configured` (D1 sudah diputuskan: 9Router lewat `openai_compatible`; `base_url` dan model per role tetap konfigurasi).
 - Satu provider aktif. Role boleh menunjuk model berbeda pada provider yang sama. Tidak ada fallback lintas provider otomatis.
 
@@ -867,6 +880,7 @@ Aksi API dan transisi yang diizinkan:
 | Buat application dari `job_id`/`url` | `POST /api/applications` | Profil `confirmed` | Workspace baru; task fetch/analisis; tanpa profil confirmed ditolak `409 profile_not_confirmed` |
 | Edit | `POST .../documents/{id}/revisions` | Versi ada | Versi baru `draft`; versi lama tidak berubah |
 | Regenerate | `POST .../documents/{id}/regenerate` | Eligibility `eligible` | Versi baru `draft` |
+| Minta perubahan bercentang | `POST .../documents/{id}/revision-request` | Eligibility `eligible`; `finding_ids` minimal satu dan harus ada di versi itu | Versi baru `draft`; hanya temuan bercentang dikirim ke writer |
 | Ekspor | `POST /api/applications/{id}/exports` | Versi `approved`, hash cocok | Task `export`; sukses → `exported` |
 | Sumber berubah | — | Profil/job version baru | Assessment/dokumen terkait `outdated`; tanpa regenerate otomatis |
 
@@ -880,7 +894,9 @@ Aturan:
 - Status aplikasi adalah proyeksi backend dengan presedensi tetap: task aktif → `processing`; kegagalan tak terpulihkan → `failed`; eligibility `needs_review` atau reviewer tidak tersedia → `needs_review`; ada analisis/dokumen `outdated` → `outdated`; ada dokumen `in_review` → `in_review`; semua dokumen wajib `exported` → `exported`; minimal satu `approved` → `approved`; selain itu `not_started`. Frontend hanya menampilkan.
 - Transisi ilegal ditolak `409`, bukan diterima lalu diperbaiki di UI.
 - `createApplication` dan `rerunApplicationAnalysis` mensyaratkan profil `confirmed`; pelanggaran menghasilkan `409 profile_not_confirmed` tanpa membuat workspace atau task.
-- **Ambiguitas `rejected` vs `changes_requested` (belum diselesaikan).** `PRODUCT.md` §5.4 dan `PLAN.md` §4.3 hanya menetapkan bahwa versi tidak berubah dan approval tidak diberikan. Tidak ada sumber produk yang membedakan efek kedua keputusan. Kontrak saat ini menerima keduanya dan memperlakukan efeknya sama: versi tetap `in_review`, catatan dicatat, tidak ada approval baru yang berlaku. Perbedaan efek (misalnya `rejected` menutup versi) **tidak dikarang** dan menunggu keputusan pengguna.
+- **Revisi bercentang (2026-10-25).** `POST .../documents/{id}/revision-request` membuat versi baru dari temuan yang dicentang pengguna. `finding_ids` wajib dan minimal satu (`400 validation_failed`); id yang tidak ada di `findings` versi itu ditolak `400 unknown_finding`. Hanya temuan terpilih yang menjadi `revision_instructions` untuk writer. Gate review dan approval tetap menilai seluruh versi baru: blocker yang tidak dicentang membuat versi baru tetap `changes_required`. `note` opsional dan disimpan bersama permintaan. `regenerate` tetap ada; `finding_ids` opsional di sana berarti semua temuan terbuka dikirim (perilaku lama).
+- **Task yatim (2026-10-25).** Task `queued`/`processing` yang pemiliknya mati (crash atau restart di tengah run sinkron) menggantung selamanya dan mengunci workspace. Sejak sekarang `TaskStore.reap_stale` mencakup semua tipe task, dipanggil saat startup dengan `older_than_s=0`; row semacam itu ditandai `failed` dengan `error.code = stale_run`. Discovery tetap memakai daftar tipe sendiri (`types=("discovery",)`) dengan ambang heartbeat-nya. Gate dokumen (`_require_no_active_task`) hanya memblokir `document_generation`; `analysis` dan `discovery` tidak lagi menahan pembuatan dokumen.
+- **Ambiguitas `rejected` vs `changes_requested` (sebagian diselesaikan, 2026-10-25).** `PRODUCT.md` §5.4 dan `PLAN.md` §4.3 hanya menetapkan bahwa versi tidak berubah dan approval tidak diberikan. Kontrak menerima keduanya dan memperlakukan efeknya sama: versi tetap `in_review`, catatan dicatat, tidak ada approval baru yang berlaku. Sejak 2026-10-25 gate approval (hash, eligibility, review selesai, verdict, skor, data wajib) hanya berlaku untuk `approved`, karena `rejected`/`changes_requested` tidak memberikan approval. Versi yang gagal review karena itu tetap bisa dimintai perubahan. Catatan wajib diisi untuk kedua keputusan itu (`400 validation_failed` bila kosong): replay memakai kunci `document_version_id` + `content_hash` + `decision`, sehingga catatan kosong akan memutar ulang keputusan lama dan menghilangkan catatan yang seharusnya ditambahkan. Perbedaan efek lebih lanjut antara `rejected` dan `changes_requested` (misalnya `rejected` menutup versi) **tetap tidak dikarang** dan menunggu keputusan pengguna.
 
 #### 4.11.1 Implementasi dokumen deterministik (milestone 3D)
 
@@ -890,7 +906,7 @@ Milestone ini mengimplementasikan versi, review, dan approval. LaTeX/PDF/ekspor 
 - Hash versi adalah SHA-256 dari canonical JSON konten (`sort_keys`, separator rapat, UTF-8). Hash berubah bila konten berubah.
 - Diff versi 1 membandingkan dokumen dengan Master CV (`selected`/`omitted`/`summarized`). Diff versi revisi/regenerate membandingkan dengan versi induk (`added`/`removed`/`changed`) dan mencatat `base_document_version_id`.
 - Review deterministik memeriksa: data wajib ada, setiap klaim membawa minimal satu `evidence_id`, dan setiap `evidence_id` ada di `evidence_index` profil. Verdict `pass` bila tidak ada `blocker`/`major`; selain itu `changes_required`. Reviewer LLM (D9) belum dijalankan, sehingga verdict `review_unavailable` tidak dihasilkan.
-- Approval ditolak `409` bila: hash tidak cocok (`approval_hash_mismatch`), review belum selesai (`review_not_completed`), eligibility bukan `eligible` (`eligibility_needs_review`/`eligibility_not_eligible`), eligibility `status_outdated` (`conflict` + `assessment_outdated`), atau data wajib belum lengkap (`conflict` dengan `details[].code` = `missing_required_field`/`missing_required_section`).
+- Approval ditolak `409` bila: hash tidak cocok (`approval_hash_mismatch`), review belum selesai (`review_not_completed`), eligibility bukan `eligible` (`eligibility_needs_review`/`eligibility_not_eligible`), eligibility `status_outdated` (`conflict` + `assessment_outdated`), atau data wajib belum lengkap (`conflict` dengan `details[].code` = `missing_required_field`/`missing_required_section`). Gate review dan data wajib hanya berlaku untuk keputusan `approved`; `rejected`/`changes_requested` cukup lolos hash + eligibility dan wajib menyertakan catatan.
 - Generate dan regenerate juga menolak eligibility `status_outdated`. Review ulang versi yang sudah `approved` ditolak `409 conflict` + `version_already_approved`; buat versi baru.
 - Data wajib minimum: `header.full_name` dan minimal satu dari `experience`, `projects`, `education`.
 - Approval yang diulang dengan versi, hash, dan keputusan yang sama mengembalikan record yang sama (`200`, header `Idempotency-Replayed: true`). Keputusan berbeda menambah record baru (append-only) selama versi belum `approved`; versi yang sudah `approved` menolak keputusan lain dan review ulang dengan `409 conflict` + `version_already_approved`.

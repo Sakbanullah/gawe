@@ -101,8 +101,9 @@ Berlaku untuk fetch lowongan, halaman lamaran, dan URL manual.
 ### 4.2 Penanganan kegagalan
 
 - 403, CAPTCHA, atau login → berhenti untuk sumber itu; minta pengguna paste teks atau simpan halaman.
-- Tidak ada bypass CAPTCHA, paywall, login, atau rotasi proxy.
+- Tidak ada bypass CAPTCHA, paywall, login otomatis, atau rotasi proxy.
 - `robots.txt` dicek untuk fetch HTML umum.
+- **Pengecualian sumber `browser`:** fetch memakai sesi login pengguna sendiri, atas perintah eksplisit, di profil Chromium lokal. Untuk jalur ini `robots.txt` tidak dicek, karena aturan itu mengatur akses anonim. Login tetap dilakukan pengguna di jendela Chromium; Gawe tidak menyimpan password, tidak menangani 2FA, tidak menyamar sebagai browser lain, dan tidak retry otomatis setelah diblokir. Detail: [`../domains/JOB-DISCOVERY.md`](../domains/JOB-DISCOVERY.md) §4.6.
 - 403/429 → berhenti untuk sumber itu dan laporkan.
 
 ### 4.3 Tautan Apply
@@ -148,6 +149,7 @@ Berlaku untuk fetch lowongan, halaman lamaran, dan URL manual.
 - Environment variable hanya fallback untuk development.
 - Secret tidak boleh ada di file konfigurasi yang di-commit, log, error message, atau respons API.
 - `gawe doctor` melaporkan sumber key tanpa menampilkan nilainya.
+- Profil browser (cookie sesi jobboard) bukan secret yang disimpan Gawe, tetapi diperlakukan sebagai data sensitif: direktori di luar repo, tidak pernah di-log, tidak masuk backup, tidak dikirim ke klien.
 - Config contoh hanya berisi placeholder.
 - Backup tidak menyertakan secret.
 

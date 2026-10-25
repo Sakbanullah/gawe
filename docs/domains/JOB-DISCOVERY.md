@@ -158,6 +158,25 @@ Konsekuensinya:
 
 Keputusan: [`../source-of-truth/DECISIONS.md`](../source-of-truth/DECISIONS.md) D3 dan "Blocker ditutup".
 
+### 4.6 Sumber `browser` (sesi login pengguna)
+
+Jalur ini ada karena jobboard besar (Indeed, Jobstreet, LinkedIn) tidak menyediakan API lowongan publik dan menolak fetch anonim. Jalur ini **bukan crawler publik** dan **bukan bypass**: sistem memakai sesi login yang pengguna sendiri buat di profil Chromium lokal.
+
+Aturan:
+
+- Hanya Playwright yang dijalankan **headed** untuk login. Run crawl berjalan **headless** dengan profil yang sama.
+- Profil disimpan di `%LOCALAPPDATA%\Gawe\browser-profile`, di luar repo dan di luar DB. Tidak pernah masuk backup, log, atau respons API.
+- Password dan 2FA tidak pernah menyentuh Gawe. Pengguna login manual di jendela Chromium yang dibuka Gawe.
+- Cookie sesi tidak dibaca, tidak dicetak, dan tidak dikirim ke klien.
+- Jalur ini tidak memeriksa `robots.txt`: aturan itu berlaku untuk fetch anonim, sedangkan di sini permintaan datang dari sesi pengguna yang login atas namanya sendiri. Pengecualian ini dicatat di [`../source-of-truth/SECURITY.md`](../source-of-truth/SECURITY.md) §4.2.
+- Crawler hanya membuka halaman daftar lowongan dan halaman detail lowongan. Tidak mengisi form, tidak menekan Apply, tidak mengirim pesan, tidak mengubah profil.
+- Saat CAPTCHA, halaman login, atau 403 terdeteksi: run berhenti untuk sumber itu dengan status `browser_blocked`, tanpa retry otomatis. Pengguna yang memutuskan kapan mencoba lagi.
+- Batas per run: jumlah kartu, jumlah halaman detail, dan timeout per halaman disimpan sebagai konfigurasi sumber. Nilai default ditetapkan di implementasi, bukan di dokumen ini.
+- ToS tiap situs berlaku pada akun pengguna. Risiko pembatasan akun ditanggung pengguna dan dicatat per sumber di `tos_notes`.
+- Tidak ada klaim cakupan. Sumber `browser` hanya menambah lowongan yang berhasil dibaca pada run terakhir.
+
+Kontrak adapter tetap: `build_url(source)` + `parse(html, source)` menghasilkan `ParsedJobs(jobs, skipped, complete)`. Dedupe, eligibility, ranking, dan approval tidak berubah.
+
 ### 4.4 Sumber yang tidak dapat dipakai v1
 
 | Sumber | Alasan |
@@ -180,7 +199,7 @@ Keputusan: [`../source-of-truth/DECISIONS.md`](../source-of-truth/DECISIONS.md) 
 - Tidak ada sumber dengan API resmi yang memberi cakupan Indonesia luas.
 - Cakupan Indonesia bergantung pada daftar perusahaan Indonesia yang memakai ATS tersebut (D3) dan verifikasi sumber (D17).
 - Jangan mengklaim cakupan Indonesia sebelum D17 tersedia dan sumber diuji.
-- Sumber tanpa API resmi tidak di-scrape; gunakan fallback URL manual.
+- Sumber tanpa API resmi tidak di-scrape lewat HTTP biasa; gunakan fallback URL manual. Pengecualian: sumber bertipe `browser` (§4.6) memakai sesi login pengguna sendiri, atas perintah eksplisit, dan tanpa klaim cakupan.
 
 ---
 
@@ -285,7 +304,8 @@ Aturan:
 
 ## 10. Etika Akses
 
-- Tanpa login, tanpa CAPTCHA bypass, tanpa paywall bypass, tanpa rotasi proxy.
+- Tanpa CAPTCHA bypass, tanpa paywall bypass, tanpa rotasi proxy.
+- Jalur `ats_api` dan fetch HTML umum berjalan tanpa login. Jalur `browser` (lihat §4.6) memakai sesi login pengguna sendiri di profil Chromium lokal; hanya bisa dijalankan atas perintah eksplisit pengguna. Tidak ada login otomatis dari password tersimpan, tidak ada penyamaran identitas browser, dan tidak ada percobaan ulang otomatis setelah diblokir.
 - 403/429 → berhenti untuk sumber itu, laporkan.
 - `robots.txt` dicek untuk fetch HTML umum.
 - Bila halaman URL manual menolak akses otomatis (403/429) atau dirender JavaScript, pengguna dapat menempelkan teks lowongan. URL tetap wajib dan tetap divalidasi karena menjadi identitas job dan target Apply; teks tempel tidak di-fetch, sehingga `robots.txt` tidak berlaku untuk jalur itu.
@@ -304,6 +324,8 @@ Aturan:
 |---|---|
 | Satu sumber gagal | Jangan hapus hasil sukses; status per sumber; retry |
 | 403/429 | Berhenti untuk sumber itu; laporkan |
+| CAPTCHA atau halaman login (sumber `browser`) | Berhenti untuk sumber itu; status `browser_blocked`; minta pengguna login ulang; tidak ada retry otomatis |
+| Sesi browser kedaluwarsa | Berhenti sebelum fetch; status `session_expired`; minta pengguna login ulang |
 | Data minimal tidak lengkap | Tandai; jangan analisis sebagai lengkap |
 | Data >7 hari | Warning |
 | Lowongan tertutup/kedaluwarsa | Tandai `closed`/`expired`; simpan; bukan kegagalan sumber |

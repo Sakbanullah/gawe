@@ -861,3 +861,206 @@ Working directory: `D:\gawe`
   ditolak pada field `ats`.
 - Tidak dijalankan: test live network (tetap dilarang), `verify_review_samples.py`
   (tidak ada perubahan dokumen atau template), dan paket review manusia (tidak berubah).
+
+## Run 2026-10-25 17:07 +07:00 - gate approval untuk changes_requested
+
+Command: `.\backend\.venv\Scripts\python.exe -m pytest backend/tests/test_documents.py backend/tests/test_documents_ai.py -q -p no:cacheprovider --junit-xml=temporary/junit_documents_approval_gate.xml`
+
+Working directory: `D:\gawe`
+
+- Hasil: **32 passed, 0 failed, 0 skipped** dalam 23.81s (dari JUnit XML).
+- Frontend: `npx vitest run src/pages/ApplicationsPage.test.tsx` **12 passed** dalam 4.87s (run ulang; run pertama 56.53s termasuk transform awal).
+- Perubahan yang diuji: gate approval (hash, eligibility, `required_missing`, review selesai, verdict, skor ambang) hanya berlaku untuk `decision == "approved"` di `backend/src/gawe/services/document_service.py`. `ApprovalRequest` menolak `rejected`/`changes_requested` tanpa catatan (`400 validation_failed`). Tombol "Minta perubahan" di `DocumentReviewPanel.tsx` tidak lagi menunggu review selesai, tetapi menunggu catatan terisi. Kontrak `API-CONTRACTS.md` §4.11 dan `openapi.yaml` diperbarui; `api-types.gen.ts` diregenerasi.
+- Test yang disesuaikan: tiga pemanggilan `changes_requested` di `test_documents.py` kini menyertakan `note`; test baru `test_changes_requested_records_note_on_failing_version` mencakup versi gagal review (tanpa catatan -> 400, dengan catatan -> 201, status tetap `in_review`, `approved` false).
+- Tidak dijalankan: suite penuh backend, `npm run typecheck`, dan `npm test -- --run` lengkap. Tidak ada test integrasi PDF/ekspor yang dijalankan untuk perubahan ini.
+
+## Run 2026-10-25 - Phase 7 L1 (fondasi browser)
+
+Command: `.\backend\.venv\Scripts\python.exe -m pytest tests/test_browser_session.py -q -p no:cacheprovider`
+
+Working directory: `D:\gawe\backend`
+
+- Hasil: **3 passed**, 0 failed, 0 skipped.
+- Perubahan: `playwright==1.56.0` ditambahkan; `jobs/browser/{__init__,profile,session}.py` baru; `cli.py` mendapat `gawe browser login|status|clear`; test baru `tests/test_browser_session.py`.
+- Bukti lingkungan: `playwright install chromium` mengunduh Chromium 141.0.7390.37 (91 MiB, headless shell) dan Chromium headed ke `%LOCALAPPDATA%\ms-playwright`. Headless smoke test: `example.com` -> `ok`, 1989 byte, profil dibuat.
+- Tidak dijalankan: `gawe browser login` headed (butuh interaksi manusia, bagian L2), suite penuh backend, typecheck frontend.
+
+## Run 2026-10-25 - Phase 7 L2 gerbang Indeed (gagal)
+
+Working directory: `D:\gawe\backend`
+
+- Perubahan: `jobs/browser/session.py` mencoba `channel="chrome"` lebih dulu lalu Chromium (`CHANNEL_ORDER`), `visit(url, headless=...)`, dan pesan state `blocked` diperbaiki. Tidak ada penghapusan flag automation, tidak ada spoofing.
+- Uji 1 (Chromium Playwright, profil berisi login manual): `https://www.indeed.com/jobs?q=backend+engineer` -> `blocked`, `<title>Blocked - Indeed.com</title>`, 35.886 byte.
+- Uji 2 (Chrome asli `C:\Program Files\Google\Chrome\Application\chrome.exe`, login manual ulang): `https://www.indeed.com/` dan `https://www.indeed.com/jobs?q=python` -> `blocked`, `<title>Blocked - Indeed.com</title>`, 35.962 byte.
+- Kesimpulan: pemblokiran bukan karena sesi login dan bukan karena channel browser. Indeed menolak browser yang dikendalikan Playwright.
+- Test unit: `tests/test_browser_session.py` 3 passed.
+- Tidak dijalankan: L3-L5, suite penuh backend.
+
+## Run 2026-10-25 - Phase 7 L2 gerbang Jobstreet (gagal)
+
+Working directory: `D:\gawe\backend`
+
+- Login manual dengan Chrome asli ke `https://id.jobstreet.com/`, profil tersimpan.
+- `gawe browser status "https://id.jobstreet.com/backend-engineer-jobs"` -> `blocked`; URL akhir berisi `__cf_chl_rt_tk`. Artinya diarahkan ke Cloudflare challenge.
+- Pemeriksaan DOM: `https://id.jobstreet.com/` dan `https://id.jobstreet.com/backend-engineer-jobs` -> `blocked`, `<title>Just a moment...</title>`, 6.205 dan 6.331 byte.
+- Kesimpulan: Jobstreet memakai Cloudflare bot challenge. Menembusnya berarti menyelesaikan challenge otomatis, yang dilarang D23 dan `SECURITY.md` §4.2. L2 tetap Diblokir; L3 belum boleh dimulai.
+
+## Run 2026-10-25 - Phase 7 jalur ekstensi (backend + UI + ekstensi)
+
+Commands:
+- `.\backend\.venv\Scripts\python.exe -m pytest tests/test_browser_import.py tests/test_browser_session.py -q -p no:cacheprovider`
+- `npm run typecheck` (frontend)
+- `npx vitest run src/pages/SettingsPage.test.tsx` (frontend)
+
+- Backend: **11 passed** (8 import + 3 session), 0 failed, 0 skipped, 5.05s.
+- Frontend: typecheck bersih; **7 passed** di `SettingsPage.test.tsx`.
+- Baru: `security/browser_token.py`, `services/browser_import_service.py`, `api/routes/import_browser.py`, `tests/test_browser_import.py`, `extension/` (manifest, background, content/jobstreet.js, popup, README).
+- Berubah: `api/app.py` (router + pengecualian CSRF satu path), `api/deps.py`, `api/routes/settings.py` (token + info impor), `frontend/.../apiClient.ts`, `queries.ts`, `SettingsPage.tsx`.
+- Test yang dibuktikan: token wajib (401), origin web ditolak (403), host page/job di luar jobstreet ditolak, batas 50 per kirim, duplikat tidak membuat job kedua, job impor masuk `manual_url` + `enabled=0` dan tetap dinilai eligibility, token baru membatalkan token lama.
+- Tidak dijalankan: suite backend penuh, uji nyata Brave + Jobstreet (butuh interaksi pengguna), `api-types.gen.ts` belum diregenerasi (belum ada perubahan OpenAPI untuk endpoint baru).
+
+## Run 2026-10-25 - Import ekstensi: apply_url dari kartu
+
+Command: `.\backend\.venv\Scripts\python.exe -m pytest tests/test_browser_import.py -q -p no:cacheprovider`
+
+- Hasil: **8 passed**.
+- Perubahan: `browser_import_service._card_to_raw` mengisi `apply_url` dengan URL lowongan dari kartu (bukan ditebak), sehingga tombol "Buka halaman lamaran resmi" tidak lagi kosong. Gawe tetap tidak submit.
+- Kondisi data sebelum perbaikan: 60 job `manual_url`, `apply_url` NULL untuk keenam puluhnya.
+- Tidak dijalankan: impor ulang dari Brave (menunggu pengguna mengirim halaman kembali).
+
+## Run 2026-10-25 - Purge job impor Jobstreet (opsi B, disetujui pengguna)
+
+Script: `temporary\purge_jobstreet_jobs.py` (sekali pakai, bukan bagian aplikasi).
+
+- Sebelum: 90 job `manual_url` (impor ekstensi), 5 application.
+- Dihapus: 90 job, 90 `job_posting_version`, 90 `job_requirement`, 90 `eligibility_assessment`, 7 `ranking_run` yatim, dan application yang menunjuk job itu.
+- Sesudah: 102 job (34+10+58 dari sumber `ats_api`), 3 application, 0 `manual_url`.
+- Tiga percobaan gagal di tengah karena urutan FK (`fk_eligibility_version`, `fk_job_requirement_version`) dan dua nama kolom salah (`job_requirement.job_id`, `ranking_run.run_id`). Tidak ada yang ter-commit sebelum urutan benar; data job tetap utuh sampai run terakhir.
+
+## Run 2026-10-25 - D21 tinjauan eligibility + impor deskripsi penuh
+
+Commands:
+- `.\backend\.venv\Scripts\python.exe -m pytest tests/test_eligibility_review.py tests/test_browser_import.py tests/test_documents.py -q -p no:cacheprovider --junit-xml=temporary/junit_review.xml`
+- `.\backend\.venv\Scripts\python.exe -m pytest tests/test_assessment.py tests/test_applications.py -q -p no:cacheprovider`
+- `npm run gen:api` lalu `npm run typecheck` (frontend)
+- `npx vitest run src/components src/pages/MatchesPage.test.tsx src/pages/SettingsPage.test.tsx`
+
+- Backend: **40 passed** (11 tinjauan + impor + dokumen), 0 failed, 0 errors (junit `errors="0"`). Assessment + applications: **113 passed**.
+- Frontend: typecheck bersih; **27 passed** di 5 file.
+- Baru: `db/migrations/0016_eligibility_override.sql`, `tests/test_eligibility_review.py`, `api/routes/matches.py#reviewEligibility`, `AssessmentService.override_eligibility`.
+- Berubah: `browser_import_service` (mode `cards` dan `detail`, `posted_at`, `snippet_only`), `routes/import_browser.py`, `extension/content/jobstreet.js`, `extension/popup.js`, `JobMatchesTable.tsx`, `openapi.yaml`, `api-types.gen.ts`, `DECISIONS.md` (D21 CLOSED), `API-CONTRACTS.md`.
+- Dibuktikan: job needs_review dapat ditandai eligible/ineligible dengan alasan wajib; `auto_status` menyimpan hasil aturan; tinjauan tidak boleh naik dari eligible/ineligible; dapat dihapus dengan `status: null`; bertahan setelah analisis ulang; mode detail memperbarui job yang sama, bukan membuat duplikat; deskripsi terlalu pendek ditolak; tanggal posting tersimpan.
+- Tidak dijalankan: uji nyata Brave pada halaman detail Jobstreet (butuh pengguna), suite backend penuh, `DISCOVERY`/`EXPORTS` regression.
+
+## Run 2026-10-25 - Perbaikan injeksi ganda content script
+
+Masalah dilaporkan pengguna: `Uncaught SyntaxError: Identifier SEL has already been declared` saat popup dibuka di halaman detail Jobstreet.
+
+Penyebab: `chrome.scripting.executeScript({files})` menyuntik ulang `content/jobstreet.js` setiap popup dibuka; `const SEL` di scope atas bentrok dengan eksekusi sebelumnya.
+
+Perbaikan: seluruh isi dibungkus IIFE dan dijaga `if (!window.gaweReadJobstreet)`, jadi injeksi kedua hanya memakai reader yang sudah ada.
+
+Verifikasi: `node --check` pada `content/jobstreet.js`, `popup.js`, `background.js` - ketiganya lolos. Belum diuji di Brave.
+
+## Run 2026-10-25 - D24 provider endpoint + API key dari browser
+
+Commands:
+- `.\backend\.venv\Scripts\python.exe -m pytest tests/test_provider_settings.py tests/test_eligibility_review.py tests/test_browser_import.py tests/test_settings_consent.py -q -p no:cacheprovider --junit-xml=temporary/junit_provider.xml`
+- `npx tsc --noEmit` (frontend)
+- `npx vitest run src/components src/pages/SettingsPage.test.tsx src/pages/MatchesPage.test.tsx`
+
+- Backend: junit `tests="40"`, `errors="0"`, 0 failed. Termasuk 12 test provider baru.
+- Frontend: typecheck bersih; **33 passed** di 6 file, termasuk 6 test `ProviderSettings`.
+- Baru: `services/provider_service.py`, `api/routes/settings.py` (`GET`/`PUT /api/settings/provider`, `POST /api/settings/provider/test`), `tests/test_provider_settings.py`, `frontend/src/components/ProviderSettings.tsx` + test.
+- Berubah: `api/deps.py` (`llm_client` membangun ulang provider bila `base_url`/`provider_id` berubah), `api/app.py` (`app.state.provider_factory`), `apiClient.ts`, `SettingsPage.tsx`, `openapi.yaml` (`api_key` write-only), `api-types.gen.ts`, `DECISIONS.md` (D24), `API-CONTRACTS.md`.
+- Dibuktikan: endpoint tersimpan dan terbaca ulang; key masuk keyring dan tidak muncul di `config.toml` maupun response; bagian config lain utuh; http/local/credentials ditolak; model wajib per role; update tanpa key mempertahankan key lama; test koneksi memanggil `{base_url}/models` dengan bearer dan mengembalikan daftar model; 401 dipetakan ke `test_unauthorized`; key hilang -> 409.
+- Tidak dijalankan: uji nyata ke provider sungguhan (butuh key pengguna), uji Brave untuk form, suite backend penuh.
+
+## Run 2026-10-25 - Form provider tanpa field model
+
+Permintaan pengguna: field Extract/Classify/Write/Review dihapus dari form; model memakai nilai default dari config.
+
+- `ProviderSettings.tsx`: empat TextInput model dihapus; `Simpan` mengirim balik model yang sudah ada di config, jadi tidak ada yang berubah diam-diam.
+- `npx tsc --noEmit`: bersih.
+- `npx vitest run src/components/ProviderSettings.test.tsx`: **7 passed** (termasuk test baru "tidak menampilkan field model" dan "endpoint berubah, roles tetap").
+- Backend tidak berubah; `PUT /api/settings/provider` tetap mewajibkan `roles` lengkap.
+
+## Run 2026-10-25 - Minta perubahan bercentang (revision-request)
+
+Permintaan pengguna: centang temuan (blocker/major), lalu klik "Minta perubahan"; hanya yang dicentang diperbaiki.
+
+- Backend: `POST /api/applications/{id}/documents/{id}/revision-request` (202). `finding_ids` wajib, minimal satu; id tak dikenal -> `400 unknown_finding`; hash basi -> `409 version_conflict`.
+- `DocumentService.regenerate` menerima `finding_ids` opsional; `_revision_instructions(report, only_ids)` menyaring temuan. `regenerate` tanpa `finding_ids` tetap mengirim semua temuan terbuka (perilaku lama).
+- Frontend: checkbox per temuan di panel Findings; default blocker+major tercentang; "Pilih semua"/"Kosongkan"; tombol "Minta perubahan" memakai `useRequestDocumentRevision`. Teks catatan diperbaiki.
+- Perintah: `pytest tests/test_revision_request.py tests/test_revision_endpoint.py tests/test_documents.py -q` -> **29 passed**, 0 failed.
+- `npx tsc --noEmit` -> bersih. `npx vitest run src/components src/pages` -> **52 passed**.
+- Tidak diuji: provider reviewer LLM nyata (findings dari reviewer model, bukan deterministik), uji manual di Brave, suite backend penuh.
+
+## Run 2026-10-25 - Task yatim mengunci workspace (409 task_already_running)
+
+Gejala: tombol "Minta perubahan" mengembalikan `409 Conflict` berulang untuk `app_0537b2e10357` / `docv_42054222878b`.
+
+Bukti akar penyebab (dari DB, bukan asumsi):
+- `task tsk_bcdc13b8f123` (type `analysis`) berstatus `processing` sejak `2026-10-25T13:24:36Z`, stage `eligibility`, `finished_at` NULL.
+- Tidak ada baris `llm_call` sesudah `13:19:14Z`, jadi task tidak pernah memanggil model; backend mati/restart di tengah `rerun_analysis` yang berjalan sinkron.
+- `reap_stale` lama hanya memilih `type = 'discovery'`, sehingga task `analysis` tidak pernah dipulihkan.
+- `DocumentService._require_no_active_task` memilih task aktif tipe apa pun.
+
+Perbaikan:
+- `TaskStore.reap_stale(..., types=None)` kini mencakup semua tipe; `discovery_service` memanggil dengan `types=("discovery",)`.
+- `api/app.py` memanggil `_reap_orphan_tasks` saat startup (`older_than_s=0`).
+- `DocumentService._require_no_active_task` dibatasi ke `type = 'document_generation'`.
+- Data: task macet ditandai `failed` + `error.code = stale_run` lewat `temporary/mark_stale_task.py`.
+
+Perintah: `pytest tests/test_stale_tasks.py tests/test_applications.py tests/test_documents.py tests/test_discovery.py -q` -> junit `tests="84"`, `failures="0"`.
+Tidak dijalankan: restart backend nyata untuk memastikan startup reap berjalan di proses uvicorn, uji manual tombol di Brave.
+
+## Run 2026-10-25 - 500 pada revision-request (findings bersarang)
+
+Gejala: `POST .../revision-request` mengembalikan `500 Internal Server Error`; task `document_generation` gagal `internal_error` / "Regenerate dokumen gagal." di stage `draft`, dan tidak ada `llm_call` (gagal sebelum writer).
+
+Akar penyebab (traceback dari reproduksi memakai data nyata):
+`regenerate` mengirim baris versi (`parent`) ke `_revision_instructions`. Baris versi menyimpan review sebagai `findings = {"verdict": ..., "findings": [...]}`, sedangkan review report menyimpannya sebagai `findings = [...]`. Kode menyaring dengan `finding.get("finding_id")` pada hasil iterasi dict, sehingga item berupa string kunci -> `AttributeError: 'str' object has no attribute 'get'` -> dibungkus jadi `DocumentError internal_error 500`.
+
+Perbaikan: `_revision_instructions` menerima kedua bentuk (satu level `findings.findings`), melewati item yang bukan dict, dan mengembalikan string kosong bila tidak ada findings.
+
+Bukti: reproduksi skrip pada `app_0537b2e10357` / `docv_f993f84bdc9f` berubah dari `DocumentError internal_error` menjadi `OK`.
+Perintah: `pytest tests/test_revision_request.py tests/test_revision_endpoint.py tests/test_documents.py tests/test_stale_tasks.py -q` -> junit `tests="35"`, `failures="0"`, `errors="0"`.
+Test baru: bentuk baris versi bersarang, tanpa filter, findings kosong/None.
+Tidak dijalankan: tombol di Brave setelah restart backend, provider nyata.
+
+## Run 2026-10-25 - Tombol "Buat CV" terlihat memuat CV dan cover letter
+
+Laporan: klik salah satu tombol, keduanya tampak berjalan.
+
+Akar penyebab:
+- Kedua tombol memakai satu instance `useGenerateDocuments()`, dan `loading={generate.isPending}` dipasang di keduanya, sehingga keduanya berputar bersama.
+- `useGenerateDocuments` memakai `useSetupMutation`, yang memanggil `queryClient.invalidateQueries()` tanpa filter: semua query (termasuk data cover letter) dimuat ulang.
+
+Perbaikan (frontend saja; backend memang hanya memproses `kinds` yang dikirim):
+- `pages/ApplicationWorkspacePage.tsx`: `pendingKind` melacak tombol yang diklik; hanya tombol itu `loading`, tombol lain `disabled` selama generate berjalan; state direset saat `isPending` selesai.
+- `app/queries.ts`: `useGenerateDocuments` memakai `useMutation` sendiri dan hanya menginvalidasi `["application", applicationId]` serta `["overview"]`.
+- `pages/ApplicationsPage.test.tsx`: test baru memastikan tombol cover letter mengirim `kinds: ["cover_letter"]` dan hanya satu panggilan.
+
+Bukti: `npx tsc --noEmit` bersih. `npx vitest run src/pages/ApplicationsPage.test.tsx` -> **13 passed**. Suite `src/components src/pages` dijalankan terpisah.
+Tidak dijalankan: uji manual di Brave.
+
+## Run 2026-10-25 - D25 eligibility: hanya skill wajib yang memblokir
+
+Permintaan pengguna: pengalaman tidak boleh membuat `ineligible`; hanya skill yang tidak ada di profil.
+
+Perubahan:
+- `jobs/requirements.py`: `ELIGIBILITY_CATEGORIES = {"other"}` (kategori skill). Hanya kutipan `must_have` kategori itu yang dapat memblokir.
+- `eligibility/evaluate.py`: `_skill` mengembalikan `not_met` hanya bila tidak ada satu pun skill profil yang cocok dengan kutipan persyaratan; bila lowongan menyebut skill tetapi profil belum menyebutnya khusus, hasilnya `unknown`. `_experience` tidak lagi mengembalikan `not_met` (menjadi `unknown` dengan angka profil dan angka permintaan). `_facts` menyimpan `text` (JSON profil, lowercase) untuk pencocokan itu. `_overlap_words` mencocokkan nama skill per kata utuh.
+- `tests/test_assessment.py`: dua test lama disesuaikan ke aturan baru (`test_missing_work_authorization_is_a_check_not_a_blocker`, `test_unknown_requirement_no_longer_blocks_eligibility`), tiga test baru (skill tidak ada -> `ineligible`, skill ada -> `eligible`, pengalaman kurang -> bukan `ineligible`).
+- Dokumentasi: D25 di `DECISIONS.md`, `PLAN.md` bagian Eligibility gate, `ELIGIBILITY-AND-SCORING.md` 3.2.
+
+Purge data lowongan (tidak bisa dibatalkan, dilakukan atas persetujuan pengguna):
+export_record 0, document_approval 2, document_version 28, application 7, job_rank 486, ranking_run 27, fit_assessment 36, eligibility_assessment 263, job_requirement 399, job_posting_version 164, discovery_run_source 3, source_fetch 3, source_document 1, job 161, discovery_run 30, task 56 (semua kecuali `profile_extraction`).
+Disimpan: master_cv 1, profile_version 3, profile_correction 2, profile_decision 2, consent_record 2, source_registry 4.
+`DELETE` dipakai, bukan `TRUNCATE`, karena ada FK. Rantai `document_version.parent_document_version_id` diputus lebih dulu.
+
+Bukti:
+- `pytest tests -k "eligib or assessment or score or match" -q` -> junit `tests="133"`, `failures="0"`.
+- `pytest tests -q` (seluruh suite backend) -> junit `tests="531"`, `failures="0"`, `errors="0"`.
+Tidak dijalankan: discovery ulang dari Jobstreet, uji manual di Brave.

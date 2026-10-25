@@ -33,6 +33,7 @@ Acceptance criteria dari `PLAN.md` disalin tanpa perubahan. File fase boleh mena
 | [Phase 4](PHASE-04.md) | Perluasan sumber dan skala discovery | MVP discovery | Belum dimulai | Hasil relevan; D17 untuk cakupan Indonesia |
 | [Phase 5](PHASE-05.md) | Aggregator dan operasi | Di luar MVP | Belum dimulai | Tidak ada pelanggaran ToS |
 | [Phase 6](PHASE-06.md) | Hardening opsional | Opsional | Belum dimulai | Keputusan terpisah |
+| [Phase 7](PHASE-07.md) | Sumber `browser` dengan sesi login pengguna | Di luar MVP | Disetujui 2026-10-25 (D23); belum dimulai | D23; ToS situs pertama dicatat |
 
 Urutan build tidak sama dengan urutan produk. Produk selalu setup → konfirmasi → discovery. Build dimulai dari fondasi dan setup agar discovery tidak pernah mendahului profil confirmed.
 
@@ -60,6 +61,7 @@ Kriteria: `PLAN.md` §14 kriteria 1–36. Kriteria 6 berlaku pada MVP inti denga
 | Phase 4 acceptance | D17 untuk cakupan Indonesia penuh |
 | Phase 5 | ToS/attribution per sumber |
 | Phase 6 | Keputusan terpisah |
+| Phase 7 | D23 sudah diputuskan; ToS situs pertama dicatat sebelum aktivasi |
 
 D3/D17 memblokir aktivasi sumber dan klaim cakupan Indonesia, bukan implementasi adapter dengan fixture. D1 prasyarat untuk fitur live yang bergantung pada provider nyata. D10 tidak memblokir implementasi, tetapi retensi tetap sementara.
 

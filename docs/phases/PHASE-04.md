@@ -14,7 +14,7 @@ Perluas cakupan discovery tanpa mengubah aturan eligibility, fit, atau ranking y
 - skalabilitas tabel/filter Job Matches untuk volume besar;
 - laporan kesehatan sumber dan data basi.
 
-Di luar scope: agregator remote/EU dan operasi backup (Phase 5), Playwright/OCR (Phase 6), perubahan aturan ranking, perubahan aturan approval/ekspor.
+Di luar scope: agregator remote/EU dan operasi backup (Phase 5), OCR (Phase 6), perubahan aturan ranking, perubahan aturan approval/ekspor. Sumber `browser` dengan sesi login pengguna masuk Phase 7, bukan Phase 4.
 
 ---
 

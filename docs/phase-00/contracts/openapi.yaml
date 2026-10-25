@@ -775,6 +775,56 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
+  /api/matches/{job_id}/eligibility:
+    patch:
+      tags: [Matches]
+      operationId: reviewEligibility
+      summary: Tinjauan manusia atas eligibility needs_review (D21)
+      description: |
+        Mencatat keputusan manusia untuk lowongan berstatus `needs_review`.
+        Hanya status itu yang boleh ditinjau: `eligible` tidak perlu bantuan, dan
+        `ineligible` tidak dapat dinaikkan karena hasil `not_met` tetap harus
+        terbaca. Job tertutup ditolak `409 job_not_open`.
+
+        `status` diperbarui, hasil aturan tetap di `auto_status`, dan `reason`
+        wajib untuk kedua keputusan. Kirim `status: null` untuk menghapus
+        tinjauan dan kembali ke hasil aturan. Tidak ada fit score yang dihitung
+        ulang dan tidak ada ranking yang berubah.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EligibilityOverrideRequest'
+      responses:
+        '200':
+          description: Detail match setelah tinjauan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/applications:
     get:
       tags: [Applications]
@@ -1166,9 +1216,88 @@ paths:
                 reason:
                   type: string
                   enum: [user_requested, review_changes, outdated_source]
+                finding_ids:
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: string
+                  description: |
+                    Temuan yang dicentang. Bila diisi, hanya temuan itu yang
+                    dikirim ke writer sebagai instruksi. Bila dihilangkan, semua
+                    temuan terbuka dikirim (perilaku lama).
+                note:
+                  type: string
+                  maxLength: 2000
       responses:
         '202':
           description: Task regenerate dibuat.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/documents/{document_version_id}/revision-request:
+    post:
+      tags: [Documents]
+      operationId: requestDocumentRevision
+      summary: Minta perubahan pada temuan tertentu
+      description: |
+        Membuat versi baru yang hanya memperbaiki temuan bercentang. Sama seperti
+        regenerate, tetapi `finding_ids` wajib dan minimal satu.
+
+        Temuan yang tidak dicentang tidak dikirim ke writer. Gate review dan
+        approval tetap menilai seluruh versi baru, jadi blocker yang tidak
+        dicentang membuat versi baru tetap `changes_required`.
+
+        `base_content_hash` mencegah permintaan dari versi yang sudah berubah
+        (`409 version_conflict`). `finding_id` yang tidak ada di versi ini
+        menghasilkan `400 validation_failed` dengan `details[].code = unknown_finding`.
+      security:
+        - csrfToken: []
+          sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+        - $ref: '#/components/parameters/DocumentVersionId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [base_content_hash, reason, finding_ids]
+              properties:
+                base_content_hash:
+                  type: string
+                reason:
+                  type: string
+                  enum: [user_requested, review_changes, outdated_source]
+                finding_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 200
+                  items:
+                    type: string
+                note:
+                  type: string
+                  maxLength: 2000
+                  description: Catatan bebas, disimpan bersama permintaan.
+      responses:
+        '202':
+          description: Task pembuatan versi revisi dibuat.
           content:
             application/json:
               schema:
@@ -1262,8 +1391,12 @@ paths:
         mengembalikan `200` dengan record approval yang sudah ada dan header
         `Idempotency-Replayed: true`. Approval pertama mengembalikan `201`.
 
-        `rejected` dan `changes_requested` saat ini diterima sebagai nilai enum,
-        tetapi efek kontraknya belum dibedakan; lihat `API-CONTRACTS.md` §4.11.
+        `rejected` dan `changes_requested` hanya mencatat keputusan; keduanya tidak
+        memberikan approval, sehingga gate review di atas hanya berlaku untuk
+        `approved`. Catatan wajib diisi untuk kedua keputusan itu (`400
+        validation_failed` bila kosong), karena replay memakai kunci
+        `document_version_id` + `content_hash` + `decision`. Lihat
+        `API-CONTRACTS.md` §4.11.
       security:
         - csrfToken: []
           sessionCookie: []
@@ -3297,6 +3430,22 @@ components:
       type: string
       enum: [eligible, ineligible, needs_review]
 
+    EligibilityOverrideRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          allOf:
+            - $ref: '#/components/schemas/EligibilityStatus'
+          type: [string, 'null']
+          enum: [eligible, ineligible, null]
+          description: Keputusan manusia. `null` menghapus tinjauan.
+        reason:
+          type: [string, 'null']
+          maxLength: 1000
+          description: Wajib bila `status` tidak null.
+
     EligibilityCheck:
       type: object
       required: [requirement_id, category, result, job_quote, reason]
@@ -3338,6 +3487,16 @@ components:
           type: string
         status:
           $ref: '#/components/schemas/EligibilityStatus'
+        auto_status:
+          $ref: '#/components/schemas/EligibilityStatus'
+          description: Hasil aturan sebelum tinjauan manusia. Tetap tercatat walau `status` di-override.
+        override_reason:
+          type: [string, 'null']
+          maxLength: 1000
+          description: Alasan keputusan manusia (D21). Hanya ada bila tinjauan manual dilakukan.
+        overridden_at:
+          type: [string, 'null']
+          format: date-time
         checks:
           type: array
           maxItems: 500
@@ -4248,7 +4407,14 @@ components:
         api_key_ref:
           type: string
           maxLength: 200
-          description: Nama referensi keyring. API tidak menerima nilai secret.
+          description: Nama referensi keyring, bukan nilai secret.
+        api_key:
+          type: string
+          maxLength: 512
+          writeOnly: true
+          description: |
+            Opsional (D24). Nilainya ditulis ke Windows Credential Manager dan
+            tidak pernah dikembalikan. Kosongkan untuk mempertahankan key lama.
 
     ConsentType:
       type: string

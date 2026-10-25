@@ -9,7 +9,7 @@
 
 Meningkatkan coverage dan privasi:
 
-- Playwright fallback headed;
+- Playwright fallback headed (halaman publik yang dirender JavaScript, tanpa sesi); sumber `browser` dengan sesi login ada di Phase 7;
 - OCR;
 - model lokal;
 - enkripsi arsip;
@@ -60,6 +60,7 @@ Jangan membuat scaffold sebelum fitur dipilih.
 
 - Hanya diaktifkan bila ada kebutuhan nyata.
 - Playwright hanya fallback headed; bukan auto-submit.
+- Playwright di Phase 6 berjalan tanpa sesi login. Sesi login pengguna hanya dipakai sumber `browser` di Phase 7 (`JOB-DISCOVERY.md` §4.6), dan tetap tanpa auto-submit.
 - OCR tidak boleh mengklaim akurasi tanpa uji.
 - Model lokal hanya bila API cocok; dukungan belum diverifikasi.
 - Enkripsi arsip opsional; jangan mengklaim sebagai default.

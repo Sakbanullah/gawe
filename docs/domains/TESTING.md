@@ -125,6 +125,7 @@ Draft fixture Phase 0 ada di [`../phase-00/fixtures/`](../phase-00/fixtures/). F
 | Phase 4 | Minimal 2 sumber tambahan; kuota; dedupe volume besar; ranking invariant; tabel besar; D17 untuk cakupan Indonesia |
 | Phase 5 | Attribution; cache 24 jam; backup/restore; purge |
 | Phase 6 | Hanya bila kebutuhan nyata; keputusan terpisah |
+| Phase 7 | Fixture HTML: parse kartu, parse detail, deteksi login/CAPTCHA; `browser_blocked` dan `session_expired` tanpa network; tanpa cookie/profil di payload dan log; regresi `ats_api` + URL manual; satu uji live terbatas dicatat manual |
 
 ---
 

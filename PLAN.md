@@ -669,7 +669,7 @@ Setiap sumber adalah record yang dapat dikelola dari web UI:
   "company": "...",
   "market": "indonesia | global",
   "careers_url": "...",
-  "access_method": "ats_api | html | manual_url",
+  "access_method": "ats_api | aggregator | html | manual_url | browser",
   "ats": "greenhouse | lever | ashby | unknown",
   "verification_status": "unverified | verified | restricted | broken",
   "tos_notes": "...",
@@ -767,13 +767,11 @@ Eligibility dievaluasi terpisah dari fit score. Tujuannya meminimalkan false pos
 | `ineligible` | Ada persyaratan wajib yang jelas tidak terpenuhi. | Tidak masuk ranking utama; ditampilkan terpisah dengan alasan dan kutipan. Tidak ada pembuatan dokumen melalui alur normal. |
 | `needs_review` | Informasi tidak cukup, ambigu, atau bertentangan. | Ditampilkan terpisah; bukan dianggap eligible; fit score belum dihitung; pembuatan dokumen diblokir sampai status diselesaikan. |
 
-**Persyaratan yang dievaluasi:**
+**Persyaratan yang dievaluasi (D25, 25 Oktober 2026):**
 
-- Lokasi dan work authorization (termasuk relokasi bila lowongan mensyaratkannya).
-- Pengalaman wajib (misalnya "5+ years") bila dinyatakan eksplisit.
-- Kualifikasi wajib (gelar, sertifikasi, lisensi).
-- Bahasa wajib.
-- Batasan lain yang dinyatakan eksplisit (misalnya zona waktu, hak kerja, kemampuan perjalanan).
+- **Skill wajib** adalah satu-satunya kategori yang dapat membuat lowongan `ineligible`. Blokir hanya bila tidak ada satu pun skill yang diminta lowongan tercantum di profil. Bila skill disebut lowongan tetapi profil belum menyebutnya secara khusus, hasilnya `needs_review`, bukan `ineligible`: profil adalah teks bebas, jadi "tidak tertulis" tidak sama dengan "tidak punya".
+- **Pengalaman tidak pernah memblokir.** Kekurangan tahun pengalaman dicatat sebagai informasi berisi angka, lalu pengguna memutuskan sendiri apakah senioritas layak dikejar.
+- Lokasi dan work authorization, kualifikasi (gelar, sertifikasi, lisensi), bahasa, dan batasan eksplisit lain (zona waktu, perjalanan) dicatat sebagai `checks` dan memengaruhi fit score, tetapi tidak mengubah status eligibility.
 
 **Aturan:**
 
@@ -2114,9 +2112,22 @@ Estimasi kasar, bukan komitmen. Urutan build tidak sama dengan urutan produk: pr
 - **Kriteria terima:** hanya diaktifkan bila ada kebutuhan nyata.
 - **Gate:** keputusan terpisah.
 
+### Phase 7 — Sumber `browser` dengan sesi login pengguna
+
+- **Tujuan:** membaca lowongan dari jobboard yang menolak fetch anonim, memakai sesi login pengguna sendiri (D23).
+- **Fitur:** Playwright + profil Chromium persisten; login manual sekali; crawl search + detail lowongan; `access_method = browser` di registry; status sesi dan `browser_blocked` di UI.
+- **Komponen:** `jobs/browser/`, `sources/registry.py`, `api/routes/sources.py`, `cli.py`.
+- **Dependensi:** Phase 3 stabil. Tidak menunggu Phase 4–6; ini jalur terpisah dan disetujui 2026-10-25.
+- **Risiko:** sesi kedaluwarsa; CAPTCHA/403 menghentikan run; akun pengguna dibatasi platform; struktur DOM berubah sehingga hasil kosong.
+- **Kriteria terima:** login manual tersimpan di profil luar repo; satu run membaca ≥5 lowongan lengkap dari satu situs; blokir menghentikan run tanpa retry otomatis; tidak ada password, cookie, atau profil di DB, log, backup, atau respons API; tidak ada auto-submit.
+- **Verifikasi:** test dengan halaman HTML tersimpan (tanpa network); satu uji live terbatas yang dicatat manual.
+- **Gate:** D23 diputuskan; `tos_notes` situs pertama dicatat; tidak ada bypass yang diketahui.
+
 **MVP inti = Phase 1–3.** Workflow discovery otomatis sampai ekspor, dengan URL manual sebagai fallback. Membutuhkan D3; klaim cakupan Indonesia membutuhkan D17.
 
 **MVP discovery = Phase 1–4.** MVP inti ditambah perluasan sumber terverifikasi (termasuk Indonesia setelah D17) dan skala tampilan discovery.
+
+**Phase 7 = jalur terpisah** untuk sumber bersesi login (D23). Bukan bagian MVP inti maupun MVP discovery, dan tidak mengubah kriteria penerimaan keduanya.
 
 ---
 
