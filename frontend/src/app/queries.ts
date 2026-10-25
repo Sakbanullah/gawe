@@ -9,6 +9,7 @@ import {
   createExport,
   createSource,
   getApplication,
+  getBrowserImportToken,
   getConsent,
   getDocumentFindings,
   getDocumentVersion,
@@ -27,6 +28,7 @@ import {
   overrideMatchTier,
   rerunApplicationAnalysis,
   retryTask,
+  reviewEligibility,
   revokeConsent,
   rollbackProfile,
   startDiscoveryRun,
@@ -125,6 +127,17 @@ export function useGrantConsent() {
 
 export function useRevokeConsent() {
   return useSetupMutation((consentId: string) => revokeConsent(consentId));
+}
+
+export function useImportToken() {
+  return useSetupMutation(() => getBrowserImportToken());
+}
+
+export function useReviewEligibility() {
+  return useSetupMutation(
+    (args: { jobId: string; status: "eligible" | "ineligible"; reason: string }) =>
+      reviewEligibility(args.jobId, { status: args.status, reason: args.reason }),
+  );
 }
 
 export function useSources() {
