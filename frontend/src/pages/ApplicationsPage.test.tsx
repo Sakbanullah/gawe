@@ -388,6 +388,19 @@ describe("ApplicationWorkspacePage", () => {
     );
   });
 
+  it("sends only the cover letter when that button is used", async () => {
+    renderAt("/applications/app_1");
+
+    fireEvent.click(await screen.findByRole("button", { name: "Buat cover letter" }));
+    await waitFor(() =>
+      expect(api.generateDocuments).toHaveBeenCalledWith("app_1", {
+        kinds: ["cover_letter"],
+        language: "en",
+      }),
+    );
+    expect(api.generateDocuments).toHaveBeenCalledTimes(1);
+  });
+
   it("lists versions and shows the diff, review, and approval actions", async () => {
     vi.mocked(api.getApplication).mockResolvedValue(
       workspace({

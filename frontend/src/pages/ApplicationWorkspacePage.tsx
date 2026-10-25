@@ -1,5 +1,5 @@
 import { Alert, Badge, Button, Divider, Group, Stack, Table, Text, Title } from "@mantine/core";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router";
 
 import type { ApplicationWorkspace } from "../app/apiClient";
@@ -25,6 +25,12 @@ export function ApplicationWorkspacePage() {
   const rerun = useRerunAnalysis();
   const generate = useGenerateDocuments();
   const [selected, setSelected] = useState<string | null>(null);
+  // Which button started the running generation; the other one stays disabled.
+  const [pendingKind, setPendingKind] = useState<"cv" | "cover_letter" | null>(null);
+  const busyKind = generate.isPending ? pendingKind : null;
+  useEffect(() => {
+    if (!generate.isPending) setPendingKind(null);
+  }, [generate.isPending]);
   const state: PageState = application.isPending
     ? "loading"
     : application.isError
@@ -91,27 +97,31 @@ export function ApplicationWorkspacePage() {
             <Group>
               <Button
                 variant="light"
-                loading={generate.isPending}
-                onClick={() =>
+                loading={busyKind === "cv"}
+                disabled={busyKind !== null && busyKind !== "cv"}
+                onClick={() => {
+                  setPendingKind("cv");
                   void generate.mutateAsync({
                     applicationId: data.application_id,
                     kinds: ["cv"],
                     language: "en",
-                  })
-                }
+                  });
+                }}
               >
                 Buat CV
               </Button>
               <Button
                 variant="light"
-                loading={generate.isPending}
-                onClick={() =>
+                loading={busyKind === "cover_letter"}
+                disabled={busyKind !== null && busyKind !== "cover_letter"}
+                onClick={() => {
+                  setPendingKind("cover_letter");
                   void generate.mutateAsync({
                     applicationId: data.application_id,
                     kinds: ["cover_letter"],
                     language: "en",
-                  })
-                }
+                  });
+                }}
               >
                 Buat cover letter
               </Button>

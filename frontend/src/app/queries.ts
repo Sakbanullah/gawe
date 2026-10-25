@@ -217,8 +217,9 @@ export function useRerunAnalysis() {
 }
 
 export function useGenerateDocuments() {
-  return useSetupMutation(
-    (args: {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (args: {
       applicationId: string;
       kinds: ("cv" | "cover_letter")[];
       language: "en" | "id";
@@ -227,7 +228,13 @@ export function useGenerateDocuments() {
         kinds: args.kinds,
         language: args.language,
       }),
-  );
+    // Generating a CV must not refetch the cover letter and vice versa. Both are
+    // read from the application payload, so only that query is refreshed.
+    onSuccess: async (_data, args) => {
+      await queryClient.invalidateQueries({ queryKey: ["application", args.applicationId] });
+      await queryClient.invalidateQueries({ queryKey: ["overview"] });
+    },
+  });
 }
 
 export function useDocumentVersion(applicationId: string, documentVersionId: string | null) {
