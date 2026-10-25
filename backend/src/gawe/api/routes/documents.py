@@ -68,6 +68,14 @@ class ApprovalRequest(BaseModel):
     content_hash: str = Field(min_length=1, max_length=128)
     note: str | None = Field(default=None, max_length=2000)
 
+    @model_validator(mode="after")
+    def changes_need_note(self) -> "ApprovalRequest":
+        # Approval idempotency is (version, hash, decision): an empty note would
+        # replay the previous decision and silently drop what must change.
+        if self.decision != "approved" and not (self.note or "").strip():
+            raise ValueError("Catatan wajib diisi untuk keputusan rejected/changes_requested.")
+        return self
+
 
 def _service(request: Request) -> DocumentService:
     return DocumentService(

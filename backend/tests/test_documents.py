@@ -51,11 +51,19 @@ def _review(client, csrf, application_id: str, document_version_id: str) -> dict
     return _detail(client, application_id, document_version_id)
 
 
-def _approve(client, csrf, application_id: str, document_version_id: str, content_hash: str, decision="approved"):
+def _approve(
+    client,
+    csrf,
+    application_id: str,
+    document_version_id: str,
+    content_hash: str,
+    decision="approved",
+    note=None,
+):
     return client.post(
         f"/api/applications/{application_id}/documents/{document_version_id}/approval",
         headers=csrf,
-        json={"decision": decision, "content_hash": content_hash, "note": None},
+        json={"decision": decision, "content_hash": content_hash, "note": note},
     )
 
 
@@ -288,6 +296,7 @@ def test_review_then_approval_is_bound_to_version_and_hash(
         version["document_version_id"],
         version["content_hash"],
         decision="changes_requested",
+        note="Tolong ubah summary.",
     )
     assert blocked_change.status_code == 409
     assert blocked_change.json()["error"]["details"][0]["code"] == "version_already_approved"
@@ -442,6 +451,7 @@ def test_approved_version_rejects_other_decisions(setup_client, csrf, monkeypatc
         version["document_version_id"],
         version["content_hash"],
         decision="changes_requested",
+        note="Tolong ubah summary.",
     )
     assert response.status_code == 409
     assert response.json()["error"]["details"][0]["code"] == "version_already_approved"

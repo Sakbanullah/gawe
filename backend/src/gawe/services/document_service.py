@@ -615,34 +615,38 @@ class DocumentService:
             )
         self._require_eligible(record)
 
-        problems = draft.required_missing(version["content"])
-        if problems:
-            raise DocumentError(
-                "conflict",
-                "Data wajib belum lengkap; approval dan ekspor diblokir.",
-                409,
-                details=problems,
-            )
-        if version["review_status"] != "completed":
-            raise DocumentError(
-                "review_not_completed", "Review belum selesai untuk versi ini.", 409
-            )
-        if version.get("review_verdict") != "pass":
-            raise DocumentError(
-                "review_not_completed",
-                "Review tidak meloloskan versi ini; buat versi baru lalu review ulang.",
-                409,
-            )
-        # The threshold is a gate, not a hint: a version the loop never lifted
-        # above it stays unapprovable. A deterministic-only review has no score,
-        # so severity alone decides there.
-        score = (version.get("findings") or {}).get("overall_score")
-        if score is not None and float(score) < self._threshold:
-            raise DocumentError(
-                "review_not_completed",
-                f"Skor review {score} di bawah ambang {self._threshold}.",
-                409,
-            )
+        # `rejected`/`changes_requested` only record the decision (API-CONTRACTS
+        # §4.11): they cannot grant approval, so the approval gates apply only to
+        # `approved` and asking for changes stays possible on a failing version.
+        if decision == "approved":
+            problems = draft.required_missing(version["content"])
+            if problems:
+                raise DocumentError(
+                    "conflict",
+                    "Data wajib belum lengkap; approval dan ekspor diblokir.",
+                    409,
+                    details=problems,
+                )
+            if version["review_status"] != "completed":
+                raise DocumentError(
+                    "review_not_completed", "Review belum selesai untuk versi ini.", 409
+                )
+            if version.get("review_verdict") != "pass":
+                raise DocumentError(
+                    "review_not_completed",
+                    "Review tidak meloloskan versi ini; buat versi baru lalu review ulang.",
+                    409,
+                )
+            # The threshold is a gate, not a hint: a version the loop never lifted
+            # above it stays unapprovable. A deterministic-only review has no score,
+            # so severity alone decides there.
+            score = (version.get("findings") or {}).get("overall_score")
+            if score is not None and float(score) < self._threshold:
+                raise DocumentError(
+                    "review_not_completed",
+                    f"Skor review {score} di bawah ambang {self._threshold}.",
+                    409,
+                )
 
         latest = self._latest_approval(document_version_id)
         if latest is not None and latest["decision"] == "approved":

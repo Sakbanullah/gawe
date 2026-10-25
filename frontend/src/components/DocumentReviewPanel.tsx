@@ -364,6 +364,7 @@ export function DocumentReviewPanel({
         </Group>
         <Textarea
           label="Catatan approval"
+          description="Wajib untuk menyetujui atau menolak versi ini. Untuk minta perubahan, catatan bersifat opsional."
           maxLength={2000}
           minRows={2}
           value={note}
