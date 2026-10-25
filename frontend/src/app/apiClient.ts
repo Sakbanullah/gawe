@@ -203,6 +203,10 @@ export function revokeConsent(consentId: string): Promise<ConsentRecord> {
   return apiSend<ConsentRecord>("DELETE", `/api/settings/consent/${consentId}`);
 }
 
+export function getBrowserImportToken(): Promise<{ token: string; header: string }> {
+  return apiGet<{ token: string; header: string }>("/api/settings/browser-import-token");
+}
+
 export type ProviderSettingsView = {
   provider_id: string;
   configured: boolean;
@@ -302,6 +306,13 @@ export function overrideMatchTier(
   return apiSend<MatchItem>("PATCH", `/api/matches/${jobId}/tier`, body);
 }
 
+export function reviewEligibility(
+  jobId: string,
+  body: { status: "eligible" | "ineligible" | null; reason?: string | null },
+): Promise<MatchDetail> {
+  return apiSend<MatchDetail>("PATCH", `/api/matches/${jobId}/eligibility`, body);
+}
+
 export function listApplications(): Promise<ApplicationList> {
   return apiGet<ApplicationList>("/api/applications?limit=200");
 }
@@ -362,6 +373,18 @@ export function regenerateDocument(
     "POST",
     `/api/applications/${applicationId}/documents/${documentVersionId}/regenerate`,
     { base_content_hash: baseContentHash, reason: "user_requested" },
+  );
+}
+
+export function requestDocumentRevision(
+  applicationId: string,
+  documentVersionId: string,
+  body: { base_content_hash: string; reason: string; finding_ids: string[]; note?: string },
+): Promise<TaskCreated> {
+  return apiSend<TaskCreated>(
+    "POST",
+    `/api/applications/${applicationId}/documents/${documentVersionId}/revision-request`,
+    body,
   );
 }
 
