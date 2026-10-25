@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Gawe Job Import",
+  "version": "0.1.0",
+  "description": "Kirim lowongan yang tampil di halaman pencarian Jobstreet ke Gawe di 127.0.0.1.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": [
+    "https://id.jobstreet.com/*",
+    "http://127.0.0.1:8000/*"
+  ],
+  "action": {
+    "default_title": "Kirim ke Gawe",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

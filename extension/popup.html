@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <title>Kirim ke Gawe</title>
+    <style>
+      body {
+        font: 13px/1.45 system-ui, sans-serif;
+        margin: 0;
+        padding: 12px;
+        width: 300px;
+      }
+      h1 { font-size: 14px; margin: 0 0 8px; }
+      label { display: block; margin-top: 10px; }
+      input { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 4px 6px; }
+      button { margin-top: 10px; width: 100%; padding: 6px; cursor: pointer; }
+      #status { margin-top: 10px; white-space: pre-line; }
+      .muted { color: #666; }
+    </style>
+  </head>
+  <body>
+    <h1>Kirim ke Gawe</h1>
+    <div id="summary" class="muted">Membaca halaman...</div>
+
+    <label>
+      Token dari Settings Gawe
+      <input id="token" type="password" autocomplete="off" placeholder="Tempel token" />
+    </label>
+    <button id="save">Simpan token</button>
+
+    <button id="send" disabled>Kirim lowongan di halaman ini</button>
+    <div id="status"></div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

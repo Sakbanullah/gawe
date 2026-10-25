@@ -55,6 +55,32 @@ def doctor(config_path: Path | str | None = None) -> dict:
     return report
 
 
+def _browser(action: str, url: str | None) -> int:
+    """`gawe browser login|status|clear`. Prints paths and states, never cookies."""
+    from .jobs.browser import profile, session
+
+    if action == "clear":
+        removed = profile.clear()
+        print("Profil browser dihapus." if removed else "Belum ada profil browser.")
+        return 0
+    if not url:
+        print(f"error: butuh URL untuk `browser {action}`", file=sys.stderr)
+        return 2
+    if action == "login":
+        try:
+            return session.login(url)
+        except session.BrowserUnavailable as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+    try:
+        status = session.status(url)
+    except session.BrowserUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps({"state": status.state, "url": status.url, "message": status.message}))
+    return 0 if status.state == "ok" else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="gawe")
     parser.add_argument("--config", default=None, help="path to config.toml")
@@ -64,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
     serve = sub.add_parser("serve", help="run the local server")
     serve.add_argument("--host", default=None)
     serve.add_argument("--port", type=int, default=None)
+    browser = sub.add_parser("browser", help="Chromium profile for browser sources")
+    browser.add_argument("action", choices=("login", "status", "clear"))
+    browser.add_argument("url", nargs="?", default=None)
 
     args = parser.parse_args(argv)
     if args.command == "doctor":
@@ -94,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         uvicorn.run(create_app(config), host=config.server.host, port=config.server.port)
         return 0
+    if args.command == "browser":
+        return _browser(args.action, args.url)
     parser.print_help()
     return 2
 
