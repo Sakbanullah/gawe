@@ -55,11 +55,12 @@ Aturan keras:
 
 ### 3.2 Persyaratan yang dievaluasi
 
-- Lokasi dan work authorization (termasuk relokasi bila disyaratkan).
-- Pengalaman wajib bila dinyatakan eksplisit (misalnya "5+ years").
-- Kualifikasi wajib (gelar, sertifikasi, lisensi).
-- Bahasa wajib.
-- Batasan eksplisit lain (zona waktu, hak kerja, kemampuan perjalanan).
+D25 (25 Oktober 2026) mengganti daftar gate sebelumnya. **Hanya skill wajib yang dapat membuat lowongan `ineligible`.**
+
+- **Skill wajib (`category: other`).** Blokir eligibility hanya bila tidak ada satu pun skill yang diminta lowongan tercantum di profil. Bila skill disebut lowongan tetapi profil belum menyebutnya secara khusus, hasilnya `unknown` (bukan `ineligible`), karena profil adalah teks bebas: "tidak tertulis" tidak sama dengan "tidak punya". Jika lowongan tidak menyebut skill yang dapat dibaca, hasilnya `unknown`.
+- **Pengalaman.** Tidak pernah memblokir. Kekurangan tahun pengalaman dicatat sebagai `unknown` beserta angkanya; pengguna memutuskan sendiri apakah senioritas layak dikejar.
+- Kategori lain dicatat sebagai `checks` dan ikut memengaruhi fit score, tetapi tidak mengubah status: lokasi dan work authorization, kualifikasi (gelar, sertifikasi, lisensi), bahasa, dan batasan eksplisit lain (zona waktu, perjalanan).
+- Cakupan geografis (`geo_scope`) tetap dievaluasi terpisah sesuai 3.3.
 
 ### 3.3 Aturan
 
@@ -69,6 +70,7 @@ Aturan keras:
 - Jangan menyamarkan ketidakpastian dengan skor numerik.
 - Setiap hasil menyimpan `requirement_id`, kutipan lowongan, dan bukti/deklarasi profil.
 - Eligibility tidak memakai priority tier.
+- Hanya kutipan persyaratan ber-kind `must_have` yang dapat memblokir; `nice_to_have` selalu informatif.
 - Cakupan geografis lowongan (`geo_scope`) dievaluasi terpisah dari `checks`. Nilainya `indonesia`, `worldwide`, `region_locked`, atau `unknown`. Hanya `indonesia` dan `worldwide` yang boleh `eligible`.
 - `region_locked` dan `unknown` menghasilkan `needs_review`, bukan `ineligible`, kecuali ada persyaratan wajib lain yang jelas tidak terpenuhi. Lowongan tetap tampil dengan alasan; tidak ada yang disembunyikan.
 - `geo_scope` tidak pernah menjadi `checks` dan tidak pernah masuk `fit_score`, karena cakupan adalah fakta tentang lowongan, bukan persyaratan kandidat.

@@ -222,6 +222,33 @@ def test_ambiguous_skill_sentence_stays_a_skill_not_a_years_gate() -> None:
 
 
 # -- eligibility -------------------------------------------------------------
+def test_missing_must_have_skill_is_ineligible() -> None:
+    """D25: the only blocking category."""
+    job = _job(description_text="Required: Kubernetes.")
+    result = evaluate(requirement_rules.extract(job["description_text"]), PROFILE, job)
+    assert result["status"] == "ineligible"
+    assert result["checks"][0]["category"] == "other"
+    assert result["checks"][0]["result"] == "not_met"
+    assert result["reason_summary"]
+
+
+def test_listed_skill_is_eligible() -> None:
+    job = _job(description_text="Required: Python.")
+    result = evaluate(requirement_rules.extract(job["description_text"]), PROFILE, job)
+    assert result["status"] == "eligible"
+    assert result["checks"][0]["result"] == "met"
+
+
+def test_experience_shortfall_never_blocks_eligibility() -> None:
+    """D25: the user judges seniority; the gate only reports it."""
+    job = _job(description_text="Required: 12+ years backend experience.")
+    result = evaluate(requirement_rules.extract(job["description_text"]), PROFILE, job)
+    assert result["status"] != "ineligible"
+    check = result["checks"][0]
+    assert check["category"] == "experience"
+    assert check["result"] == "unknown"
+
+
 def test_eligible_job_with_met_experience() -> None:
     job = _job(description_text="Required: 5+ years backend experience.")
     result = evaluate(requirement_rules.extract(job["description_text"]), PROFILE, job)
@@ -231,25 +258,26 @@ def test_eligible_job_with_met_experience() -> None:
     assert result["checks"][0]["evidence_refs"]
 
 
-def test_missing_work_authorization_is_ineligible_with_quote() -> None:
+def test_missing_work_authorization_is_a_check_not_a_blocker() -> None:
+    """D25: a credential gap is recorded and left to the user."""
     job = _job(
         location_raw="Berlin, Germany",
         market="global",
         description_text="Must be authorized to work in the EU.",
     )
     result = evaluate(requirement_rules.extract(job["description_text"]), PROFILE, job)
-    assert result["status"] == "ineligible"
+    assert result["status"] != "ineligible"
     check = result["checks"][0]
     assert check["category"] == "work_authorization"
     assert check["result"] == "not_met"
     assert "EU" in check["job_quote"]
-    assert result["reason_summary"]
 
 
-def test_unknown_requirement_is_needs_review_not_eligible() -> None:
+def test_unknown_requirement_no_longer_blocks_eligibility() -> None:
+    """D25: only a missing skill blocks; a credential is reported, not gated."""
     job = _job(description_text="Required: fluency in Japanese language.")
     result = evaluate(requirement_rules.extract(job["description_text"]), PROFILE, job)
-    assert result["status"] == "needs_review"
+    assert result["status"] == "eligible"
 
 
 def test_job_without_must_have_requirements_is_needs_review() -> None:

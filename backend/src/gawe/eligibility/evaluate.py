@@ -1,17 +1,15 @@
 """Eligibility gate: deterministic per-requirement checks with quotes.
 
-Rules from ELIGIBILITY-AND-SCORING.md §3: an unmet mandatory requirement makes a
-job ``ineligible``; anything that cannot be verified from the profile makes it
-``needs_review``. Nothing here guesses, and nothing here uses the priority tier.
-
-Skill requirements (``category: other``) are recorded as checks because they are
-part of the fit score, but they never block eligibility: PLAN.md §4.2 defines
-the gate over location, work authorization, experience, qualifications, and
-language.
+D25 replaced the original rule from ELIGIBILITY-AND-SCORING.md §3. Only a
+mandatory *skill* the profile does not list at all makes a job ``ineligible``.
+Experience never blocks: the user decides whether seniority is worth chasing.
+Everything else that cannot be verified makes the job ``needs_review``.
+Nothing here guesses, and nothing here uses the priority tier.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 
@@ -214,10 +212,11 @@ def _experience(requirement: dict, facts: dict):
             f"Profil mencatat sekitar {facts['years']:.1f} tahun pengalaman.",
         )
     return (
-        "not_met",
+        "unknown",
         "experience",
         evidence,
-        f"Profil mencatat sekitar {facts['years']:.1f} tahun; lowongan meminta {min_years}+.",
+        f"Profil mencatat sekitar {facts['years']:.1f} tahun; lowongan meminta {min_years}+. "
+        "Pengalaman tidak menghalangi eligibility.",
     )
 
 
@@ -260,7 +259,13 @@ def _language(requirement: dict, facts: dict):
 
 
 def _skill(requirement: dict, facts: dict):
-    matched = [skill for skill in facts["skills"] if _overlap(skill["name"], requirement["quote"])]
+    """D25: the only eligibility gate. Absent from the profile at all -> not_met."""
+    wanted = requirement.get("quote") or ""
+    matched = [
+        skill
+        for skill in facts["skills"]
+        if skill.get("name") and _overlap_words(skill["name"], wanted)
+    ]
     if matched:
         evidence: list[str] = []
         for skill in matched:
@@ -271,17 +276,25 @@ def _skill(requirement: dict, facts: dict):
             evidence[:10],
             "Skill profil disebut pada persyaratan lowongan.",
         )
+    if _overlap(wanted, facts.get("text") or ""):
+        return (
+            "unknown",
+            "skills",
+            [],
+            "Skill disebut lowongan, tetapi profil belum menyebutnya secara khusus.",
+        )
     return (
-        "unknown",
+        "not_met",
         "skills",
         [],
-        "Persyaratan ini tidak dapat dipastikan dari profil.",
+        "Skill yang diminta lowongan tidak ada di profil.",
     )
 
 
 def _facts(profile: dict) -> dict:
     content = profile.get("content") or {}
     return {
+        "text": json.dumps(content, ensure_ascii=False).lower(),
         "location": ((content.get("personal") or {}).get("location") or ""),
         "location_evidence": _evidence_ids(content.get("personal")),
         "relocation": ((content.get("work_preferences") or {}).get("relocation") or "unknown"),
@@ -374,6 +387,12 @@ def _overlap(name: str, text: str) -> bool:
     if len(token) < 2:
         return False
     return re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", text.lower()) is not None
+
+
+def _overlap_words(name: str, text: str) -> bool:
+    """Whole-word match for a skill name; punctuation in the quote is ignored."""
+    words = [word for word in re.split(r"[^a-z0-9+#.]+", name.lower()) if word]
+    return bool(words) and all(_overlap(word, text) for word in words)
 
 
 def _confidence(requirements: list[dict], checks: list[dict], job: dict) -> str:

@@ -64,18 +64,11 @@ CATEGORIES = (
     ("travel", r"\b(travel|travelling|traveling)\b"),
 )
 
-# Only these categories can block eligibility. Skills and responsibilities feed
-# the fit score instead, so a missing "nice" skill never makes a job ineligible.
-ELIGIBILITY_CATEGORIES = {
-    "work_authorization",
-    "location",
-    "experience",
-    "education",
-    "certification",
-    "language",
-    "timezone",
-    "travel",
-}
+# Only a missing skill can block eligibility (D25). Experience is recorded as a
+# check but never blocks: the user may judge seniority themselves. Credentials
+# (education, certification, work authorization, language) and logistics
+# (location, timezone, travel) are checks too; they feed the fit score.
+ELIGIBILITY_CATEGORIES = {"other"}
 
 # (section, pattern, anchored). Anchored patterns are ordinary words that also
 # occur inside sentences, so they must start the text or follow punctuation.
