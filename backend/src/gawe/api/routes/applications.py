@@ -26,6 +26,7 @@ APPLICATION_STATUSES = {
     "exported",
     "failed",
     "outdated",
+    "cancelled",
 }
 
 
@@ -46,6 +47,12 @@ class CreateApplicationRequest(BaseModel):
         if self.text is not None and not self.url:
             raise ValueError("text hanya boleh dikirim bersama url.")
         return self
+
+
+class CancelApplicationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class AnalysisRequest(BaseModel):
@@ -72,14 +79,23 @@ def _bad_request(field: str, code: str, message: str) -> ApiError:
 
 @router.get("")
 def list_applications(
-    request: Request, limit: int = 50, cursor: str | None = None, status: str | None = None
+    request: Request,
+    limit: int = 50,
+    cursor: str | None = None,
+    status: str | None = None,
+    include_cancelled: bool = False,
 ) -> dict:
     if not 1 <= limit <= 200:
         raise _bad_request("limit", "out_of_range", "limit harus 1-200.")
     if status is not None and status not in APPLICATION_STATUSES:
         raise _bad_request("status", "invalid_enum", "Nilai status tidak dikenal.")
     try:
-        items, next_cursor = _service(request).list(limit=limit, cursor=cursor, status=status)
+        items, next_cursor = _service(request).list(
+            limit=limit,
+            cursor=cursor,
+            status=status,
+            include_cancelled=include_cancelled,
+        )
     except ApplicationError as exc:
         raise ApiError(exc.status_code, exc.code, exc.message, stage="validation") from exc
     return {
@@ -125,6 +141,19 @@ def get_application(request: Request, application_id: str) -> dict:
         raise ApiError(
             exc.status_code, exc.code, exc.message, stage="eligibility", active_task_id=exc.active_task_id
         ) from exc
+
+
+@router.post("/{application_id}/cancel")
+def cancel_application(
+    request: Request, application_id: str, body: CancelApplicationRequest
+) -> dict:
+    try:
+        record = _service(request).cancel(application_id, body.reason)
+    except ApplicationError as exc:
+        raise ApiError(
+            exc.status_code, exc.code, exc.message, stage="eligibility", active_task_id=exc.active_task_id
+        ) from exc
+    return {"application_id": record["application_id"], "cancelled_at": record["cancelled_at"]}
 
 
 @router.get("/{application_id}/job")

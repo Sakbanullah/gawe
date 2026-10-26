@@ -25,6 +25,7 @@ import {
   listMatches,
   listProfiles,
   listSources,
+  cancelApplication,
   overrideMatchTier,
   rerunApplicationAnalysis,
   retryTask,
@@ -207,8 +208,17 @@ export function useOverrideMatchTier() {
   );
 }
 
-export function useApplications() {
-  return useQuery({ queryKey: ["applications"], queryFn: listApplications });
+export function useApplications(includeCancelled = true) {
+  return useQuery({
+    queryKey: ["applications", includeCancelled],
+    queryFn: () => listApplications({ includeCancelled }),
+  });
+}
+
+export function useCancelApplication() {
+  return useSetupMutation((args: { applicationId: string; reason: string | null }) =>
+    cancelApplication(args.applicationId, args.reason),
+  );
 }
 
 export function useApplication(applicationId: string | undefined) {

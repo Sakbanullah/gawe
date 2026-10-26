@@ -837,6 +837,11 @@ paths:
           in: query
           schema:
             $ref: '#/components/schemas/ApplicationStatus'
+        - name: include_cancelled
+          in: query
+          schema:
+            type: boolean
+            default: false
       responses:
         '200':
           description: Daftar workspace.
@@ -935,6 +940,52 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+
+  /api/applications/{application_id}/cancel:
+    post:
+      tags: [Applications]
+      operationId: cancelApplication
+      summary: Arsipkan workspace aplikasi
+      description: |
+        Menandai workspace `cancelled`. Record tidak dihapus: approval terikat
+        `document_version_id` dan `content_hash`, sehingga penghapusan akan
+        memutus jejak audit. Workspace `cancelled` hilang dari daftar default dan
+        tampil hanya bila `include_cancelled=true`.
+
+        Ditolak `409 task_already_running` bila ada task aktif. Ditolak
+        `409 approval_exists` bila workspace punya dokumen `approved`, agar
+        approval tidak hilang diam-diam. Memanggil ulang pada workspace yang sudah
+        dibatalkan bersifat idempoten.
+      parameters:
+        - $ref: '#/components/parameters/ApplicationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: [string, 'null']
+                  maxLength: 500
+      responses:
+        '200':
+          description: Workspace sudah diarsipkan.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [application_id, cancelled_at]
+                properties:
+                  application_id:
+                    type: string
+                  cancelled_at:
+                    type: [string, 'null']
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /api/applications/{application_id}/job:
     get:
@@ -3749,7 +3800,7 @@ components:
       description: |
         Ringkasan aplikasi dari backend. Status dokumen tetap sumber kebenaran.
         `outdated` dan `failed` terpisah.
-      enum: [not_started, processing, needs_review, in_review, approved, exported, failed, outdated]
+      enum: [not_started, processing, needs_review, in_review, approved, exported, failed, outdated, cancelled]
 
     DocumentKind:
       type: string
@@ -3947,6 +3998,14 @@ components:
         updated_at:
           type: string
           format: date-time
+        cancelled_at:
+          type: [string, 'null']
+          description: >
+            Set when the user archived the workspace. The record and its
+            documents stay; `status` becomes `cancelled` and the workspace is
+            hidden from the default list unless `include_cancelled=true`.
+        cancel_reason:
+          type: [string, 'null']
 
     ApplicationList:
       type: object

@@ -135,7 +135,11 @@ class ApplicationService:
 
     # -- reads -----------------------------------------------------------
     def list(
-        self, limit: int = 50, cursor: str | None = None, status: str | None = None
+        self,
+        limit: int = 50,
+        cursor: str | None = None,
+        status: str | None = None,
+        include_cancelled: bool = False,
     ) -> tuple[list[dict], str | None]:
         rows = self._connection.execute(
             "SELECT * FROM application ORDER BY created_at DESC, application_id DESC"
@@ -158,6 +162,14 @@ class ApplicationService:
                 continue
             if status and summary["status"] != status:
                 continue
+            # Cancelled workspaces are archived, not deleted: hidden from the
+            # active list unless the caller asks for the archive or filters on it.
+            if (
+                summary["status"] == "cancelled"
+                and not include_cancelled
+                and status != "cancelled"
+            ):
+                continue
             items.append(summary)
             if len(items) == limit:
                 break
@@ -167,6 +179,47 @@ class ApplicationService:
 
     def get(self, application_id: str) -> dict | None:
         return self._row(application_id)
+
+    def cancel(self, application_id: str, reason: str | None) -> dict:
+        """Archive a workspace the user is no longer pursuing.
+
+        The row stays: an approval is bound to a document version and its hash,
+        so deleting it would cut the audit trail. A cancelled workspace keeps
+        its documents but drops out of the active list.
+        """
+        record = self._row(application_id)
+        if record is None:
+            raise ApplicationError("not_found", "Workspace tidak ditemukan.", 404)
+        if record.get("cancelled_at"):
+            return record
+        active = self._active_task(application_id)
+        if active is not None:
+            raise ApplicationError(
+                "task_already_running",
+                "Sudah ada task aktif untuk workspace ini.",
+                409,
+                active_task_id=active,
+            )
+        approved = self._connection.execute(
+            "SELECT document_version_id FROM document_version "
+            "WHERE application_id = ? AND status = 'approved' LIMIT 1",
+            (application_id,),
+        ).fetchone()
+        if approved is not None:
+            raise ApplicationError(
+                "approval_exists",
+                "Dokumen workspace ini sudah disetujui; arsip tetap disimpan, "
+                "tetapi pembatalan ditolak agar approval tidak hilang dari daftar.",
+                409,
+            )
+        timestamp = now_iso()
+        with self._connection:
+            self._connection.execute(
+                "UPDATE application SET cancelled_at = ?, cancel_reason = ?, updated_at = ? "
+                "WHERE application_id = ?",
+                (timestamp, (reason or "").strip()[:500] or None, timestamp, application_id),
+            )
+        return self._row(application_id) or record
 
     def eligibility(self, application_id: str) -> dict | None:
         record = self._row(application_id)
@@ -257,7 +310,14 @@ class ApplicationService:
         return {
             "application_id": record["application_id"],
             "job": match["job"],
-            "status": _status(match["eligibility"]["status"], documents, active_task),
+            "status": _status(
+                match["eligibility"]["status"],
+                documents,
+                active_task,
+                record.get("cancelled_at"),
+            ),
+            "cancelled_at": record.get("cancelled_at"),
+            "cancel_reason": record.get("cancel_reason"),
             "profile_version_id": record["profile_version_id"],
             "eligibility_status": match["eligibility"]["status"],
             "fit_score": match["fit"]["fit_score"] if match["fit"] else None,
@@ -307,13 +367,20 @@ def _decode_cursor(cursor: str) -> dict:
 
 
 def _status(
-    eligibility_status: str, documents: dict, active_task: str | None = None
+    eligibility_status: str,
+    documents: dict,
+    active_task: str | None = None,
+    cancelled_at: str | None = None,
 ) -> str:
     """Application status projection (API-CONTRACTS §4.11).
 
     Document states win over eligibility once a version exists; export is never
-    projected because no export record can be created yet.
+    projected because no export record can be created yet. A cancelled
+    workspace is reported first: whatever its documents say, the user stopped
+    pursuing it.
     """
+    if cancelled_at:
+        return "cancelled"
     if active_task:
         return "processing"
     if eligibility_status == "needs_review":

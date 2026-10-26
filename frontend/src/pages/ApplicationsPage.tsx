@@ -3,6 +3,8 @@ import {
   Badge,
   Button,
   Group,
+  Modal,
+  Stack,
   Table,
   Text,
   Textarea,
@@ -11,9 +13,10 @@ import {
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { ApiError, type ApplicationList } from "../app/apiClient";
+import { ApiError, type ApplicationList, type ApplicationSummary } from "../app/apiClient";
 import {
   useApplications,
+  useCancelApplication,
   useCreateApplicationFromUrl,
   useOverview,
 } from "../app/queries";
@@ -29,6 +32,7 @@ const STATUS_LABEL: Record<string, string> = {
   exported: "Exported",
   failed: "Failed",
   outdated: "Outdated",
+  cancelled: "Dibatalkan",
 };
 
 export function ApplicationsPage() {
@@ -38,13 +42,21 @@ export function ApplicationsPage() {
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
   const [showText, setShowText] = useState(false);
+  const [showCancelled, setShowCancelled] = useState(false);
+  const cancelMutation = useCancelApplication();
+  const [pendingCancel, setPendingCancel] = useState<ApplicationSummary | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
   const state: PageState = applications.isPending
     ? "loading"
     : applications.isError
       ? "error"
       : "ready";
 
-  const items: ApplicationList["items"] = applications.data?.items ?? [];
+  const allItems: ApplicationList["items"] = applications.data?.items ?? [];
+  const items = showCancelled
+    ? allItems
+    : allItems.filter((item) => item.status !== "cancelled");
+  const cancelledCount = allItems.length - items.length;
   const locked = overview.data ? overview.data.profile?.status !== "confirmed" : false;
 
   return (
@@ -115,6 +127,19 @@ export function ApplicationsPage() {
         </Alert>
       ) : null}
       {items.length === 0 ? <EmptyState message="Belum ada application." /> : null}
+      {allItems.length > 0 ? (
+        <Group justify="flex-end">
+          <Button
+            size="compact-sm"
+            variant="subtle"
+            onClick={() => setShowCancelled((value) => !value)}
+          >
+            {showCancelled
+              ? "Sembunyikan yang dibatalkan"
+              : `Tampilkan yang dibatalkan (${cancelledCount})`}
+          </Button>
+        </Group>
+      ) : null}
       {items.length > 0 ? (
         <Table withTableBorder>
           <Table.Thead>
@@ -124,11 +149,15 @@ export function ApplicationsPage() {
               <Table.Th>Fit</Table.Th>
               <Table.Th>Status</Table.Th>
               <Table.Th>Dokumen</Table.Th>
+              <Table.Th />
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
             {items.map((item) => (
-              <Table.Tr key={item.application_id}>
+              <Table.Tr
+                key={item.application_id}
+                opacity={item.status === "cancelled" ? 0.55 : undefined}
+              >
                 <Table.Td>
                   <Text component={Link} to={`/applications/${item.application_id}`} fw={500}>
                     {item.job.title}
@@ -146,7 +175,9 @@ export function ApplicationsPage() {
                     : `Fit ${item.fit_score}`}
                 </Table.Td>
                 <Table.Td>
-                  <Badge variant="outline">{STATUS_LABEL[item.status] ?? item.status}</Badge>
+                  <Badge variant="outline" color={item.status === "cancelled" ? "gray" : undefined}>
+                    {STATUS_LABEL[item.status] ?? item.status}
+                  </Badge>
                 </Table.Td>
                 <Table.Td>
                   <Text size="sm">
@@ -154,11 +185,72 @@ export function ApplicationsPage() {
                     {item.document_counts?.cover_letter_versions ?? 0}
                   </Text>
                 </Table.Td>
+                <Table.Td>
+                  {item.status === "cancelled" ? null : (
+                    <Button
+                      size="compact-xs"
+                      variant="subtle"
+                      color="red"
+                      disabled={item.status === "approved" || item.status === "processing"}
+                      onClick={() => {
+                        setCancelReason("");
+                        setPendingCancel(item);
+                      }}
+                    >
+                      Batalkan
+                    </Button>
+                  )}
+                </Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
         </Table>
       ) : null}
+      <Modal
+        opened={pendingCancel !== null}
+        onClose={() => setPendingCancel(null)}
+        title="Batalkan application?"
+        centered
+      >
+        <Stack>
+          <Text size="sm">
+            Workspace <strong>{pendingCancel?.job.title}</strong> akan diarsipkan dan hilang
+            dari daftar aktif. Dokumen dan riwayat approval tetap tersimpan, tidak dihapus.
+          </Text>
+          <Textarea
+            label="Alasan (opsional)"
+            placeholder="Contoh: lowongan sudah ditutup"
+            value={cancelReason}
+            onChange={(event) => setCancelReason(event.currentTarget.value)}
+            maxLength={500}
+          />
+          {cancelMutation.isError ? (
+            <Alert color="red" title="Gagal membatalkan">
+              {cancelMutation.error instanceof ApiError
+                ? cancelMutation.error.message
+                : "Coba lagi."}
+            </Alert>
+          ) : null}
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => setPendingCancel(null)}>
+              Kembali
+            </Button>
+            <Button
+              color="red"
+              loading={cancelMutation.isPending}
+              onClick={() => {
+                if (!pendingCancel) return;
+                cancelMutation.mutate(
+                  { applicationId: pendingCancel.application_id, reason: cancelReason || null },
+                  { onSuccess: () => setPendingCancel(null) },
+                );
+              }}
+            >
+              Batalkan
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </PageFrame>
   );
 }

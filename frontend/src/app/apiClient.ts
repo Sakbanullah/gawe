@@ -313,8 +313,18 @@ export function reviewEligibility(
   return apiSend<MatchDetail>("PATCH", `/api/matches/${jobId}/eligibility`, body);
 }
 
-export function listApplications(): Promise<ApplicationList> {
-  return apiGet<ApplicationList>("/api/applications?limit=200");
+export function listApplications(
+  options: { includeCancelled?: boolean } = {},
+): Promise<ApplicationList> {
+  const suffix = options.includeCancelled ? "&include_cancelled=true" : "";
+  return apiGet<ApplicationList>(`/api/applications?limit=200${suffix}`);
+}
+
+export function cancelApplication(
+  applicationId: string,
+  reason: string | null,
+): Promise<{ application_id: string; cancelled_at: string | null }> {
+  return apiSend("POST", `/api/applications/${applicationId}/cancel`, { reason });
 }
 
 export function createApplication(jobId: string): Promise<ApplicationCreated> {

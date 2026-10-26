@@ -486,6 +486,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/applications/{application_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Arsipkan workspace aplikasi
+         * @description Menandai workspace `cancelled`. Record tidak dihapus: approval terikat
+         *     `document_version_id` dan `content_hash`, sehingga penghapusan akan
+         *     memutus jejak audit. Workspace `cancelled` hilang dari daftar default dan
+         *     tampil hanya bila `include_cancelled=true`.
+         *
+         *     Ditolak `409 task_already_running` bila ada task aktif. Ditolak
+         *     `409 approval_exists` bila workspace punya dokumen `approved`, agar
+         *     approval tidak hilang diam-diam. Memanggil ulang pada workspace yang sudah
+         *     dibatalkan bersifat idempoten.
+         */
+        post: operations["cancelApplication"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/applications/{application_id}/job": {
         parameters: {
             query?: never;
@@ -1886,7 +1914,7 @@ export interface components {
          *     `outdated` dan `failed` terpisah.
          * @enum {string}
          */
-        ApplicationStatus: "not_started" | "processing" | "needs_review" | "in_review" | "approved" | "exported" | "failed" | "outdated";
+        ApplicationStatus: "not_started" | "processing" | "needs_review" | "in_review" | "approved" | "exported" | "failed" | "outdated" | "cancelled";
         /** @enum {string} */
         DocumentKind: "cv" | "cover_letter";
         /** @enum {string} */
@@ -1984,6 +2012,9 @@ export interface components {
             created_at: string;
             /** Format: date-time */
             updated_at: string;
+            /** @description Set when the user archived the workspace. The record and its documents stay; `status` becomes `cancelled` and the workspace is hidden from the default list unless `include_cancelled=true`. */
+            cancelled_at?: string | null;
+            cancel_reason?: string | null;
         };
         ApplicationList: {
             items: components["schemas"]["ApplicationSummary"][];
@@ -3114,6 +3145,7 @@ export interface operations {
                 /** @description Cursor opaque dari `page.next_cursor`. */
                 cursor?: components["parameters"]["Cursor"];
                 status?: components["schemas"]["ApplicationStatus"];
+                include_cancelled?: boolean;
             };
             header?: never;
             path?: never;
@@ -3201,6 +3233,39 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             500: components["responses"]["InternalError"];
+        };
+    };
+    cancelApplication: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: components["parameters"]["ApplicationId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    reason?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Workspace sudah diarsipkan. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        application_id: string;
+                        cancelled_at: string | null;
+                    };
+                };
+            };
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     getApplicationJob: {

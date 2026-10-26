@@ -311,3 +311,74 @@ def test_rerun_analysis_requires_csrf(setup_client, csrf, monkeypatch) -> None:
     )
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "csrf_invalid"
+
+
+def test_cancel_archives_workspace_without_deleting_it(
+    setup_client, csrf, monkeypatch
+) -> None:
+    _confirm(setup_client, csrf)
+    job = _matched_jobs(setup_client, csrf, monkeypatch)[0]["job"]
+    created = setup_client.post(
+        "/api/applications", headers=csrf, json={"job_id": job["job_id"]}
+    ).json()
+    application_id = created["application_id"]
+
+    cancelled = setup_client.post(
+        f"/api/applications/{application_id}/cancel",
+        headers=csrf,
+        json={"reason": "lowongan ditutup"},
+    )
+    assert cancelled.status_code == 200, cancelled.json()
+    assert cancelled.json()["cancelled_at"]
+
+    # Hidden from the active list, still reachable in the archive.
+    active = setup_client.get("/api/applications").json()
+    assert active["items"] == []
+    archive = setup_client.get(
+        "/api/applications", params={"include_cancelled": "true"}
+    ).json()
+    assert [item["status"] for item in archive["items"]] == ["cancelled"]
+    assert archive["items"][0]["cancel_reason"] == "lowongan ditutup"
+
+    # The record and its workspace still exist.
+    assert setup_client.get(f"/api/applications/{application_id}").status_code == 200
+    by_status = setup_client.get(
+        "/api/applications", params={"status": "cancelled"}
+    ).json()
+    assert len(by_status["items"]) == 1
+
+    # Cancelling twice is idempotent.
+    again = setup_client.post(
+        f"/api/applications/{application_id}/cancel", headers=csrf, json={}
+    )
+    assert again.status_code == 200
+    assert again.json()["cancelled_at"] == cancelled.json()["cancelled_at"]
+
+
+def test_cancel_requires_csrf(setup_client, csrf, monkeypatch) -> None:
+    _confirm(setup_client, csrf)
+    job = _matched_jobs(setup_client, csrf, monkeypatch)[0]["job"]
+    created = setup_client.post(
+        "/api/applications", headers=csrf, json={"job_id": job["job_id"]}
+    ).json()
+    response = setup_client.post(f"/api/applications/{created['application_id']}/cancel")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "csrf_invalid"
+
+
+def test_cancel_rejects_running_task(
+    setup_client, csrf, monkeypatch, connection
+) -> None:
+    _confirm(setup_client, csrf)
+    job = _matched_jobs(setup_client, csrf, monkeypatch)[0]["job"]
+    created = setup_client.post(
+        "/api/applications", headers=csrf, json={"job_id": job["job_id"]}
+    ).json()
+    application_id = created["application_id"]
+    TaskStore(connection).create("document_generation", ["draft"], application_id)
+
+    response = setup_client.post(
+        f"/api/applications/{application_id}/cancel", headers=csrf, json={}
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "task_already_running"
