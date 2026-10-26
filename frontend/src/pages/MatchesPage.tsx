@@ -36,6 +36,13 @@ const ELIGIBILITY_OPTIONS = [
 
 const STATUS_ORDER = ["eligible", "needs_review", "ineligible"] as const;
 
+type EligibilityFilter = NonNullable<MatchQuery["eligibility"]>;
+
+/** Each eligibility filter pages independently; backend paginates per filter. */
+type CursorPages = Record<EligibilityFilter, string[]>;
+
+const EMPTY_PAGES: CursorPages = { all: [], eligible: [], needs_review: [], ineligible: [] };
+
 const GROUP_LABEL: Record<(typeof STATUS_ORDER)[number], string> = {
   eligible: "Eligible · ranked",
   needs_review: "Needs review · tanpa fit score",
@@ -92,10 +99,11 @@ export function MatchesPage() {
   const [minFit, setMinFit] = useState<string>("0");
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
-  const [pages, setPages] = useState<string[]>([]);
+  const [pages, setPages] = useState<CursorPages>(EMPTY_PAGES);
   const [selected, setSelected] = useState<string | null>(null);
 
-  const cursor = pages.length > 0 ? pages[pages.length - 1] : null;
+  const ownPages = pages[eligibility];
+  const cursor = ownPages.length > 0 ? ownPages[ownPages.length - 1] : null;
   const matches = useMatches({
     limit: 25,
     cursor,
@@ -123,7 +131,7 @@ export function MatchesPage() {
   const confirmed = profile?.status === "confirmed" && profile.active === true;
 
   function resetPaging() {
-    setPages([]);
+    setPages(EMPTY_PAGES);
   }
 
   return (
@@ -168,7 +176,6 @@ export function MatchesPage() {
                     style={{ cursor: "pointer" }}
                     onClick={() => {
                       setEligibility(option.value as NonNullable<MatchQuery["eligibility"]>);
-                      resetPaging();
                     }}
                   >
                     {option.label}
@@ -311,20 +318,22 @@ export function MatchesPage() {
           <Group justify="space-between">
             <Button
               variant="light"
-              disabled={pages.length === 0}
-              onClick={() => setPages(pages.slice(0, -1))}
+              disabled={ownPages.length === 0}
+              onClick={() => setPages({ ...pages, [eligibility]: ownPages.slice(0, -1) })}
             >
               Sebelumnya
             </Button>
             <Text size="sm" c="dimmed">
-              Halaman {pages.length + 1}
+              Halaman {ownPages.length + 1} ·{" "}
+              {ELIGIBILITY_OPTIONS.find((option) => option.value === eligibility)?.label ??
+                "Semua"}
             </Text>
             <Button
               variant="light"
               disabled={!matches.data?.page.has_more}
               onClick={() => {
                 const next = matches.data?.page.next_cursor;
-                if (next) setPages([...pages, next]);
+                if (next) setPages({ ...pages, [eligibility]: [...ownPages, next] });
               }}
             >
               Berikutnya

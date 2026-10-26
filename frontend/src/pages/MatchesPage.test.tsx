@@ -242,6 +242,37 @@ describe("MatchesPage", () => {
     );
   });
 
+  it("keeps a cursor per eligibility filter", async () => {
+    vi.mocked(api.listMatches).mockResolvedValue(list([item()], true));
+    renderPage();
+
+    const next = await screen.findByRole("button", { name: "Berikutnya" });
+    fireEvent.click(next);
+    await waitFor(() =>
+      expect(api.listMatches).toHaveBeenLastCalledWith(
+        expect.objectContaining({ eligibility: "all", cursor: "cursor_2" }),
+      ),
+    );
+
+    await screen.findByRole("button", { name: "Berikutnya" });
+
+    fireEvent.click(screen.getByText("Eligible (1)"));
+    await screen.findByRole("button", { name: "Berikutnya" });
+    await waitFor(() =>
+      expect(api.listMatches).toHaveBeenLastCalledWith(
+        expect.objectContaining({ eligibility: "eligible", cursor: null }),
+      ),
+    );
+    expect(screen.getByText(/Halaman 1/)).toBeTruthy();
+
+    fireEvent.click(await screen.findByText("Semua (1)"));
+    await waitFor(() =>
+      expect(api.listMatches).toHaveBeenLastCalledWith(
+        expect.objectContaining({ eligibility: "all", cursor: "cursor_2" }),
+      ),
+    );
+  });
+
   it("opens the side panel and stores a tier correction", async () => {
     renderPage();
 
