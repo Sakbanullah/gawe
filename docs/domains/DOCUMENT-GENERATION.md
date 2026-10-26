@@ -63,19 +63,37 @@ Aturan:
 
 1. Eligibility gate (harus `eligible`).
 2. Fit score (hanya eligible).
-3. Pilih bukti relevan; CV turunan tidak memuat seluruh profil.
-4. Draft terstruktur (JSON), bukan teks bebas.
-5. Integritas deterministik: bukti, angka, tanggal, gelar, nama perusahaan, blocklist klaim berlebihan.
-6. Diff vs Master CV: item dipilih, dihilangkan, diringkas, diubah.
-7. Render LaTeX (`.tex.j2` → `.tex`).
-8. Compile Tectonic, timeout 120 detik.
-9. PDF QA: halaman, font, link, metadata, glyph rusak.
-10. Reviewer terisolasi (role `review`), digabung dengan review deterministik.
-11. Revisi otomatis sampai gate terpenuhi, maksimum 5 iterasi per dokumen.
-12. Review pengguna; dokumen `In Review`.
-13. Approval per versi (CV dan CL terpisah).
-14. Ekspor hanya versi `Approved`.
-15. Apply membuka halaman resmi.
+3. Rencana penyesuaian: disusun deterministik dari fit dan bukti yang sudah ada, disetujui pengguna. Persetujuan rencana terpisah dari approval dokumen dan consent cloud. Rincian di §4.0.
+4. Pilih bukti relevan sesuai rencana; CV turunan tidak memuat seluruh profil.
+5. Draft terstruktur (JSON), bukan teks bebas.
+6. Self-check deterministik: bukti, angka, tanggal, gelar, nama perusahaan, blocklist klaim berlebihan, gap tidak muncul sebagai klaim, panjang, dan kata kunci relevan. Hasil dan daftar perubahan terikat ke `document_version_id`. Dokumen yang gagal tidak dapat diajukan untuk approval.
+7. Diff vs Master CV: item dipilih, dihilangkan, diringkas, diubah.
+8. Render LaTeX (`.tex.j2` → `.tex`).
+9. Compile Tectonic, timeout 120 detik.
+10. PDF QA: halaman, font, link, metadata, glyph rusak.
+11. Reviewer terisolasi (role `review`), digabung dengan review deterministik.
+12. Revisi otomatis sampai gate terpenuhi, maksimum 5 iterasi per dokumen.
+13. Review pengguna; dokumen `In Review`.
+14. Approval per versi (CV dan CL terpisah).
+15. Ekspor hanya versi `Approved`.
+16. Apply membuka halaman resmi.
+
+### 4.0 Rencana penyesuaian (langkah 3)
+
+Rencana disimpan per lowongan dan terikat ke `job_posting_version_id` serta `profile_version_id` yang dipakai saat disusun. Isi rencana:
+
+- `sections`: bagian CV yang dipakai, diringkas, atau dihilangkan, beserta alasan dan `evidence_ids` pendukung.
+- `keywords`: kata kunci dari requirement yang didukung bukti profil. Kata kunci tanpa bukti tidak masuk rencana.
+- `gaps`: requirement yang tidak didukung bukti. Gap dibiarkan terbuka dan tampil di dokumen, bukan ditutup dengan klaim.
+- `language`: bahasa dokumen, mengikuti bahasa lowongan bila dikenali.
+
+Aturan:
+
+- Rencana disusun deterministik dari `fit_assessment` (komponen, gap) dan `evidence_index` profil. Tidak ada panggilan model, sehingga tidak membutuhkan consent cloud.
+- Persetujuan rencana dicatat terpisah (`plan_approval`) dan tidak memberi approval dokumen apa pun.
+- Rencana yang menunjuk versi profil atau versi posting lain berstatus `outdated`; generate ditolak sampai rencana disusun ulang.
+- Perubahan rencana setelah disetujui membuat versi rencana baru yang harus disetujui lagi.
+- Isi rencana adalah data kandidat: tidak boleh masuk log, hanya metadata (`plan_id`, `job_id`, versi, hash, status).
 
 ### 4.1 Implementasi milestone 3D (deterministik, tanpa LaTeX)
 
@@ -83,11 +101,13 @@ Status implementasi:
 
 | Langkah | Status |
 |---|---|
-| 1–6 | Diimplementasikan deterministik, dengan role `write` opsional di atasnya |
-| 7-11 | Diimplementasikan 2026-10-21 (LaTeX, Tectonic, QA PDF; reviewer LLM role `review` aktif bila provider nyata) |
-| 12-13 | Diimplementasikan (review deterministik + reviewer LLM + approval per versi) |
-| 14 | Diimplementasikan (`/api/applications/{id}/exports`, migrasi `0012_export`) |
-| 15 | Ada di UI (buka URL resmi), tanpa auto-submit |
+| 1–2 | Diimplementasikan |
+| 3 | Diimplementasikan: rencana deterministik + persetujuan pengguna |
+| 4–7 | Diimplementasikan deterministik, dengan role `write` opsional di atasnya |
+| 8–12 | Diimplementasikan 2026-10-21 (LaTeX, Tectonic, QA PDF; reviewer LLM role `review` aktif bila provider nyata) |
+| 13–14 | Diimplementasikan (review deterministik + reviewer LLM + approval per versi) |
+| 15 | Diimplementasikan (`/api/applications/{id}/exports`, migrasi `0012_export`) |
+| 16 | Ada di UI (buka URL resmi), tanpa auto-submit |
 
 Draft dibangun dari `profile_version.content` + job. Bila role `write` aktif, konten datang dari model; bila tidak, atau bila keluaran model gagal validasi, draft deterministik dipakai dan `provider`/`model`/`prompt_version` mencerminkan sumber yang benar-benar dipakai.
 

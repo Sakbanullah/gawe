@@ -880,10 +880,12 @@ else: verdict = "weak"
 | `needs_review` | Pembuatan dokumen diblokir sampai informasi yang belum jelas ditinjau dan status diselesaikan. UI menampilkan informasi yang kurang dan aksi review. |
 | `ineligible` | Tidak boleh membuat dokumen lamaran melalui alur normal. Tampilkan alasan dan bukti persyaratan yang gagal. |
 
-5. Setelah eligibility `eligible`, Gawe menghitung fit score, menampilkan bukti kecocokan serta gap, lalu menghasilkan CV turunan dan cover letter.
-6. Dokumen ditinjau, diedit bila perlu, disetujui untuk versi tertentu, kemudian diekspor.
-7. Setelah dokumen siap dan pengguna memilih **Apply**, Gawe membuka halaman lamaran resmi perusahaan menggunakan URL yang terverifikasi jika tersedia. Pengguna sendiri yang mengisi formulir, mengunggah dokumen, dan menekan submit.
-8. Tidak ada auto-submit, auto-email, atau klaim bahwa lamaran telah dikirim.
+5. Setelah eligibility `eligible`, Gawe menghitung fit score, menampilkan bukti kecocokan serta gap.
+6. Gawe menyusun **rencana penyesuaian** dokumen: bagian Master CV yang dipakai, yang diringkas, yang dihilangkan, kata kunci yang didukung bukti, dan gap yang dibiarkan terbuka. Pengguna menyetujui rencana itu sebelum dokumen dibuat.
+7. Setelah rencana disetujui, Gawe menghasilkan CV turunan dan cover letter dari Master CV sesuai rencana.
+8. Dokumen ditinjau, diedit bila perlu, disetujui untuk versi tertentu, kemudian diekspor.
+9. Setelah dokumen siap dan pengguna memilih **Apply**, Gawe membuka halaman lamaran resmi perusahaan menggunakan URL yang terverifikasi jika tersedia. Pengguna sendiri yang mengisi formulir, mengunggah dokumen, dan menekan submit.
+10. Tidak ada auto-submit, auto-email, atau klaim bahwa lamaran telah dikirim.
 
 Tautan Apply hanya boleh berasal dari data sumber yang tersimpan dan terverifikasi. Jangan mengarang URL. Jika tautan resmi tidak tersedia, jelaskan keterbatasannya dan tampilkan informasi yang memang tersedia. Untuk URL manual, URL lowongan yang dimasukkan pengguna dapat dipakai sebagai tautan Apply setelah validasi; jangan menebak atau mengganti ke halaman lamaran lain.
 

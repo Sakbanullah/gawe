@@ -100,6 +100,9 @@ Konvensi umum:
 | Method | Path | Operation ID | Kegunaan |
 |---|---|---|---|
 | GET | `/api/applications/{application_id}/documents` | `listDocuments` | Daftar versi CV/CL |
+| POST | `/api/applications/{application_id}/document-plan` | `createDocumentPlan` | Susun rencana penyesuaian (deterministik, tanpa task) |
+| GET | `/api/applications/{application_id}/document-plan` | `getDocumentPlan` | Rencana terbaru + status persetujuan |
+| POST | `/api/applications/{application_id}/document-plan/{plan_id}/approval` | `approveDocumentPlan` | Setujui/tolak rencana |
 | POST | `/api/applications/{application_id}/documents` | `generateDocuments` | Hasilkan versi baru (task) |
 | GET | `/api/applications/{application_id}/documents/{document_version_id}` | `getDocumentVersion` | Detail versi + diff |
 | POST | `/api/applications/{application_id}/documents/{document_version_id}/revisions` | `createDocumentRevision` | Edit → versi baru |
@@ -465,7 +468,7 @@ Nilai status yang boleh muncul di API mengikuti [`PRODUCT.md`](PRODUCT.md) §5.7
 |---|---|---|
 | Proses/task | `Task.status` | `queued`, `processing`, `needs_review`, `completed`, `partial`, `failed` |
 | Dokumen | `DocumentSummary.status` | `draft`, `in_review`, `approved`, `exported`, `outdated`, `failed` |
-| Aplikasi | `ApplicationSummary.status` | `not_started`, `processing`, `needs_review`, `in_review`, `approved`, `exported`, `failed`, `outdated` |
+| Aplikasi | `ApplicationSummary.status` | `not_started`, `processing`, `needs_review`, `in_review`, `approved`, `exported`, `failed`, `outdated`, `cancelled` |
 
 `partial` hanya untuk task discovery: sebagian sumber berhasil, atau fetch berhasil tetapi analisis eligibility/fit gagal. `needs_review` pada task berarti task selesai tetapi menunggu tindakan manusia, bukan kegagalan. `outdated` bukan `failed`.
 
@@ -872,7 +875,9 @@ Aksi API dan transisi yang diizinkan:
 | Rollback | `POST /api/setup/profile/rollback` | Target pernah `confirmed` | Pointer aktif berpindah; tanpa versi baru; tanpa hapus |
 | Discovery | `POST /api/discovery/runs` | Profil `confirmed` | Task `discovery` |
 | Analisis | `POST /api/applications/{id}/analysis` | Profil `confirmed` | Task `analysis`; hasil baru menggantikan assessment aktif |
-| Generate | `POST /api/applications/{id}/documents` | Eligibility `eligible` | Task `document_generation`; versi baru `draft` |
+| Rencana penyesuaian | `POST /api/applications/{id}/document-plan` | Eligibility `eligible`; profil `confirmed` | Rencana versi baru `draft`; tanpa task, tanpa model |
+| Setujui rencana | `POST .../document-plan/{plan_id}/approval` | Rencana `draft`, hash cocok, versi profil + posting masih berlaku | Rencana `approved` |
+| Generate | `POST /api/applications/{id}/documents` | Eligibility `eligible`; rencana `approved` untuk versi profil + posting yang sama | Task `document_generation`; versi baru `draft` |
 | Review | `POST .../documents/{id}/review` | Versi ada | Task `review`; versi tetap `draft`/`in_review` |
 | Review selesai (QA lulus) | — | Task `completed` | Versi `in_review` |
 | Approve | `POST .../documents/{id}/approval` | Review selesai, hash cocok, data wajib lengkap, eligibility `eligible` | Versi `approved` |
@@ -915,6 +920,61 @@ Milestone ini mengimplementasikan versi, review, dan approval. LaTeX/PDF/ekspor 
 - Catatan revisi disimpan di `diff.note`; catatan per edit disimpan di `diff.edit_notes`.
 - Approval tidak menghapus findings. Findings tetap menempel pada `document_version_id` dan `profile_version_id` saat review.
 - Konten tidak boleh disetujui atau diekspor bila data wajib belum lengkap.
+
+##### Rencana penyesuaian (langkah sebelum generate)
+
+Rencana disusun deterministik dari `fit_assessment` dan `evidence_index`; tidak memanggil model, jadi tidak membutuhkan consent cloud. Persetujuan rencana terpisah dari approval dokumen dan dari consent cloud.
+
+`POST /api/applications/{application_id}/document-plan`
+
+```json
+{"language": "en"}
+```
+
+Respons `201`:
+
+```json
+{
+  "plan_id": "dpl_...",
+  "application_id": "app_...",
+  "job_posting_version_id": "jpv_...",
+  "profile_version_id": "prv_...",
+  "version": 1,
+  "status": "draft",
+  "content_hash": "sha256-hex",
+  "plan": {
+    "sections": [
+      {"section": "experience", "item_id": "exp_1", "decision": "keep", "reason": "...", "evidence_ids": ["ev_..."]}
+    ],
+    "keywords": [{"term": "python", "requirement_id": "req_...", "evidence_ids": ["ev_..."]}],
+    "gaps": [{"requirement_id": "req_...", "description": "...", "evidence_ids": []}],
+    "language": "en"
+  },
+  "outdated": false,
+  "created_at": "2026-10-26T00:00:00Z"
+}
+```
+
+- `decision` bernilai `keep`, `summarize`, atau `drop`.
+- `gaps` berasal dari `fit_assessment.gaps`; rencana tidak boleh menutup gap dengan klaim.
+- `keywords` hanya memuat istilah requirement yang punya `evidence_id` profil.
+- Rencana baru dengan isi identik mengembalikan record yang sama (`200` + `Idempotency-Replayed: true`); isi berbeda menaikkan `version`.
+- `409` bila eligibility bukan `eligible` (`eligibility_needs_review`/`eligibility_not_eligible`) atau eligibility `status_outdated`.
+
+`GET /api/applications/{application_id}/document-plan` mengembalikan rencana terbaru + `outdated`. `404` bila belum ada.
+
+`POST /api/applications/{application_id}/document-plan/{plan_id}/approval`
+
+```json
+{"decision": "approved", "content_hash": "sha256-hex", "note": null}
+```
+
+- `decision` bernilai `approved` atau `rejected`; `rejected` wajib `note`.
+- `409 approval_hash_mismatch` bila hash tidak cocok dengan `content_hash` tersimpan.
+- `409 plan_outdated` bila `profile_version_id` atau `job_posting_version_id` rencana bukan yang berlaku sekarang.
+- Keputusan yang sama diulang mengembalikan record yang sama (`Idempotency-Replayed: true`).
+
+Gate generate: `POST .../documents` menolak `409 plan_not_approved` bila tidak ada rencana `approved` untuk pasangan `profile_version_id` + `job_posting_version_id` yang sama. Isi rencana adalah data kandidat: tidak masuk log; log hanya `plan_id`, versi, hash, dan status.
 
 #### 4.11.2 Implementasi PDF dan ekspor (gap-closing 2026-10-21)
 

@@ -76,9 +76,11 @@ Nama `/setup`, `/scrape`, `/apply` dipertahankan sebagai nama workflow internal 
    - `needs_review` → dokumen diblokir sampai status diselesaikan.
    - `ineligible` → tidak ada dokumen melalui alur normal.
 5. Hitung fit score untuk `eligible`, tampilkan bukti dan gap.
-6. Hasilkan CV turunan dan cover letter.
-7. Review, edit, approve per versi, ekspor.
-8. Apply membuka halaman resmi; pengguna mengisi dan submit sendiri.
+6. Susun **rencana penyesuaian** dokumen dari fit dan bukti yang sudah ada: bagian yang dipakai, diringkas, dihilangkan, kata kunci berbukti, dan gap yang dibiarkan. Pengguna menyetujui rencana sebelum dokumen dibuat.
+7. Setelah rencana disetujui, hasilkan CV turunan dan cover letter dari Master CV.
+8. Self-check backend: grounding klaim ke Master CV, gap tidak muncul sebagai klaim, panjang, dan kata kunci relevan. Dokumen yang gagal tidak bisa diajukan untuk approval.
+9. Review, edit, approve per versi, ekspor.
+10. Apply membuka halaman resmi; pengguna mengisi dan submit sendiri.
 
 ---
 
