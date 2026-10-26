@@ -458,6 +458,53 @@ def test_ranking_rejects_fit_score_on_needs_review() -> None:
         )
 
 
+def test_ranking_reports_an_eligible_job_without_a_score() -> None:
+    """A stored bad row must not stop every other job from being ranked."""
+    result = rank(
+        [
+            {
+                "job_id": "job_noscore",
+                "eligibility_status": "eligible",
+                "fit_score": None,
+                "priority_tier": "P2",
+            },
+            {
+                "job_id": "job_ok",
+                "eligibility_status": "eligible",
+                "fit_score": 90,
+                "priority_tier": "P2",
+            },
+        ]
+    )
+    assert [item["job_id"] for item in result["sections"]["eligible"]] == ["job_ok"]
+    assert result["data_issues"] == [{"job_id": "job_noscore", "reason": "missing_fit_score"}]
+
+
+def test_ranking_reports_an_unknown_tier_instead_of_failing() -> None:
+    """One bad tier value used to fail every later assessment."""
+    result = rank(
+        [
+            {
+                "job_id": "job_bad",
+                "eligibility_status": "eligible",
+                "fit_score": 80,
+                "priority_tier": "P9",
+            },
+            {
+                "job_id": "job_ok",
+                "eligibility_status": "eligible",
+                "fit_score": 90,
+                "priority_tier": "P2",
+            },
+        ]
+    )
+    assert [item["job_id"] for item in result["sections"]["eligible"]] == ["job_ok", "job_bad"]
+    assert result["sections"]["eligible"][1]["priority_tier"] == "unclassified"
+    assert result["data_issues"] == [
+        {"job_id": "job_bad", "reason": "unknown_priority_tier", "value": "P9"}
+    ]
+
+
 def test_ranking_rejects_out_of_range_tie_window() -> None:
     with pytest.raises(RankingError):
         rank([], tie_window=RANKING_CASES["tie_window_max"] + 1)

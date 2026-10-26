@@ -17,14 +17,52 @@ class RankingError(ValueError):
     """Candidate list violates a documented ranking invariant."""
 
 
+def _known_tier(value: object) -> str:
+    return value if value in TIER_RANK else "unclassified"
+
+
+def _tier_issues(candidates: list[dict]) -> list[dict]:
+    """One entry per candidate whose tier is outside the scale."""
+    return [
+        {
+            "job_id": item["job_id"],
+            "reason": "unknown_priority_tier",
+            "value": item.get("priority_tier"),
+        }
+        for item in candidates
+        if item.get("priority_tier") not in TIER_RANK
+    ]
+
+
+def _score_issues(candidates: list[dict]) -> list[dict]:
+    """Eligible candidates with no stored score; they are left out of the order."""
+    return [
+        {"job_id": item["job_id"], "reason": "missing_fit_score"}
+        for item in candidates
+        if item["eligibility_status"] == "eligible" and not isinstance(item.get("fit_score"), int)
+    ]
+
+
 def rank(candidates: list[dict], tie_window: int = DEFAULT_TIE_WINDOW) -> dict:
     """Return ordered ``sections`` plus ``counts``; never scores non-eligible jobs."""
     if not 0 <= tie_window <= MAX_TIE_WINDOW:
         raise RankingError("tie_window must be between 0 and 20")
-    _validate(candidates)
+    # A missing score and an outside-scale tier are stored data problems, not a
+    # broken run. Both used to raise, so one row stopped every other job from
+    # being ranked. They are reported in ``data_issues`` and the rest sorts.
+    issues = _tier_issues(candidates) + _score_issues(candidates)
+    _validate(candidates, issues)
+    items = [
+        {**item, "priority_tier": _known_tier(item.get("priority_tier"))}
+        for item in candidates
+        if not (
+            item["eligibility_status"] == "eligible"
+            and not isinstance(item.get("fit_score"), int)
+        )
+    ]
 
     eligible = sorted(
-        (item for item in candidates if item["eligibility_status"] == "eligible"),
+        (item for item in items if item["eligibility_status"] == "eligible"),
         key=lambda item: (-item["fit_score"], item["job_id"]),
     )
     ordered: list[dict] = []
@@ -45,8 +83,8 @@ def rank(candidates: list[dict], tie_window: int = DEFAULT_TIE_WINDOW) -> dict:
         for item in band:
             ordered.append({**item, "band_id": band_id})
 
-    needs_review = _non_eligible(candidates, "needs_review")
-    ineligible = _non_eligible(candidates, "ineligible")
+    needs_review = _non_eligible(items, "needs_review")
+    ineligible = _non_eligible(items, "ineligible")
     return {
         "tie_window": tie_window,
         "primary": PRIMARY,
@@ -71,10 +109,15 @@ def rank(candidates: list[dict], tie_window: int = DEFAULT_TIE_WINDOW) -> dict:
             "needs_review": len(needs_review),
             "ineligible": len(ineligible),
         },
+        # Rows whose score or tier is stored badly. They are listed here and the
+        # run is still valid.
+        "data_issues": issues,
     }
 
 
-def _validate(candidates: list[dict]) -> None:
+def _validate(candidates: list[dict], issues: list[dict]) -> None:
+    """Reject identity faults only; a per-row data issue is reported, not raised."""
+    unscored = {issue["job_id"] for issue in issues if issue["reason"] == "missing_fit_score"}
     seen: set[str] = set()
     for item in candidates:
         status = item.get("eligibility_status")
@@ -84,12 +127,10 @@ def _validate(candidates: list[dict]) -> None:
             raise RankingError(f"duplicate candidate: {item['job_id']}")
         seen.add(item["job_id"])
         score = item.get("fit_score")
-        if status == "eligible" and not isinstance(score, int):
+        if status == "eligible" and not isinstance(score, int) and item["job_id"] not in unscored:
             raise RankingError(f"eligible candidate without fit_score: {item['job_id']}")
         if status != "eligible" and score is not None:
             raise RankingError(f"fit_score on non-eligible candidate: {item['job_id']}")
-        if item.get("priority_tier") not in TIER_RANK:
-            raise RankingError(f"unknown priority_tier: {item.get('priority_tier')!r}")
 
 
 def _non_eligible(candidates: list[dict], status: str) -> list[dict]:

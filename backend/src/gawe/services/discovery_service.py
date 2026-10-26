@@ -46,6 +46,7 @@ from ..jobs.sources.registry import (
 from ..master_cv import new_id, now_iso
 from ..master_cv.store import MasterCvError
 from ..profile.store import ProfileStore
+from ..ranking.rank import RankingError
 from ..security.url_guard import UnsafeUrl, validate_url
 from .assessment_service import AssessmentService
 from .tasks import MAX_ATTEMPTS, TaskStore
@@ -456,6 +457,23 @@ class DiscoveryService:
             result = AssessmentService(self._connection, self._profiles).assess_pending()
             AssessmentService(self._connection, self._profiles).recompute_ranking()
             return result, None
+        except RankingError as exc:
+            # Eligibility and fit are already stored; only the ordering failed.
+            # Reporting it as `assessment_failed` hid that, so the run says which
+            # stage broke.
+            logger.warning("ranking failed: %s", exc)
+            return (
+                {"eligible": 0, "needs_review": 0, "ineligible": 0},
+                {
+                    "code": "ranking_failed",
+                    "message": "Lowongan dan analisis tersimpan, tetapi ranking gagal dihitung.",
+                    "stage": "ranking",
+                    "retryable": False,
+                    "run_id": None,
+                    "request_id": None,
+                    "details": [],
+                },
+            )
         except Exception as exc:
             # Metadata only: no description, profile, or document content in logs.
             logger.warning("assessment failed: %s", type(exc).__name__)
