@@ -7,6 +7,7 @@ import json
 from gawe.profile.store import ProfileStore
 from gawe.services.assessment_service import AssessmentService
 from tests.test_assessment import _confirm, _run
+from tests.document_plan_helper import plan_and_approve
 from tests.test_discovery import GREENHOUSE, _Fetcher, _create_source, _use
 
 
@@ -156,6 +157,7 @@ def test_documents_still_generate_and_review_after_the_job_closes(
         "SELECT status FROM job WHERE job_id = ?", (job_id,)
     ).fetchone()["status"] == "closed"
 
+    plan_and_approve(setup_client, csrf, application_id, "en")
     generated = setup_client.post(
         f"/api/applications/{application_id}/documents",
         headers=csrf,

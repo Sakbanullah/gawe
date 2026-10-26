@@ -64,6 +64,7 @@ def _client(setup_config, provider, root: Path) -> TestClient:
 
 
 def _generate(client, csrf, application_id: str, kinds=("cv",)) -> dict:
+    plan_and_approve(client, csrf, application_id, "en")
     response = client.post(
         f"/api/applications/{application_id}/documents",
         headers=csrf,

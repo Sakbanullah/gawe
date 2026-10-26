@@ -74,6 +74,7 @@ def review(
     evidence_index: dict,
     profile_content: dict,
     job: dict,
+    plan: dict | None = None,
 ) -> tuple[dict, dict]:
     """Return (report, metadata).
 
@@ -81,7 +82,9 @@ def review(
     and `source`. `overall_score` is `None` when the reviewer could not run; the
     caller must treat that as "not passed", never as "passed".
     """
-    deterministic = review_rules.review(content, evidence_index, profile_content)
+    deterministic = review_rules.review(
+        content, evidence_index, profile_content, plan=plan
+    )
     findings = [_normalise(item, content.get("kind")) for item in deterministic["findings"]]
 
     metadata: dict = {"source": "deterministic"}

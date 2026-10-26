@@ -4,10 +4,35 @@ from __future__ import annotations
 
 import json
 
+import pytest
+from fastapi.testclient import TestClient
+
+from gawe.api.app import build_llm_client, create_app
+from gawe.config import load_config
 from gawe.documents import draft
 from gawe.documents import review as review_rules
 from tests.test_applications import _matched_jobs
 from tests.test_assessment import _confirm
+from tests.scripted_provider import ScriptedProvider, _pass_report
+from tests.document_plan_helper import plan_and_approve
+
+
+@pytest.fixture
+def llm_client(repo_root, _clean_database):
+    """Give the app a provider that answers with a real CV.
+
+    There is no template writer any more, so every document test needs a model
+    plus the prompt files. The app runs the "fake" provider config (no cloud
+    consent gate) against `repo_root`, whose `docs/phase-00` carries the writer
+    prompt and its rule file.
+    """
+    config = load_config(repo_root / "config.toml")
+    config.llm.active_provider = "fake"
+    client = build_llm_client(
+        config, provider=ScriptedProvider([_pass_report()] * 40)
+    )
+    with TestClient(create_app(config, llm_client=client)) as test_client:
+        yield test_client
 
 
 def _application(client, csrf, monkeypatch) -> tuple[str, dict]:
@@ -22,6 +47,7 @@ def _application(client, csrf, monkeypatch) -> tuple[str, dict]:
 
 
 def _generate(client, csrf, application_id: str, kinds=("cv", "cover_letter")) -> list[dict]:
+    plan_and_approve(client, csrf, application_id, "en")
     response = client.post(
         f"/api/applications/{application_id}/documents",
         headers=csrf,
@@ -153,20 +179,20 @@ def test_review_flags_unknown_evidence() -> None:
 
 
 # -- generation --------------------------------------------------------------
-def test_generation_requires_eligible(setup_client, csrf, monkeypatch) -> None:
-    _confirm(setup_client, csrf)
-    items = _matched_jobs(setup_client, csrf, monkeypatch)
+def test_generation_requires_eligible(llm_client, csrf, monkeypatch) -> None:
+    _confirm(llm_client, csrf)
+    items = _matched_jobs(llm_client, csrf, monkeypatch)
     blocked = [item for item in items if item["eligibility"]["status"] == "needs_review"]
     if not blocked:
         blocked = [item for item in items if item["eligibility"]["status"] != "eligible"]
     if not blocked:
         return
     job = blocked[0]["job"]
-    created = setup_client.post(
+    created = llm_client.post(
         "/api/applications", headers=csrf, json={"job_id": job["job_id"]}
     ).json()
 
-    response = setup_client.post(
+    response = llm_client.post(
         f"/api/applications/{created['application_id']}/documents",
         headers=csrf,
         json={"kinds": ["cv"], "language": "en"},
@@ -179,17 +205,17 @@ def test_generation_requires_eligible(setup_client, csrf, monkeypatch) -> None:
 
 
 def test_generation_is_deterministic_and_uses_profile_facts(
-    setup_client, csrf, monkeypatch
+    llm_client, csrf, monkeypatch
 ) -> None:
-    application_id, job = _application(setup_client, csrf, monkeypatch)
-    first = _generate(setup_client, csrf, application_id, kinds=("cv",))
-    second = _generate(setup_client, csrf, application_id, kinds=("cv",))
+    application_id, job = _application(llm_client, csrf, monkeypatch)
+    first = _generate(llm_client, csrf, application_id, kinds=("cv",))
+    second = _generate(llm_client, csrf, application_id, kinds=("cv",))
 
     assert [item["kind"] for item in first] == ["cv"]
     by_version = {item["version"]: item for item in second}
     assert set(by_version) == {1, 2}
-    detail_one = _detail(setup_client, application_id, by_version[1]["document_version_id"])
-    detail_two = _detail(setup_client, application_id, by_version[2]["document_version_id"])
+    detail_one = _detail(llm_client, application_id, by_version[1]["document_version_id"])
+    detail_two = _detail(llm_client, application_id, by_version[2]["document_version_id"])
     assert detail_one["content"] == detail_two["content"]
     assert detail_one["content_hash"] == detail_two["content_hash"]
 
@@ -207,10 +233,10 @@ def test_generation_is_deterministic_and_uses_profile_facts(
     assert detail_one["pdf_available"] is False
     assert detail_one["exported"] is False
 
-    workspace = setup_client.get(f"/api/applications/{application_id}").json()
+    workspace = llm_client.get(f"/api/applications/{application_id}").json()
     assert sorted(item["version"] for item in workspace["documents"]["cv"]) == [1, 2]
     assert workspace["next_action"]["code"] == "review_documents"
-    summary = setup_client.get("/api/applications").json()["items"][0]
+    summary = llm_client.get("/api/applications").json()["items"][0]
     assert summary["document_counts"] == {
         "cv_versions": 2,
         "cover_letter_versions": 0,
@@ -218,9 +244,9 @@ def test_generation_is_deterministic_and_uses_profile_facts(
     }
 
 
-def test_generate_rejects_duplicate_kinds(setup_client, csrf, monkeypatch) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    response = setup_client.post(
+def test_generate_rejects_duplicate_kinds(llm_client, csrf, monkeypatch) -> None:
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    response = llm_client.post(
         f"/api/applications/{application_id}/documents",
         headers=csrf,
         json={"kinds": ["cv", "cv"], "language": "en"},
@@ -231,58 +257,58 @@ def test_generate_rejects_duplicate_kinds(setup_client, csrf, monkeypatch) -> No
 
 # -- review and approval -----------------------------------------------------
 def test_review_then_approval_is_bound_to_version_and_hash(
-    setup_client, csrf, monkeypatch
+    llm_client, csrf, monkeypatch
 ) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    version = _generate(setup_client, csrf, application_id, kinds=("cv",))[0]
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    version = _generate(llm_client, csrf, application_id, kinds=("cv",))[0]
 
-    missing = setup_client.get(
+    missing = llm_client.get(
         f"/api/applications/{application_id}/documents/{version['document_version_id']}/findings"
     )
     assert missing.status_code == 404
 
     before = _approve(
-        setup_client, csrf, application_id, version["document_version_id"], "f" * 64
+        llm_client, csrf, application_id, version["document_version_id"], "f" * 64
     )
     assert before.status_code == 409
     assert before.json()["error"]["code"] == "approval_hash_mismatch"
 
     not_reviewed = _approve(
-        setup_client, csrf, application_id, version["document_version_id"], version["content_hash"]
+        llm_client, csrf, application_id, version["document_version_id"], version["content_hash"]
     )
     assert not_reviewed.status_code == 409
     assert not_reviewed.json()["error"]["code"] == "review_not_completed"
 
-    reviewed = _review(setup_client, csrf, application_id, version["document_version_id"])
+    reviewed = _review(llm_client, csrf, application_id, version["document_version_id"])
     assert reviewed["review_status"] == "completed"
     assert reviewed["review_verdict"] == "pass"
     assert reviewed["status"] == "in_review"
 
-    findings = setup_client.get(
+    findings = llm_client.get(
         f"/api/applications/{application_id}/documents/{version['document_version_id']}/findings"
     )
     assert findings.status_code == 200
     assert findings.json()["verdict"] == "pass"
 
     approved = _approve(
-        setup_client, csrf, application_id, version["document_version_id"], version["content_hash"]
+        llm_client, csrf, application_id, version["document_version_id"], version["content_hash"]
     )
     assert approved.status_code == 201, approved.json()
     assert approved.json()["decision"] == "approved"
     assert approved.json()["document_hash"] == version["content_hash"]
 
     replay = _approve(
-        setup_client, csrf, application_id, version["document_version_id"], version["content_hash"]
+        llm_client, csrf, application_id, version["document_version_id"], version["content_hash"]
     )
     assert replay.status_code == 200
     assert replay.headers["Idempotency-Replayed"] == "true"
     assert replay.json()["approval_id"] == approved.json()["approval_id"]
 
-    workspace = setup_client.get(f"/api/applications/{application_id}").json()
+    workspace = llm_client.get(f"/api/applications/{application_id}").json()
     assert workspace["status"] == "approved"
     assert workspace["documents"]["cv"][0]["approved"] is True
 
-    blocked_review = setup_client.post(
+    blocked_review = llm_client.post(
         f"/api/applications/{application_id}/documents/{version['document_version_id']}/review",
         headers=csrf,
     )
@@ -290,7 +316,7 @@ def test_review_then_approval_is_bound_to_version_and_hash(
     assert blocked_review.json()["error"]["details"][0]["code"] == "version_already_approved"
 
     blocked_change = _approve(
-        setup_client,
+        llm_client,
         csrf,
         application_id,
         version["document_version_id"],
@@ -302,15 +328,15 @@ def test_review_then_approval_is_bound_to_version_and_hash(
     assert blocked_change.json()["error"]["details"][0]["code"] == "version_already_approved"
 
 
-def test_generation_blocks_outdated_eligibility(setup_client, csrf, monkeypatch, connection) -> None:
-    application_id, job = _application(setup_client, csrf, monkeypatch)
-    workspace = setup_client.get(f"/api/applications/{application_id}").json()
+def test_generation_blocks_outdated_eligibility(llm_client, csrf, monkeypatch, connection) -> None:
+    application_id, job = _application(llm_client, csrf, monkeypatch)
+    workspace = llm_client.get(f"/api/applications/{application_id}").json()
     connection.execute(
         "UPDATE eligibility_assessment SET status_outdated = 1 "
         "WHERE job_id = ? AND profile_version_id = ?",
         (job["job_id"], workspace["profile_version_id"]),
     )
-    response = setup_client.post(
+    response = llm_client.post(
         f"/api/applications/{application_id}/documents",
         headers=csrf,
         json={"kinds": ["cv"], "language": "en"},
@@ -320,17 +346,17 @@ def test_generation_blocks_outdated_eligibility(setup_client, csrf, monkeypatch,
 
 
 def test_revision_creates_new_version_and_never_inherits_approval(
-    setup_client, csrf, monkeypatch
+    llm_client, csrf, monkeypatch
 ) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    version = _generate(setup_client, csrf, application_id, kinds=("cv",))[0]
-    _review(setup_client, csrf, application_id, version["document_version_id"])
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    version = _generate(llm_client, csrf, application_id, kinds=("cv",))[0]
+    _review(llm_client, csrf, application_id, version["document_version_id"])
     approved = _approve(
-        setup_client, csrf, application_id, version["document_version_id"], version["content_hash"]
+        llm_client, csrf, application_id, version["document_version_id"], version["content_hash"]
     )
     assert approved.status_code == 201
 
-    revised = setup_client.post(
+    revised = llm_client.post(
         f"/api/applications/{application_id}/documents/{version['document_version_id']}/revisions",
         headers=csrf,
         json={
@@ -347,16 +373,16 @@ def test_revision_creates_new_version_and_never_inherits_approval(
     assert new_version["review_status"] == "not_started"
     assert new_version["content_hash"] != version["content_hash"]
 
-    detail = _detail(setup_client, application_id, new_version["document_version_id"])
+    detail = _detail(llm_client, application_id, new_version["document_version_id"])
     assert detail["content"]["summary"]["text"] == "Edited summary."
     assert detail["diff"]["base"] == "document_version"
     assert detail["diff"]["base_document_version_id"] == version["document_version_id"]
 
-    old = _detail(setup_client, application_id, version["document_version_id"])
+    old = _detail(llm_client, application_id, version["document_version_id"])
     assert old["approved"] is True
     assert old["content_hash"] == version["content_hash"]
 
-    stale = setup_client.post(
+    stale = llm_client.post(
         f"/api/applications/{application_id}/documents/{version['document_version_id']}/revisions",
         headers=csrf,
         json={
@@ -368,10 +394,10 @@ def test_revision_creates_new_version_and_never_inherits_approval(
     assert stale.json()["error"]["code"] == "version_conflict"
 
 
-def test_approval_blocks_missing_required_data(setup_client, csrf, monkeypatch) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    version = _generate(setup_client, csrf, application_id, kinds=("cv",))[0]
-    revised = setup_client.post(
+def test_approval_blocks_missing_required_data(llm_client, csrf, monkeypatch) -> None:
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    version = _generate(llm_client, csrf, application_id, kinds=("cv",))[0]
+    revised = llm_client.post(
         f"/api/applications/{application_id}/documents/{version['document_version_id']}/revisions",
         headers=csrf,
         json={
@@ -379,11 +405,11 @@ def test_approval_blocks_missing_required_data(setup_client, csrf, monkeypatch) 
             "edits": [{"path": "header.full_name", "value": ""}],
         },
     ).json()
-    reviewed = _review(setup_client, csrf, application_id, revised["document_version_id"])
+    reviewed = _review(llm_client, csrf, application_id, revised["document_version_id"])
     assert reviewed["review_verdict"] == "changes_required"
 
     response = _approve(
-        setup_client, csrf, application_id, revised["document_version_id"], revised["content_hash"]
+        llm_client, csrf, application_id, revised["document_version_id"], revised["content_hash"]
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "conflict"
@@ -392,26 +418,26 @@ def test_approval_blocks_missing_required_data(setup_client, csrf, monkeypatch) 
 
 
 def test_cover_letter_is_approvable_when_it_has_a_claim(
-    setup_client, csrf, monkeypatch
+    llm_client, csrf, monkeypatch
 ) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    version = _generate(setup_client, csrf, application_id, kinds=("cover_letter",))[0]
-    reviewed = _review(setup_client, csrf, application_id, version["document_version_id"])
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    version = _generate(llm_client, csrf, application_id, kinds=("cover_letter",))[0]
+    reviewed = _review(llm_client, csrf, application_id, version["document_version_id"])
     assert reviewed["review_verdict"] == "pass"
     assert reviewed["content"]["kind"] == "cover_letter"
     assert reviewed["content"]["paragraphs"]
     approved = _approve(
-        setup_client, csrf, application_id, version["document_version_id"], version["content_hash"]
+        llm_client, csrf, application_id, version["document_version_id"], version["content_hash"]
     )
     assert approved.status_code == 201, approved.json()
 
 
 def test_approval_detects_content_changed_out_of_band(
-    setup_client, csrf, monkeypatch, connection
+    llm_client, csrf, monkeypatch, connection
 ) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    version = _generate(setup_client, csrf, application_id, kinds=("cv",))[0]
-    _review(setup_client, csrf, application_id, version["document_version_id"])
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    version = _generate(llm_client, csrf, application_id, kinds=("cv",))[0]
+    _review(llm_client, csrf, application_id, version["document_version_id"])
     row = connection.execute(
         "SELECT content_json FROM document_version WHERE document_version_id = ?",
         (version["document_version_id"],),
@@ -424,19 +450,19 @@ def test_approval_detects_content_changed_out_of_band(
     )
 
     response = _approve(
-        setup_client, csrf, application_id, version["document_version_id"], version["content_hash"]
+        llm_client, csrf, application_id, version["document_version_id"], version["content_hash"]
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "approval_hash_mismatch"
 
 
-def test_approved_version_rejects_other_decisions(setup_client, csrf, monkeypatch) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    version = _generate(setup_client, csrf, application_id, kinds=("cv",))[0]
-    _review(setup_client, csrf, application_id, version["document_version_id"])
+def test_approved_version_rejects_other_decisions(llm_client, csrf, monkeypatch) -> None:
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    version = _generate(llm_client, csrf, application_id, kinds=("cv",))[0]
+    _review(llm_client, csrf, application_id, version["document_version_id"])
     assert (
         _approve(
-            setup_client,
+            llm_client,
             csrf,
             application_id,
             version["document_version_id"],
@@ -445,7 +471,7 @@ def test_approved_version_rejects_other_decisions(setup_client, csrf, monkeypatc
         == 201
     )
     response = _approve(
-        setup_client,
+        llm_client,
         csrf,
         application_id,
         version["document_version_id"],
@@ -457,11 +483,11 @@ def test_approved_version_rejects_other_decisions(setup_client, csrf, monkeypatc
     assert response.json()["error"]["details"][0]["code"] == "version_already_approved"
 
 
-def test_approval_rechecks_eligibility(setup_client, csrf, monkeypatch, connection) -> None:
-    application_id, job = _application(setup_client, csrf, monkeypatch)
-    version = _generate(setup_client, csrf, application_id, kinds=("cv",))[0]
-    _review(setup_client, csrf, application_id, version["document_version_id"])
-    workspace = setup_client.get(f"/api/applications/{application_id}").json()
+def test_approval_rechecks_eligibility(llm_client, csrf, monkeypatch, connection) -> None:
+    application_id, job = _application(llm_client, csrf, monkeypatch)
+    version = _generate(llm_client, csrf, application_id, kinds=("cv",))[0]
+    _review(llm_client, csrf, application_id, version["document_version_id"])
+    workspace = llm_client.get(f"/api/applications/{application_id}").json()
 
     connection.execute(
         "UPDATE eligibility_assessment SET status = 'needs_review' "
@@ -469,30 +495,30 @@ def test_approval_rechecks_eligibility(setup_client, csrf, monkeypatch, connecti
         (job["job_id"], workspace["profile_version_id"]),
     )
     response = _approve(
-        setup_client, csrf, application_id, version["document_version_id"], version["content_hash"]
+        llm_client, csrf, application_id, version["document_version_id"], version["content_hash"]
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "eligibility_needs_review"
 
 
-def test_regenerate_creates_new_version(setup_client, csrf, monkeypatch) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    version = _generate(setup_client, csrf, application_id, kinds=("cover_letter",))[0]
-    response = setup_client.post(
+def test_regenerate_creates_new_version(llm_client, csrf, monkeypatch) -> None:
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    version = _generate(llm_client, csrf, application_id, kinds=("cover_letter",))[0]
+    response = llm_client.post(
         f"/api/applications/{application_id}/documents/{version['document_version_id']}/regenerate",
         headers=csrf,
         json={"base_content_hash": version["content_hash"], "reason": "user_requested"},
     )
     assert response.status_code == 202, response.json()
-    items = setup_client.get(f"/api/applications/{application_id}/documents").json()["items"]
+    items = llm_client.get(f"/api/applications/{application_id}/documents").json()["items"]
     by_version = {item["version"]: item for item in items}
     assert set(by_version) == {1, 2}
     assert by_version[2]["content_hash"] == version["content_hash"]
 
 
-def test_document_routes_require_csrf(setup_client, csrf, monkeypatch) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    response = setup_client.post(
+def test_document_routes_require_csrf(llm_client, csrf, monkeypatch) -> None:
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    response = llm_client.post(
         f"/api/applications/{application_id}/documents",
         json={"kinds": ["cv"], "language": "en"},
     )
@@ -501,31 +527,31 @@ def test_document_routes_require_csrf(setup_client, csrf, monkeypatch) -> None:
 
 
 def test_document_list_paginates_and_missing_ids_are_404(
-    setup_client, csrf, monkeypatch
+    llm_client, csrf, monkeypatch
 ) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    _generate(setup_client, csrf, application_id)
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    _generate(llm_client, csrf, application_id)
 
-    first = setup_client.get(f"/api/applications/{application_id}/documents?limit=1").json()
+    first = llm_client.get(f"/api/applications/{application_id}/documents?limit=1").json()
     assert len(first["items"]) == 1
     assert first["page"]["has_more"] is True
     cursor = first["page"]["next_cursor"]
-    second = setup_client.get(
+    second = llm_client.get(
         f"/api/applications/{application_id}/documents?limit=1&cursor={cursor}"
     ).json()
     assert len(second["items"]) == 1
     assert second["items"][0]["document_version_id"] != first["items"][0]["document_version_id"]
 
-    missing = setup_client.get(f"/api/applications/{application_id}/documents/docv_missing")
+    missing = llm_client.get(f"/api/applications/{application_id}/documents/docv_missing")
     assert missing.status_code == 404
     assert missing.json()["error"]["code"] == "not_found"
 
 
-def test_revision_rejects_unknown_path(setup_client, csrf, monkeypatch) -> None:
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
-    version = _generate(setup_client, csrf, application_id, kinds=("cv",))[0]
+def test_revision_rejects_unknown_path(llm_client, csrf, monkeypatch) -> None:
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
+    version = _generate(llm_client, csrf, application_id, kinds=("cv",))[0]
     for path in ("header.unknown", "kind", "schema_version", "target"):
-        response = setup_client.post(
+        response = llm_client.post(
             f"/api/applications/{application_id}/documents/{version['document_version_id']}/revisions",
             headers=csrf,
             json={
@@ -536,7 +562,7 @@ def test_revision_rejects_unknown_path(setup_client, csrf, monkeypatch) -> None:
         assert response.status_code == 400, path
         assert response.json()["error"]["code"] == "validation_failed"
 
-    wrong_type = setup_client.post(
+    wrong_type = llm_client.post(
         f"/api/applications/{application_id}/documents/{version['document_version_id']}/revisions",
         headers=csrf,
         json={
@@ -546,7 +572,7 @@ def test_revision_rejects_unknown_path(setup_client, csrf, monkeypatch) -> None:
     )
     assert wrong_type.status_code == 400
 
-    evidence_edit = setup_client.post(
+    evidence_edit = llm_client.post(
         f"/api/applications/{application_id}/documents/{version['document_version_id']}/revisions",
         headers=csrf,
         json={
@@ -558,10 +584,10 @@ def test_revision_rejects_unknown_path(setup_client, csrf, monkeypatch) -> None:
 
 
 def test_analysis_task_does_not_block_document_generation(
-    setup_client, csrf, monkeypatch, connection
+    llm_client, csrf, monkeypatch, connection
 ) -> None:
     """An unrelated analysis task must not lock the document workflow."""
-    application_id, _ = _application(setup_client, csrf, monkeypatch)
+    application_id, _ = _application(llm_client, csrf, monkeypatch)
     with connection:
         connection.execute(
             "INSERT INTO task (task_id, type, status, application_id, progress_json, "
@@ -570,5 +596,5 @@ def test_analysis_task_does_not_block_document_generation(
             "?, '{}', NULL, NULL, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL, 1, NULL)",
             (application_id,),
         )
-    documents = _generate(setup_client, csrf, application_id, kinds=("cv",))
+    documents = _generate(llm_client, csrf, application_id, kinds=("cv",))
     assert len(documents) == 1

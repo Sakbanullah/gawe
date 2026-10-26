@@ -60,6 +60,7 @@ def write(
     language: str,
     revision_instructions: str = "",
     cv_content: dict | None = None,
+    plan: dict | None = None,
 ) -> tuple[dict | None, dict]:
     """Return (content, metadata).
 
@@ -243,6 +244,7 @@ def _user_message(
     language: str,
     revision_instructions: str,
     cv_content: dict | None = None,
+    plan: dict | None = None,
 ) -> str:
     payload = {
         "job_requirements_json": json.dumps(
@@ -268,6 +270,7 @@ def _user_message(
             },
             ensure_ascii=False,
         ),
+        "plan_json": json.dumps(plan or {}, ensure_ascii=False),
         "language_instruction": (
             f"Write the document in {language}. The profile and evidence quotes are "
             f"in the candidate's source language: translate every fact you use into "
@@ -296,6 +299,10 @@ _USER_TEMPLATE = """<untrusted>
 
 <untrusted>
 {{cv_content_json}}
+</untrusted>
+
+<untrusted>
+{{plan_json}}
 </untrusted>
 
 {{language_instruction}}

@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ...documents import render
+from ...documents.plan import DocumentPlanService, PlanError
 from ...services.document_service import DocumentError, DocumentService
 from ..deps import llm_client, profile_store
 from ..errors import ApiError
@@ -107,6 +108,90 @@ def _task_payload(task: dict, task_type: str, application_id: str) -> dict:
         "run_id": None,
         "extraction_run_id": None,
     }
+
+
+class PlanApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Literal["approved", "rejected"]
+    content_hash: str = Field(min_length=1, max_length=128)
+    note: str | None = Field(default=None, max_length=2000)
+
+    @model_validator(mode="after")
+    def rejection_needs_note(self) -> "PlanApprovalRequest":
+        if self.decision == "rejected" and not (self.note or "").strip():
+            raise ValueError("Catatan wajib diisi saat rencana ditolak.")
+        return self
+
+
+class DocumentPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: Literal["en", "id"] | None = None
+
+
+def _plan_service(request: Request) -> DocumentPlanService:
+    return DocumentPlanService(request.state.db, profile_store(request))
+
+
+def _raise_plan(exc: PlanError) -> None:
+    raise ApiError(exc.status_code, exc.code, exc.message, stage="draft") from exc
+
+
+@router.post("/{application_id}/document-plan", status_code=201)
+def create_document_plan(
+    request: Request, application_id: str, body: DocumentPlanRequest, response: Response
+) -> dict:
+    """Compose the adjustment plan. Deterministic: no task, no model, no consent."""
+    service = _service(request)
+    try:
+        record = service.application_for_plan(application_id)
+    except DocumentError as exc:
+        _raise(exc, "eligibility")
+    plan = _plan_service(request).create(
+        application_id,
+        record["job"],
+        record["fit"],
+        record["requirements"],
+        body.language,
+    )
+    if plan.pop("replayed", False):
+        # Same plan, same answer: a repeated request must not look like a new one.
+        response.status_code = 200
+        response.headers["Idempotency-Replayed"] = "true"
+    return plan
+
+
+@router.get("/{application_id}/document-plan")
+def get_document_plan(request: Request, application_id: str) -> dict:
+    plan = _plan_service(request).latest(application_id)
+    if plan is None:
+        raise ApiError(404, "not_found", "Belum ada rencana penyesuaian.", stage="draft")
+    return plan
+
+
+@router.post("/{application_id}/document-plan/{plan_id}/approval")
+def approve_document_plan(
+    request: Request,
+    application_id: str,
+    plan_id: str,
+    body: PlanApprovalRequest,
+    response: Response,
+) -> dict:
+    """Approve or reject a plan. This never approves a document version."""
+    try:
+        plan = _plan_service(request).approve(
+            application_id,
+            plan_id,
+            body.decision,
+            body.content_hash,
+            body.note,
+        )
+    except PlanError as exc:
+        _raise_plan(exc)
+    if plan.pop("replayed", False):
+        response.headers["Idempotency-Replayed"] = "true"
+    return plan
 
 
 @router.get("/{application_id}/documents")

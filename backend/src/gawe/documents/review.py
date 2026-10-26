@@ -19,7 +19,10 @@ from .draft import required_missing
 
 
 def review(
-    content: dict, evidence_index: dict, profile_content: dict | None = None
+    content: dict,
+    evidence_index: dict,
+    profile_content: dict | None = None,
+    plan: dict | None = None,
 ) -> dict:
     findings: list[dict] = []
 
@@ -85,6 +88,9 @@ def review(
                 )
             )
 
+    if plan:
+        findings.extend(_plan_findings(content, plan, start=len(findings) + 1))
+
     for item in findings:
         item["location"]["doc"] = content.get("kind") or "cv"
 
@@ -92,6 +98,68 @@ def review(
     if any(item["severity"] in {"blocker", "major"} for item in findings):
         verdict = "changes_required"
     return {"verdict": verdict, "findings": findings}
+
+
+def _plan_findings(content: dict, plan: dict, *, start: int) -> list[dict]:
+    """The approved plan is a promise: the document must keep it.
+
+    A gap the plan left open may not appear as a claim, and an item the plan
+    dropped may not appear at all. Both are major: the document no longer matches
+    what the user approved.
+    """
+    findings: list[dict] = []
+    dropped = {
+        (item["section"], item["item_id"])
+        for item in plan.get("sections") or []
+        if item["decision"] == "drop" and item.get("item_id")
+    }
+    for section in ("experience", "skills", "projects"):
+        for item in content.get(section) or []:
+            if (section, item.get("id")) in dropped:
+                findings.append(
+                    _finding(
+                        start + len(findings),
+                        "major",
+                        "consistency",
+                        quote=str(item.get("title") or item.get("name") or item.get("id") or ""),
+                        problem="Item ini dihapus di rencana penyesuaian yang disetujui.",
+                        fix="Hapus item, atau susun dan setujui rencana baru.",
+                        section=section,
+                        bullet_id=item.get("id"),
+                    )
+                )
+
+    text = factcheck.to_text(content).lower()
+    for gap in plan.get("gaps") or []:
+        terms = _claim_terms(str(gap.get("description") or ""))
+        if not terms:
+            continue
+        hit = sorted(term for term in terms if term in text)
+        if len(hit) < 2:
+            continue
+        findings.append(
+            _finding(
+                start + len(findings),
+                "major",
+                "factuality",
+                quote=", ".join(hit[:5]),
+                problem="Gap yang dibiarkan terbuka di rencana muncul sebagai klaim.",
+                fix="Hapus klaim itu, atau tambahkan bukti profil lalu susun rencana baru.",
+            )
+        )
+    return findings
+
+
+def _claim_terms(text: str) -> set[str]:
+    import re
+
+    return {
+        token
+        for token in re.findall(r"[a-z0-9+#.]+", text.lower())
+        if len(token) > 3
+        and token
+        not in {"yang", "dengan", "untuk", "dari", "tidak", "wajib", "harus", "minimal"}
+    }
 
 
 def summary(findings: list[dict]) -> dict:

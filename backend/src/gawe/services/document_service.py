@@ -1,11 +1,12 @@
 """Document versions: generation, revisions, review, approval, and the rewrite loop.
 
 A document is generated, reviewed, and rewritten until it passes or the iteration
-budget runs out. The deterministic draft is always the fallback, so a provider
-outage produces a usable draft instead of nothing.
+budget runs out. Only the model writes: a writer failure fails the task with the
+provider's error code, and no template document is substituted.
 
-Approval is bound to a version id plus its content hash; a new version never
-inherits an approval.
+Generation requires an approved adjustment plan for the same posting version and
+profile version (AGENTS.md §4A.5). Approval is bound to a version id plus its
+content hash; a new version never inherits an approval.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import logging
 from pathlib import Path
 
 from ..db.repo import Connection
-from ..documents import ai_draft, ai_review, draft, review as review_rules
+from ..documents import ai_draft, ai_review, draft, plan as plan_rules, review as review_rules
 from ..llm.client import LLMClient
 from ..llm.prompts import prompt_path
 from ..master_cv import new_id, now_iso
@@ -37,6 +38,32 @@ DEFAULT_SCORE_THRESHOLD = 8.0
 MIN_SCORE_IMPROVEMENT = 0.5
 
 logger = logging.getLogger(__name__)
+
+
+# The writer is the only author now, so its failures surface to the user with a
+# message that says what to fix. Every code comes from the LLM client or the
+# prompt loader.
+_WRITER_MESSAGES = {
+    "consent_required": (
+        "Consent cloud belum diberikan. Setujui consent di Settings sebelum "
+        "dokumen ditulis model."
+    ),
+    "provider_not_configured": (
+        "Provider LLM untuk role `write` belum dikonfigurasi. Atur provider di Settings."
+    ),
+    "provider_unavailable": "Provider LLM tidak merespons. Periksa koneksi, lalu coba lagi.",
+    "provider_timeout": "Provider LLM melewati batas waktu. Coba lagi.",
+    "provider_rate_limited": "Provider LLM membatasi permintaan. Tunggu lalu coba lagi.",
+    "provider_auth_failed": "Kunci API provider ditolak. Perbarui kunci di Settings.",
+    "output_invalid_json": "Model mengirim JSON yang tidak valid. Coba lagi.",
+    "output_validation_failed": "Keluaran model tidak sesuai skema CV. Coba lagi.",
+    "prompt_not_configured": "Prompt writer tidak ditemukan di deployment ini.",
+    "rules_not_configured": "File aturan penulisan (docs/phase-00/prompts/rules) tidak ditemukan.",
+}
+
+
+def _writer_message(code: str) -> str:
+    return _WRITER_MESSAGES.get(code, f"Writer LLM gagal ({code}). Coba lagi.")
 
 
 class DocumentError(Exception):
@@ -69,6 +96,7 @@ class DocumentService:
         self._profiles = profile_store
         self._assessments = AssessmentService(connection, profile_store)
         self._tasks = TaskStore(connection)
+        self._plans = plan_rules.DocumentPlanService(connection, profile_store)
         self._client = llm_client
         self._root_dir = root_dir
         self._threshold = score_threshold
@@ -106,6 +134,15 @@ class DocumentService:
         self._require_no_active_task(application_id)
         profile = self._profile(record)
         job = self._job_context(record)
+        # AGENTS.md §4A.5: nothing is written until the user approved the plan for
+        # this posting version and profile version.
+        plan = self._plans.approved_for(application_id, job["job_posting_version_id"])
+        if plan is None:
+            raise DocumentError(
+                "plan_not_approved",
+                "Rencana penyesuaian belum disetujui untuk lowongan ini.",
+                409,
+            )
 
         task = self._tasks.create(
             "document_generation", GENERATION_STAGES + REVIEW_STAGES, application_id
@@ -124,6 +161,7 @@ class DocumentService:
                     language=language,
                     template_version=template_version,
                     parent=None,
+                    plan=plan,
                 )
                 created.append(summary["document_version_id"])
                 results.append(
@@ -206,6 +244,7 @@ class DocumentService:
             )
         profile = self._profile(record)
         job = self._job_context(record)
+        plan = self._plans.approved_for(application_id, job["job_posting_version_id"])
 
         task = self._tasks.create(
             "document_generation", GENERATION_STAGES + REVIEW_STAGES, application_id
@@ -222,6 +261,7 @@ class DocumentService:
                 template_version=parent["template_version"],
                 parent=parent,
                 revision_instructions=_revision_instructions(parent, only_ids=selected),
+                plan=plan,
             )
         except DocumentError as exc:
             self._tasks.fail(task_id, exc.code, exc.message, "draft")
@@ -262,6 +302,7 @@ class DocumentService:
         parent: dict | None,
         revision_instructions: str = "",
         cv_content: dict | None = None,
+        plan: dict | None = None,
     ) -> tuple[dict, dict]:
         """Generate, review, and rewrite until the gates hold or the budget ends.
 
@@ -273,6 +314,9 @@ class DocumentService:
         summary: dict | None = None
         report: dict | None = None
         previous = parent
+        # The approved plan, not the whole record: the writer and the self-check
+        # only need the decisions.
+        plan_body = (plan or {}).get("plan")
         if kind == "cover_letter" and cv_content is None:
             # `write_cover_letter.md` calls `cv_content_json` the CV of the same
             # version. Without it the writer cannot avoid repeating CV bullets,
@@ -287,7 +331,7 @@ class DocumentService:
             self._tasks.finish_stage(task_id, "select_evidence")
             self._tasks.start_stage(task_id, "draft")
             content, metadata = self._draft(
-                kind, profile, job, language, revision_instructions, cv_content
+                kind, profile, job, language, revision_instructions, cv_content, plan_body
             )
             self._tasks.finish_stage(task_id, "draft")
             self._tasks.start_stage(task_id, "diff")
@@ -306,18 +350,20 @@ class DocumentService:
                 template_version=template_version,
                 job_posting_version_id=self._job_posting_version_id(record),
                 metadata=metadata,
+                plan_id=(plan or {}).get("plan_id"),
             )
             self._tasks.finish_stage(task_id, "diff")
 
             if not self._reviewer_ready:
-                # No reviewer configured: leave the version unreviewed so the
-                # explicit review endpoint still owns that decision.
+                # The version is already stored; failing here would hide a real
+                # document, so it stays unreviewed and the review endpoint
+                # reports the missing reviewer.
                 report = {
                     "iteration": iteration,
                     "overall_score": None,
                     "dimension_scores": None,
                     "passed": None,
-                    "stop_reason": "review_skipped",
+                    "stop_reason": "review_unavailable",
                 }
                 self._store_loop_state(summary["document_version_id"], report)
                 return summary, report
@@ -329,6 +375,7 @@ class DocumentService:
                 job,
                 iteration,
                 gaps=metadata.get("gaps") or [],
+                plan=plan_body,
             )
 
             score = report["overall_score"]
@@ -360,10 +407,25 @@ class DocumentService:
         language: str,
         revision_instructions: str,
         cv_content: dict | None = None,
+        plan: dict | None = None,
     ) -> tuple[dict, dict]:
+        """Write one document with the model, or fail the task.
+
+        There is no template writer: a CV or cover letter the model did not write
+        is a bug, not a degraded result. The task fails with the reason so the UI
+        can offer a retry instead of showing a document nobody authored.
+
+        ``plan`` is the approved adjustment plan. It travels with the prompt so the
+        writer drops, keeps, or summarizes what the user agreed to, and never
+        stretches an open gap into a claim.
+        """
         if not self._writer_ready(kind):
-            return draft.build(kind, profile["content"], job, language), {"source": "deterministic"}
-        return ai_draft.write(
+            raise DocumentError(
+                "writer_unavailable",
+                "Writer LLM belum siap (client atau prompt tidak tersedia).",
+                422,
+            )
+        content, metadata = ai_draft.write(
             self._client,
             self._root_dir,
             kind,
@@ -373,7 +435,12 @@ class DocumentService:
             language,
             revision_instructions,
             cv_content,
+            plan,
         )
+        if content is None:
+            code = str(metadata.get("fallback_code") or "writer_unavailable")
+            raise DocumentError(code, _writer_message(code), 422)
+        return content, metadata
 
     # -- revisions -------------------------------------------------------
     def revise(
@@ -409,6 +476,7 @@ class DocumentService:
             parent_document_version_id=document_version_id,
             template_version=parent["template_version"],
             job_posting_version_id=parent["job_posting_version_id"],
+            plan_id=parent.get("plan_id"),
         )
         self._touch_application(application_id)
         return created
@@ -488,32 +556,25 @@ class DocumentService:
         iteration: int,
         review_run_id: str | None = None,
         gaps: list[dict] | None = None,
+        plan: dict | None = None,
     ) -> dict:
         """Review one version, persist the report, and return it with `passed`."""
         version = self._version(record["application_id"], document_version_id)
-        if self._reviewer_ready:
-            report, metadata = ai_review.review(
-                self._client,
-                self._root_dir,
-                version["content"],
-                profile.get("evidence_index") or {},
-                profile.get("content") or {},
-                job,
+        if not self._reviewer_ready:
+            raise DocumentError(
+                "reviewer_unavailable",
+                "Reviewer LLM belum siap (client atau prompt tidak tersedia).",
+                422,
             )
-        else:
-            deterministic = review_rules.review(
-                version["content"],
-                profile.get("evidence_index") or {},
-                profile.get("content") or {},
-            )
-            report = {
-                "verdict": deterministic["verdict"],
-                "overall_score": None,
-                "dimension_scores": None,
-                "findings": deterministic["findings"],
-                "source": "deterministic",
-            }
-            metadata = {"source": "deterministic"}
+        report, metadata = ai_review.review(
+            self._client,
+            self._root_dir,
+            version["content"],
+            profile.get("evidence_index") or {},
+            profile.get("content") or {},
+            job,
+            plan=plan,
+        )
 
         report["passed"] = ai_review.passed(report, self._threshold)
         report["iteration"] = iteration
@@ -797,6 +858,24 @@ class DocumentService:
         job["requirements"] = detail["job_detail"]["requirements"]
         return job
 
+    def application_for_plan(self, application_id: str) -> dict:
+        """Job, fit, and requirements the plan is composed from.
+
+        Same eligibility gate as generation: a plan for a job the rules did not
+        clear would let the user approve a plan that can never be written.
+        """
+        record = self._application(application_id)
+        self._require_eligible(record)
+        profile = self._profile(record)
+        job = self._job_context(record)
+        fit = self._assessments.fit_for(job["job_id"], profile["profile_version_id"])
+        return {
+            "application_id": application_id,
+            "job": job,
+            "fit": fit,
+            "requirements": job.get("requirements") or [],
+        }
+
     def _require_eligible(self, record: dict) -> dict:
         eligibility = self._assessments.eligibility_for(
             record["job_id"], record["profile_version_id"]
@@ -884,6 +963,7 @@ class DocumentService:
         template_version: str | None,
         job_posting_version_id: str,
         metadata: dict | None = None,
+        plan_id: str | None = None,
     ) -> dict:
         version = self._next_version(record["application_id"], kind)
         document_version_id = new_id("docv")
@@ -896,10 +976,10 @@ class DocumentService:
                 "INSERT INTO document_version (document_version_id, application_id, "
                 "profile_version_id, job_posting_version_id, kind, version, "
                 "parent_document_version_id, status, content_json, content_hash, diff_json, "
-                "evidence_json, prompt_version, template_version, provider, model, "
+                "evidence_json, prompt_version, template_version, plan_id, provider, model, "
                 "review_status, review_verdict, review_cycle, findings_json, reviewed_at, "
                 "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, "
-                "?, ?, ?, ?, 'not_started', NULL, NULL, NULL, NULL, ?, ?)",
+                "?, ?, ?, ?, ?, 'not_started', NULL, NULL, NULL, NULL, ?, ?)",
                 (
                     document_version_id,
                     record["application_id"],
@@ -914,6 +994,7 @@ class DocumentService:
                     json.dumps(evidence_ids, ensure_ascii=False),
                     metadata.get("prompt_version"),
                     template_version,
+                    plan_id,
                     metadata.get("provider"),
                     metadata.get("model"),
                     timestamp,
@@ -1035,9 +1116,12 @@ def _selectable_findings(parent: dict) -> set[str]:
 def _revision_instructions(report: dict, only_ids: set[str] | None = None) -> str:
     """Turn open findings into instructions for the next write call.
 
-    Only findings the writer can act on are passed: the writer cannot add facts,
-    so a factuality blocker becomes a request to remove or soften the claim.
-    `only_ids` restricts the list to the findings the user checked.
+    Only findings the writer can act on are passed. A factuality finding must not
+    become "delete the claim": the writer cannot add facts, so deleting is what
+    made each revision thinner until the CV lost the bullet entirely. The
+    instruction asks for a reorder or a swap to a bullet the profile already
+    proves, and never for a removal. `only_ids` restricts the list to the
+    findings the user checked.
 
     `report` is either a review report or a stored document version. The version
     keeps its review under `findings.findings`, a report keeps it at `findings`;
@@ -1073,6 +1157,13 @@ def _revision_instructions(report: dict, only_ids: set[str] | None = None) -> st
         line += f" — {problem}"
         if fix:
             line += f" Perbaikan: {fix}"
+        if finding.get("category") == "factuality":
+            # The writer cannot add a fact, so a removal request only shrinks the
+            # CV. Ask for a reorder or a swap to a bullet the profile proves.
+            line += (
+                " Jangan hapus poin atau fakta: urutkan ulang, atau ganti dengan poin"
+                " dari profil yang punya bukti."
+            )
         lines.append(line)
     return "\n".join(lines[:40])
 
