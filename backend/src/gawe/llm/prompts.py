@@ -105,6 +105,33 @@ def validate_prompts(root_dir: Path, prompt_ids: list[str]) -> None:
 
 ROLE_PROMPTS = ["extract_profile", "write_cv", "write_cover_letter", "review"]
 
+# Writer rules live outside the prompt files so the author can rewrite the CV and
+# cover-letter templates without touching the JSON contract or the placeholder
+# list. Maps prompt_id -> rule file in `docs/phase-00/prompts/rules/`.
+RULE_FILES = {
+    "write_cv": "CV_MASTER_TEMPLATE.md",
+    "write_cover_letter": "COVER_LETTER_MASTER_TEMPLATE.md",
+}
+RULES_DIR = PROMPTS_DIR / "rules"
+
+
+def load_rules(root_dir: Path, prompt_id: str) -> str:
+    """Return the rule text a writer prompt must obey, or raise.
+
+    The rule file is mandatory: a deployment without it would silently write
+    documents with no authoring rules, which is exactly the state this replaced.
+    """
+    name = RULE_FILES.get(prompt_id)
+    if name is None:
+        raise PromptNotFound(f"{prompt_id} declares no rule file")
+    path = Path(root_dir) / RULES_DIR / name
+    if not path.is_file():
+        raise PromptNotFound(f"rule file not found: {path}")
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        raise PromptNotFound(f"rule file is empty: {path}")
+    return text
+
 
 def validate_role_prompts(config) -> None:
     """Skip the check for the fake provider: it never reads prompt files."""
