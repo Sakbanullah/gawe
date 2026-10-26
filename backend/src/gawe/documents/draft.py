@@ -348,6 +348,7 @@ def _header(profile_content: dict) -> dict:
 
 def _experience(profile_content: dict, job: dict) -> list[dict]:
     keywords = _job_keywords(job)
+    wanted = _wanted_skills(job, list(profile_content.get("skills") or []))
     roles = []
     for role in profile_content.get("experience") or []:
         bullets = []
@@ -371,12 +372,15 @@ def _experience(profile_content: dict, job: dict) -> list[dict]:
                 "bullets": _select_bullets(bullets, keywords),
             }
         )
-    roles.sort(key=lambda role: -_relevance(_role_text(role), keywords))
+    roles.sort(
+        key=lambda role: (-_skill_rank(_role_text(role), wanted), -_relevance(_role_text(role), keywords))
+    )
     return roles
 
 
 def _skills(profile_content: dict, job: dict) -> list[dict]:
     keywords = _job_keywords(job)
+    wanted = _wanted_skills(job, list(profile_content.get("skills") or []))
     skills = [
         {
             "id": skill.get("id"),
@@ -386,7 +390,12 @@ def _skills(profile_content: dict, job: dict) -> list[dict]:
         }
         for skill in profile_content.get("skills") or []
     ]
-    skills.sort(key=lambda skill: -_relevance(skill.get("name") or "", keywords))
+    skills.sort(
+        key=lambda skill: (
+            -_skill_rank(skill.get("name") or "", wanted),
+            -_relevance(skill.get("name") or "", keywords),
+        )
+    )
     return skills
 
 
@@ -585,6 +594,72 @@ def _job_keywords(job: dict) -> set[str]:
         if token not in _STOPWORDS
     }
 
+
+def _wanted_skills(job: dict, skills: list[dict]) -> list[list[str]]:
+    """Words of the profile skills this job asks for, most relevant first.
+
+    A job requiring "database" must lift the bullets that mention SQL or
+    PostgreSQL, but the job text rarely repeats the candidate's own wording.
+    Matching the two sides by word cannot bridge that gap; an explicit bridge
+    map does, and stays deterministic.
+    """
+    wanted_text = " ".join(
+        str(part or "")
+        for part in (
+            job.get("title"),
+            job.get("description_text"),
+            *[item.get("text") for item in job.get("requirements") or []],
+        )
+    ).lower()
+    keys: list[list[str]] = []
+    for skill in skills:
+        words = _name_words(skill.get("name") or "")
+        if not words:
+            continue
+        family: set[str] = set()
+        for word in words:
+            family |= _skill_family(word)
+        if any(_mentions(wanted_text, word) for word in family):
+            keys.append(words)
+    return keys
+
+
+# Words a posting uses for the same skill the candidate named. Kept small on
+# purpose: a wrong pair only reorders a CV, an invented one would put an
+# unrelated role on top.
+_SKILL_FAMILY = {
+    "database": {"sql", "mysql", "postgresql", "postgres", "oracle", "mongo", "mongodb", "nosql", "db"},
+    "sql": {"database", "mysql", "postgresql", "postgres"},
+    "cloud": {"aws", "azure", "gcp", "kubernetes", "docker"},
+    "frontend": {"react", "vue", "angular", "javascript", "typescript", "css", "html"},
+    "backend": {"api", "python", "java", "node", "golang", "microservice"},
+}
+
+
+def _skill_family(word: str) -> set[str]:
+    """A skill plus the words a job uses for the same thing."""
+    return {word} | set(_SKILL_FAMILY.get(word, ()))
+
+
+def _mentions(text: str, word: str) -> bool:
+    return re.search(rf"(?<![a-z0-9]){re.escape(word)}(?![a-z0-9])", text) is not None
+
+
+def _name_words(name: str) -> list[str]:
+    return [word for word in _TOKEN_RE.findall(name.lower()) if word not in _STOPWORDS]
+
+
+def _skill_rank(text: str, wanted: list[list[str]]) -> int:
+    """How many of the wanted skills this text covers by name or family."""
+    lowered = text.lower()
+    hits = 0
+    for words in wanted:
+        family: set[str] = set()
+        for word in words:
+            family |= _skill_family(word)
+        if any(_mentions(lowered, word) for word in family):
+            hits += 1
+    return hits
 
 def _relevance(text: str, keywords: set[str]) -> int:
     tokens = set(_TOKEN_RE.findall(text.lower()))
