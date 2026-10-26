@@ -19,60 +19,12 @@ from gawe.api.app import build_llm_client, create_app
 from gawe.documents import draft
 from gawe.llm.providers.base import Call, Completion
 from gawe.llm.providers.synthetic import SyntheticExtractProvider
+from tests.scripted_provider import BLOCK_RE, ScriptedProvider, _pass_report
+from tests.document_plan_helper import plan_and_approve
 from tests.test_documents import _application, _detail
 from tests.conftest import SETUP_CONFIG
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BLOCK_RE = re.compile(r"<untrusted>\s*(.*?)\s*</untrusted>", re.DOTALL)
-
-
-class ScriptedProvider:
-    """Answers `write` with a real draft, `review` with a queued report.
-
-    `extract` is delegated to the synthetic provider so the setup path still
-    produces a confirmed profile without a network call.
-    """
-
-    provider_id = "fake"
-
-    def __init__(self, reviews: list[dict], mutate=None) -> None:
-        self.reviews = list(reviews)
-        self.mutate = mutate
-        self.calls: list[Call] = []
-        self._extract = SyntheticExtractProvider()
-
-    def complete(self, call: Call) -> Completion:
-        self.calls.append(call)
-        if call.role == "extract":
-            return self._extract.complete(call)
-        blocks = BLOCK_RE.findall(call.messages[-1].get("content", ""))
-        if call.role == "review":
-            report = self.reviews.pop(0) if self.reviews else _pass_report()
-            return Completion(text=json.dumps(report), input_tokens=10, output_tokens=10)
-        job_payload = json.loads(blocks[0])
-        profile = json.loads(blocks[1])
-        kind = "cover_letter" if "kind\": \"cover_letter" in json.dumps(blocks[3]) else "cv"
-        content = draft.build(kind, profile, job_payload, "en")
-        # `missing` is service-computed and not part of the model's schema.
-        content.pop("missing", None)
-        if self.mutate is not None:
-            self.mutate(content)
-        return Completion(text=json.dumps(content), input_tokens=10, output_tokens=10)
-
-
-def _pass_report(score: float = 8.4) -> dict:
-    return {
-        "verdict": "pass",
-        "overall_score": score,
-        "dimension_scores": {
-            "clarity": score,
-            "relevance": score,
-            "credibility": score,
-            "differentiation": score,
-            "professional_quality": score,
-        },
-        "findings": [],
-    }
 
 
 def _report(score: float, findings: list[dict] | None = None, verdict="changes_required") -> dict:
@@ -273,7 +225,7 @@ def test_writer_metadata_records_provider_and_prompt_version(
         result = _generate(client, csrf, application_id)
         detail = _detail(client, application_id, result["document_version_ids"][0])
         assert detail["provider"] == "fake"
-        assert detail["prompt_version"] == "0.2.0"
+        assert detail["prompt_version"] == "0.4.0"
         assert detail["findings"]["overall_score"] == 8.4
 
 
@@ -295,7 +247,7 @@ def test_stored_report_matches_findings_schema(
             jsonschema.validate(detail["findings"], schema)
 
 
-def test_invalid_write_output_falls_back_to_deterministic_draft(
+def test_invalid_write_output_fails_the_task_instead_of_using_a_template(
     setup_config, _clean_database, ai_root, monkeypatch
 ) -> None:
     provider = ScriptedProvider([_pass_report()])
@@ -303,25 +255,30 @@ def test_invalid_write_output_falls_back_to_deterministic_draft(
     with _client(setup_config, provider, ai_root) as client:
         csrf = {"X-CSRF-Token": client.get("/api/session").json()["csrf_token"]}
         application_id, _ = _application(client, csrf, monkeypatch)
-        result = _generate(client, csrf, application_id)
-        detail = _detail(client, application_id, result["document_version_ids"][0])
-        assert detail["content"]["kind"] == "cv"
-        assert detail["content"]["header"]["full_name"]
-        # The write call happened, its reply was rejected, and the fallback is
-        # recorded as unattributed rather than credited to the model.
-        assert detail["provider"] is None
-        assert detail["prompt_version"] is None
+        response = client.post(
+            f"/api/applications/{application_id}/documents",
+            headers=csrf,
+            json={"kinds": ["cv", "cover_letter"], "language": "en"},
+        )
+        assert response.status_code == 422, response.json()
+        # No document is stored: a CV the model did not write must never exist.
+        assert response.json()["error"]["code"]
+        listing = client.get(f"/api/applications/{application_id}/documents").json()
+        assert listing["items"] == []
 
 
-def test_missing_prompts_leave_the_version_unreviewed(
+def test_missing_prompts_fail_generation(
     setup_config, _clean_database, monkeypatch
 ) -> None:
     provider = ScriptedProvider([_pass_report()])
     with _client(setup_config, provider, Path("does-not-exist")) as client:
         csrf = {"X-CSRF-Token": client.get("/api/session").json()["csrf_token"]}
         application_id, _ = _application(client, csrf, monkeypatch)
-        result = _generate(client, csrf, application_id)
-        document = result["documents"][0]
-        assert document["stop_reason"] == "review_skipped"
-        assert document["passed"] is None
+        response = client.post(
+            f"/api/applications/{application_id}/documents",
+            headers=csrf,
+            json={"kinds": ["cv", "cover_letter"], "language": "en"},
+        )
+        assert response.status_code == 422, response.json()
+        assert response.json()["error"]["code"] == "writer_unavailable"
         assert not [call for call in provider.calls if call.role != "extract"]
