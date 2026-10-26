@@ -172,8 +172,10 @@ class LLMClient:
             json.dumps(messages, sort_keys=True).encode("utf-8")
         ).hexdigest()
         injection = any(
-            pattern.search(message.get("content", ""))
+            pattern.search(content)
             for message in messages
+            for content in [message.get("content")]
+            if isinstance(content, str)
             for pattern in INJECTION_PATTERNS
         )
 
