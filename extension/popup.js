@@ -17,7 +17,17 @@ const CONTENT_SCRIPT = "content/jobstreet.js";
 function describe(result) {
   const lines = [];
   if (result.mode === "detail") {
-    lines.push(result.accepted ? "Deskripsi penuh terkirim." : "Tidak ada yang diperbarui.");
+    if (!result.job_ids || !result.job_ids.length) {
+      lines.push("Deskripsi penuh ditolak.");
+    } else if (result.created) {
+      // No card on record for this URL: the row is new, say so instead of
+      // claiming an update that never happened.
+      lines.push("Deskripsi penuh tersimpan sebagai lowongan baru.");
+    } else if (result.version_added) {
+      lines.push("Deskripsi penuh terkirim, versi posting diperbarui.");
+    } else {
+      lines.push("Deskripsi tidak mengubah versi posting.");
+    }
   } else {
     lines.push(
       `${result.accepted} baru, ${result.duplicates} duplikat, ${result.rejected} ditolak.`,
@@ -51,6 +61,9 @@ async function readPage() {
     target: { tabId: tab.id },
     func: () => window.gaweReadJobstreet(),
   });
+  // A page that is still loading can answer with no value at all; without this
+  // guard the next property read throws and the popup shows nothing at all.
+  if (!result || !result.kind) throw new Error("Halaman belum siap. Muat ulang lalu coba lagi.");
   return result;
 }
 
@@ -105,6 +118,14 @@ $("save").addEventListener("click", async () => {
 });
 
 $("send").addEventListener("click", async () => {
+  try {
+    await send();
+  } catch (error) {
+    $("status").textContent = error.message || "Gagal mengirim.";
+  }
+});
+
+async function send() {
   const page = await readPage();
   let body;
   if (page.kind === "detail") {
@@ -112,7 +133,10 @@ $("send").addEventListener("click", async () => {
       $("status").textContent = "Deskripsi lowongan tidak ditemukan di halaman ini.";
       return;
     }
-    body = { source: "jobstreet", page_url: page.pageUrl, mode: "detail", detail: page.detail };
+    // The detail object carries the cleaned identity URL, not the address bar.
+    const detail =
+      page.detail && page.url ? { ...page.detail, url: page.url } : page.detail;
+    body = { source: "jobstreet", page_url: page.url || page.pageUrl, mode: "detail", detail };
   } else {
     if (!page.jobs.length) {
       $("status").textContent = "Tidak ada lowongan untuk dikirim.";
@@ -122,7 +146,13 @@ $("send").addEventListener("click", async () => {
   }
   $("status").textContent = "Mengirim...";
   const reply = await chrome.runtime.sendMessage({ type: "gawe-import", body });
+  // A worker that dies mid-request replies with nothing; say so rather than
+  // throwing on `reply.ok`.
+  if (!reply) {
+    $("status").textContent = "Tidak ada jawaban dari latar ekstensi. Coba lagi.";
+    return;
+  }
   $("status").textContent = reply.ok ? describe(reply.result) : reply.error;
-});
+}
 
 void init();

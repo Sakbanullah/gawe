@@ -20,8 +20,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from urllib.parse import urlsplit
+import re
+from urllib.parse import urlsplit, urlunsplit
 
+from ..jobs.dedupe import link_duplicate
+from ..jobs.normalize import location_key as _location_key
 from ..jobs.sources.base import InvalidJob, RawJob, normalize
 from ..jobs.sources.registry import SourceRegistry
 from ..master_cv import new_id, now_iso
@@ -91,16 +94,48 @@ def _job_url(card: dict, source: str) -> str:
     return safe_url
 
 
+def _page_url(page_url: str, source: str) -> str:
+    """The page the user is on, checked the same way as a job URL."""
+    return _job_url({"url": page_url}, source)
+
+
+def _raw_location(location_json: str | None) -> str | None:
+    try:
+        return (json.loads(location_json or "{}") or {}).get("raw")
+    except ValueError:
+        return None
+
+
+# Jobstreet puts the posting id in the slug and users reach the same posting
+# with or without query noise (`?type=standard`, `?jobId=`, tracking). Hashing
+# the raw URL made the card and the detail page look like two different jobs, so
+# the posting id is the identity whenever one appears in the path.
+JOBSTREET_ID = re.compile(r"/(?:job|jobs)/([^/?#]*?)-?(\d{6,})(?=/|$)")
+
+
+def _identity_url(safe_url: str) -> str:
+    """Stable key for one posting: jobstreet id when present, else cleaned URL."""
+    parts = urlsplit(safe_url)
+    match = JOBSTREET_ID.search(parts.path)
+    if match:
+        return f"{parts.scheme}://{parts.netloc}/job/{match.group(2)}"
+    # No id in the path: the query is dropped entirely. A search-results page
+    # reaches this branch and should not become an identity.
+    return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/") or "/", "", ""))
+
+
 def _to_raw(card: dict, source: str, description: str, *, full: bool) -> RawJob:
     safe_url = _job_url(card, source)
+    # One posting, one row: the key drops query noise and survives a different
+    # slug for the same jobstreet id.
+    identity = _identity_url(safe_url)
     title = (card.get("title") or "").strip()[:TITLE_MAX]
     if not title:
         raise InvalidJob("missing title")
-    company = (card.get("company") or "").strip()
     return RawJob(
-        source_job_id=f"browser_{_slug(safe_url)}",
+        source_job_id=f"browser_{_slug(identity)}",
         title=title,
-        canonical_url=safe_url,
+        canonical_url=identity,
         # The URL is the job page the user was looking at, so it is a real link
         # and not an invented one. Apply still happens on Jobstreet: Gawe never
         # submits.
@@ -109,11 +144,14 @@ def _to_raw(card: dict, source: str, description: str, *, full: bool) -> RawJob:
         location_raw=(card.get("location") or "").strip() or None,
         posted_at=(card.get("posted_at") or "").strip() or None,
         extra={
-            "company": company,
+            "company": (card.get("company") or "").strip(),
             # A company taken from a slug is a guess; keep it visible as a gap.
-            "company_from_slug": not company,
+            "company_from_slug": not (card.get("company") or "").strip(),
             "posted_at_unknown": not (card.get("posted_at") or "").strip(),
-            "snippet_only": not full or len(description) < MIN_DESCRIPTION_CHARS,
+            # The detail page shows the full text, the card only a snippet. A
+            # detail import must never be marked as snippet-only, or every
+            # later rule trips over a gap that is not there.
+            "snippet_only": not full and len(description) < MIN_DESCRIPTION_CHARS,
         },
     )
 
@@ -162,7 +200,39 @@ class BrowserImportService:
             raise BrowserImportError(
                 "description_too_long", "Deskripsi lowongan melebihi batas ukuran."
             )
-        return self._run(source, page_url, [(detail, description, True)])
+        return self._run(source, page_url, [(detail, description, True)], match_existing=True)
+
+    def _existing_by_title(self, card: dict) -> dict | None:
+        """The stored card for this job, used only when the URL has no posting id.
+
+        jobstreet detail pages can open with a query string instead of the slug,
+        so the identity URL carries no id. Without this the detail import would
+        store a second row for a job the card import already created. The
+        location narrows the match, because two employers post the same title.
+        """
+        title = (card.get("title") or "").strip()
+        if not title:
+            return None
+        rows = self._connection.execute(
+            "SELECT job_id, canonical_url, location_json FROM job WHERE source_id = ? "
+            "AND title = ? AND duplicate_of IS NULL ORDER BY created_at DESC LIMIT 5",
+            (MANUAL_SOURCE_ID, title),
+        ).fetchall()
+        place = _location_key(card.get("location"))
+        for row in rows:
+            if _location_key(_raw_location(row["location_json"])) == place:
+                return dict(row)
+        return None
+
+    def _resolve_identity(self, card: dict, source: str) -> dict:
+        """Reuse the stored URL when the detail page URL has no posting id."""
+        if JOBSTREET_ID.search(urlsplit(_job_url(card, source)).path):
+            return card
+        existing = self._existing_by_title(card)
+        if existing is None:
+            return card
+        # The stored identity URL was validated when it was first imported.
+        return {**card, "url": existing["canonical_url"]}
 
     def _check_page(self, page_url: str, source: str) -> None:
         try:
@@ -172,7 +242,14 @@ class BrowserImportService:
         if not _host_allowed((urlsplit(page).hostname or "").lower(), source):
             raise BrowserImportError("url_host_not_allowed", "page_url bukan host sumber.")
 
-    def _run(self, source: str, page_url: str, entries: list[tuple[dict, str, bool]]) -> dict:
+    def _run(
+        self,
+        source: str,
+        page_url: str,
+        entries: list[tuple[dict, str, bool]],
+        *,
+        match_existing: bool = False,
+    ) -> dict:
         profile = self._profiles.require_confirmed()
         manual_source = SourceRegistry(self._connection).ensure_manual_source()
         fetched_at = now_iso()
@@ -190,24 +267,34 @@ class BrowserImportService:
 
         job_ids: list[str] = []
         duplicates = 0
+        created_any = False
+        version_added = False
         rejected: list[dict] = []
         for index, (card, description, full) in enumerate(entries):
             try:
+                if match_existing:
+                    card = self._resolve_identity(card, source)
                 raw = _to_raw(card, source, description, full=full)
-                record = normalize(
-                    raw,
-                    {**manual_source, "company": raw.extra.get("company") or "Jobstreet"},
-                    fetched_at,
-                )
+                company = raw.extra.get("company") or "Jobstreet"
+                record = normalize(raw, {**manual_source, "company": company}, fetched_at)
             except (InvalidJob, ValueError) as exc:
                 rejected.append({"index": index, "reason": str(exc)})
                 continue
+            except UnsafeUrl as exc:
+                rejected.append({"index": index, "reason": f"url_rejected: {exc}"})
+                continue
             raw_sha = hashlib.sha256(raw.description_html.encode("utf-8")).hexdigest()
-            created, job_id = self._discovery._store_job(  # noqa: SLF001
+            created, job_id, new_version = self._discovery._store_job(  # noqa: SLF001
                 record, raw_sha, fetched_at
             )
-            if not created:
+            if created:
+                created_any = True
+            else:
                 duplicates += 1
+            # Same dedupe every other path runs: without it an import that lands
+            # on a different row for a known URL is invisible in the UI.
+            link_duplicate(self._connection, job_id, record)
+            version_added = version_added or new_version
             job_ids.append(job_id)
 
         counts = {
@@ -255,6 +342,12 @@ class BrowserImportService:
             # The row was refreshed either way; `accepted` only counts a new job
             # or a new posting version, so say which happened.
             "updated": len(job_ids),
+            # True when no row existed for this URL before, so the caller says
+            # "new job" instead of claiming an update.
+            "created": created_any,
+            # True when the description became a new posting version. Importing
+            # the same text twice adds none.
+            "version_added": version_added,
             "eligibility": (
                 self._assessments.eligibility_for(job_id, profile["profile_version_id"])
                 if len(job_ids) == 1

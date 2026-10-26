@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -141,6 +142,18 @@ def create_app(
     app.state.manual_url_fetcher = None
     # One limiter per app: the per-host interval must survive across requests.
     app.state.discovery_limiter = HostRateLimiter()
+
+    # A `chrome-extension://` page is a cross origin for 127.0.0.1, so the browser
+    # sends a preflight and blocks the POST without these headers. Only the
+    # import path needs it: the SPA is same-origin and never asks. The handler
+    # still verifies the token and the extension Origin, so this opens nothing.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^chrome-extension://[a-p]{32}$",
+        allow_methods=["POST"],
+        allow_headers=["Content-Type", "X-Gawe-Token"],
+        max_age=600,
+    )
 
     @app.middleware("http")
     async def db_session(request: Request, call_next):

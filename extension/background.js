@@ -9,6 +9,9 @@
  */
 
 const API = "http://127.0.0.1:8000/api/import/browser";
+// A local backend can still stall on a frontend load. Without a deadline the
+// popup waits forever, because the worker keeps the message channel open.
+const TIMEOUT_MS = 30_000;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || message.type !== "gawe-import") return false;
@@ -18,6 +21,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({ ok: false, error: "Token belum diisi." });
       return;
     }
+    const abort = new AbortController();
+    const timer = setTimeout(() => abort.abort(), TIMEOUT_MS);
     try {
       const response = await fetch(API, {
         method: "POST",
@@ -26,6 +31,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           "X-Gawe-Token": token,
         },
         body: JSON.stringify(message.body),
+        signal: abort.signal,
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -41,8 +47,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     } catch (error) {
       sendResponse({
         ok: false,
-        error: "Gawe tidak dapat dihubungi. Pastikan backend berjalan di 127.0.0.1:8000.",
+        error:
+          error.name === "AbortError"
+            ? "Gawe tidak menjawab dalam 30 detik. Coba lagi."
+            : "Gawe tidak dapat dihubungi. Pastikan backend berjalan di 127.0.0.1:8000.",
       });
+    } finally {
+      clearTimeout(timer);
     }
   })();
   return true; // keep the channel open for the async reply

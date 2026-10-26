@@ -48,6 +48,10 @@ if (!window.gaweReadJobstreet) {
             url.searchParams.delete(key);
           }
         }
+        // Jobstreet serves the same posting under different slugs; the numeric
+        // id in the path is the identity, so keep only that.
+        const id = url.pathname.match(/\/(?:job|jobs)\/(?:[^/]*?-)?(\d{6,})\/?$/);
+        if (id) url.pathname = `/job/${id[1]}`;
         return url.toString();
       } catch {
         return null;
@@ -137,13 +141,24 @@ if (!window.gaweReadJobstreet) {
 
     window.gaweReadJobstreet = () => {
       const kind = pageKind();
+      // `pageUrl` is the report; `url` is the identity. Query noise (search
+      // tracking, `?type=standard`) is dropped so the detail import lands on the
+      // row the card import created instead of a second one.
       const pageUrl = window.location.toString();
       if (kind === "detail") {
-        return { kind, pageUrl, pageTitle: document.title, jobs: [], detail: readDetail() };
+        return {
+          kind,
+          pageUrl,
+          url: absolute(pageUrl),
+          pageTitle: document.title,
+          jobs: [],
+          detail: readDetail(),
+        };
       }
       return {
         kind,
         pageUrl,
+        url: absolute(pageUrl),
         pageTitle: document.title,
         jobs: kind === "search" ? readCards() : [],
         detail: null,

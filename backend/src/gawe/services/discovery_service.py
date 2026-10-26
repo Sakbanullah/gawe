@@ -382,7 +382,7 @@ class DiscoveryService:
                 fetched_at,
             )
             self._store_fetch(run_id, MANUAL_SOURCE_ID, response, raw, None)
-            created, job_id = self._store_job(record, raw_sha, fetched_at)
+            created, job_id, _version_added = self._store_job(record, raw_sha, fetched_at)
             link_duplicate(self._connection, job_id, record)
             self._update_source_progress(
                 run_id,
@@ -940,7 +940,12 @@ class DiscoveryService:
         ).fetchone()
         return row["etag"] if row else None
 
-    def _store_job(self, record: dict, raw_sha: str, fetched_at: str) -> tuple[bool, str]:
+    def _store_job(self, record: dict, raw_sha: str, fetched_at: str) -> tuple[bool, str, bool]:
+        """Returns ``(created, job_id, version_added)``.
+
+        ``version_added`` is True only when a posting version was inserted, so a
+        caller can tell a real content change from a repeated import.
+        """
         existing = self._connection.execute(
             "SELECT job_id, latest_version_id FROM job WHERE source_id = ? AND source_job_id = ?",
             (record["source_id"], record["source_job_id"]),
@@ -1013,7 +1018,7 @@ class DiscoveryService:
                             existing["job_id"],
                         ),
                     )
-            return False, existing["job_id"]
+            return False, existing["job_id"], version is None
 
         job_id = new_id("job")
         timestamp = now_iso()
@@ -1057,7 +1062,7 @@ class DiscoveryService:
             self._connection.execute(
                 "UPDATE job SET latest_version_id = ? WHERE job_id = ?", (version_id, job_id)
             )
-        return True, job_id
+        return True, job_id, True
 
     def _close_missing(self, source_id: str, seen: set[str], timestamp: str) -> int:
         """Mark jobs absent from a successful fetch as closed; never delete them."""
