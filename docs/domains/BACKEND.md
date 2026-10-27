@@ -34,6 +34,7 @@
 | `master_cv_service` | `/setup` | Upload, validasi, simpan immutable |
 | `profile_service` | `/setup` | Ekstraksi, merge, koreksi, konfirmasi, versioning |
 | `discovery_service` | `/scrape` | Fetch, normalisasi, dedupe, klasifikasi, eligibility, fit, ranking |
+| `dedupe` | `/scrape` | Pemilihan baris kanonik menurut band sumber (D26): `ats_api` > `aggregator_api` > `manual_url`/impor ekstensi. Baris yang dipakai workspace tidak pernah diturunkan |
 | `application_service` | `/apply` | Fetch URL, assessment, generate, review, approval, ekspor |
 
 Service dapat dipanggil langsung untuk test. Workflow bukan CLI sebagai UX utama.

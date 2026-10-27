@@ -269,6 +269,8 @@ Kontrak adapter tetap: `build_url(source)` + `parse(html, source)` menghasilkan 
 - Fuzzy: `difflib.SequenceMatcher` dalam blok company/location yang sama, threshold 0.92. Dua judul yang menyebut region berbeda (`AMER` vs `EMEA`) tidak pernah digabung, meski rasionya tinggi.
 - Fingerprint adalah nilai turunan. Setiap kali normalisasi berubah, fingerprint baris lama harus dihitung ulang; kalau tidak, dedupe lintas sumber melewatkan pasangan lama-baru.
 - Simpan `duplicate_of`; jangan hapus data.
+- **Pemilihan baris kanonik (D26, 2026-10-27).** Saat beberapa baris cocok, kanonik dipilih menurut sumber: `ats_api` mengalahkan `aggregator_api`, yang mengalahkan `manual_url` dan impor ekstensi. Urutan band diikuti `priority_order`, lalu `created_at`, lalu `job_id`. Bila baris baru berasal dari sumber berband lebih baik daripada kanonik yang tersimpan, baris baru menjadi kanonik dan baris lama menunjuk padanya. Baris yang sudah dipakai sebuah workspace tidak pernah diturunkan; workspace yang menunjuk baris duplikat akan hilang dari daftar.
+- Baris lama tidak di-backfill: baris yang tersimpan sebelum aturan ini tetap memakai pemenang "pertama tersimpan" sampai ada baris baru dari sumber berband lebih baik yang menggantikannya.
 - Hindari duplikasi saat run diulang (idempoten).
 - Lowongan tertutup tetap tersimpan dengan status `closed`/`expired`; tidak dihapus.
 

@@ -125,13 +125,15 @@ def _insert_job(connection, record: dict, job_id: str, source_id: str) -> None:
     )
 
 
-def _register(connection, source_id: str) -> None:
+def _register(
+    connection, source_id: str, access_method: str = "ats_api", priority_order: int = 100
+) -> None:
     connection.execute(
         "INSERT INTO source_registry (source_id, company, market, careers_url, access_method, "
-        "ats, verification_status, enabled, created_at, updated_at) VALUES "
-        "(?, 'Acme', 'global', 'https://boards.greenhouse.io/acme', 'ats_api', 'greenhouse', "
-        "'verified', 1, '2026-10-20T00:00:00Z', '2026-10-20T00:00:00Z')",
-        (source_id,),
+        "ats, verification_status, enabled, priority_order, created_at, updated_at) VALUES "
+        "(?, 'Acme', 'global', 'https://boards.greenhouse.io/acme', ?, 'greenhouse', "
+        "'verified', 1, ?, '2026-10-20T00:00:00Z', '2026-10-20T00:00:00Z')",
+        (source_id, access_method, priority_order),
     )
 
 
@@ -233,6 +235,58 @@ def test_duplicate_chain_resolves_to_the_canonical_job(connection) -> None:
     connection.execute("UPDATE job SET duplicate_of = 'job_a' WHERE job_id = 'job_b'")
 
     assert find_duplicate(connection, "job_c", third) == "job_a"
+
+
+def test_api_source_wins_the_canonical_row_over_a_pasted_url(connection) -> None:
+    """D26: a real API row outranks a manual row, whatever was stored first."""
+    _register(connection, SOURCE["source_id"])
+    _register(connection, "manual_url", access_method="manual_url", priority_order=900)
+    manual = _record()
+    _insert_job(connection, manual, "job_manual", "manual_url")
+
+    from_api = _record(source_job_id="2", canonical_url="https://boards.greenhouse.io/acme/jobs/2")
+    _insert_job(connection, from_api, "job_api", SOURCE["source_id"])
+
+    assert find_duplicate(connection, "job_api", from_api) is None
+    linked = connection.execute(
+        "SELECT duplicate_of FROM job WHERE job_id = 'job_manual'"
+    ).fetchone()
+    assert linked["duplicate_of"] == "job_api"
+
+    # A manual paste of the same role must not steal canonical status back.
+    later = _record(source_job_id="3", canonical_url="https://boards.greenhouse.io/acme/jobs/3")
+    _insert_job(connection, later, "job_manual_2", "manual_url")
+    assert find_duplicate(connection, "job_manual_2", later) == "job_api"
+
+
+def test_canonical_row_stays_when_a_workspace_already_points_at_it(connection) -> None:
+    """Demoting it would hide the workspace: every read skips duplicates."""
+    _register(connection, SOURCE["source_id"])
+    _register(connection, "manual_url", access_method="manual_url", priority_order=900)
+    manual = _record()
+    _insert_job(connection, manual, "job_manual", "manual_url")
+    connection.execute(
+        "INSERT INTO master_cv (master_cv_id, sha256, filename, mime, size_bytes, status, "
+        "uploaded_at) VALUES ('mcv_1', ?, 'cv.pdf', 'application/pdf', 1, 'ready', "
+        "'2026-10-20T00:00:00Z')",
+        ("a" * 64,),
+    )
+    connection.execute(
+        "INSERT INTO profile_version (profile_version_id, profile_id, master_cv_id, version, "
+        "status, content_json, evidence_json, conflicts_json, active, created_at, updated_at) "
+        "VALUES ('prf_1', 'prf_1', 'mcv_1', 1, 'confirmed', '{}', '{}', '{}', 1, "
+        "'2026-10-20T00:00:00Z', '2026-10-20T00:00:00Z')"
+    )
+    connection.execute(
+        "INSERT INTO application (application_id, job_id, profile_version_id, created_at, "
+        "updated_at) VALUES ('app_1', 'job_manual', 'prf_1', '2026-10-20T00:00:00Z', "
+        "'2026-10-20T00:00:00Z')"
+    )
+
+    from_api = _record(source_job_id="2", canonical_url="https://boards.greenhouse.io/acme/jobs/2")
+    _insert_job(connection, from_api, "job_api", SOURCE["source_id"])
+
+    assert find_duplicate(connection, "job_api", from_api) == "job_manual"
 
 
 def _confirm(client, csrf) -> None:

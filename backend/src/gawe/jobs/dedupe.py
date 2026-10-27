@@ -28,6 +28,33 @@ MAX_CANDIDATES = 2000
 MAX_CHAIN = 8
 
 
+# D26: a real API source outranks a pasted URL or a browser import, whatever
+# was stored first. Rows written before this rule keep their old winner.
+BAND_SQL = (
+    "CASE WHEN COALESCE(sr.access_method, '') = 'ats_api' THEN 0 "
+    "WHEN COALESCE(sr.access_method, '') IN ('manual_url', 'browser') THEN 2 "
+    "ELSE 1 END"
+)
+CANONICAL_ORDER = f"{BAND_SQL}, sr.priority_order, j.created_at, j.job_id"
+
+
+def _band(access_method: str | None) -> int:
+    """Lower band fetches from a more authoritative source (JOB-DISCOVERY.md §8)."""
+    if access_method == "ats_api":
+        return 0
+    return 2 if access_method in ("manual_url", "browser") else 1
+
+
+def _rank(connection, source_id: str) -> tuple[int, int]:
+    row = connection.execute(
+        "SELECT access_method, priority_order FROM source_registry WHERE source_id = ?",
+        (source_id,),
+    ).fetchone()
+    if row is None:
+        return (1, 100)
+    return (_band(row["access_method"]), int(row["priority_order"] or 100))
+
+
 def _root(connection, job_id: str) -> str:
     """Follow ``duplicate_of`` links so a duplicate never points at a duplicate."""
     current = job_id
@@ -41,16 +68,49 @@ def _root(connection, job_id: str) -> str:
     return current
 
 
+def _promote(connection, job_id: str, canonical: str) -> None:
+    """Make ``job_id`` canonical; the stored row becomes its duplicate."""
+    with connection:
+        connection.execute(
+            "UPDATE job SET duplicate_of = ? WHERE job_id = ?", (job_id, canonical)
+        )
+
+
+def _should_promote(connection, record: dict, canonical: str) -> bool:
+    """True when the new row comes from a better source than the stored one.
+
+    A row a workspace already points at stays canonical: demoting it would hide
+    that workspace, because every list and match read skips duplicates.
+    """
+    stored = connection.execute(
+        "SELECT source_id FROM job WHERE job_id = ?", (canonical,)
+    ).fetchone()
+    if stored is None:
+        return False
+    if _rank(connection, record["source_id"]) >= _rank(connection, stored["source_id"]):
+        return False
+    in_use = connection.execute(
+        "SELECT 1 FROM application WHERE job_id = ? LIMIT 1", (canonical,)
+    ).fetchone()
+    return in_use is None
+
+
 def find_duplicate(connection, job_id: str, record: dict) -> str | None:
     found = _exact_match(connection, job_id, record)
-    # A duplicate pointing back at this job means this job is the canonical one.
-    return None if found == job_id else found
+    if found is None or found == job_id:
+        return None
+    if _should_promote(connection, record, found):
+        _promote(connection, job_id, found)
+        return None
+    return found
 
 
 def _exact_match(connection, job_id: str, record: dict) -> str | None:
     row = connection.execute(
-        "SELECT job_id FROM job WHERE canonical_url = ? AND job_id <> ? "
-        "AND duplicate_of IS NULL AND status = 'open' ORDER BY created_at, job_id LIMIT 1",
+        "SELECT j.job_id FROM job j LEFT JOIN source_registry sr "
+        "ON sr.source_id = j.source_id "
+        "WHERE j.canonical_url = ? AND j.job_id <> ? "
+        f"AND j.duplicate_of IS NULL AND j.status = 'open' ORDER BY {CANONICAL_ORDER} LIMIT 1",
         (record["canonical_url"], job_id),
     ).fetchone()
     if row is not None:
@@ -59,8 +119,10 @@ def _exact_match(connection, job_id: str, record: dict) -> str | None:
     # The fingerprint is a cross-source identity; two postings on one board that
     # share company, title, city, and type may still be different roles.
     row = connection.execute(
-        "SELECT job_id FROM job WHERE fingerprint = ? AND job_id <> ? AND source_id <> ? "
-        "AND duplicate_of IS NULL AND status = 'open' ORDER BY created_at, job_id LIMIT 1",
+        "SELECT j.job_id FROM job j LEFT JOIN source_registry sr "
+        "ON sr.source_id = j.source_id "
+        "WHERE j.fingerprint = ? AND j.job_id <> ? AND j.source_id <> ? "
+        f"AND j.duplicate_of IS NULL AND j.status = 'open' ORDER BY {CANONICAL_ORDER} LIMIT 1",
         (record["fingerprint"], job_id, record["source_id"]),
     ).fetchone()
     if row is not None:
