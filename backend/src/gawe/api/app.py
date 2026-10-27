@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -257,6 +258,14 @@ def create_app(
             candidate = (dist / full_path).resolve()
             if full_path and candidate.is_file() and dist.resolve() in candidate.parents:
                 return FileResponse(candidate)
+            # A missing asset is a 404, not the app shell. Answering index.html
+            # for a stale `/assets/index-<hash>.js` gives the browser HTML where
+            # it expects JavaScript, and the page renders blank with no clue why.
+            if full_path.startswith("assets/") or Path(full_path).suffix:
+                return JSONResponse(
+                    status_code=404,
+                    content=error_payload("not_found", "Aset tidak ditemukan.", "server"),
+                )
             index = dist / FRONTEND_FALLBACK
             if index.is_file():
                 return FileResponse(index)
