@@ -14,7 +14,7 @@ def _ready(client, csrf) -> str:
 
 
 def _token(client, csrf) -> dict[str, str]:
-    response = client.get("/api/settings/browser-import-token", headers=csrf)
+    response = client.post("/api/settings/browser-import-token", headers=csrf)
     assert response.status_code == 200, response.json()
     return {"X-Gawe-Token": response.json()["token"]}
 
@@ -158,3 +158,33 @@ def test_issuing_a_token_replaces_the_previous_one(setup_client, csrf) -> None:
     assert stale.status_code == 401
     fresh = setup_client.post("/api/import/browser", json=body, headers=second)
     assert fresh.status_code in (200, 409), fresh.json()
+
+
+def test_token_issue_is_a_post_only(setup_client, csrf) -> None:
+    # A GET that rotates the token could be fired by any page the browser has
+    # open, which would silently break the extension.
+    response = setup_client.get("/api/settings/browser-import-token", headers=csrf)
+    assert response.status_code == 405
+
+
+def test_token_issue_requires_csrf_and_an_allowed_origin(setup_client) -> None:
+    no_csrf = setup_client.post("/api/settings/browser-import-token")
+    assert no_csrf.status_code == 403
+    assert no_csrf.json()["error"]["code"] == "csrf_invalid"
+
+    session = setup_client.get("/api/session").json()
+    bad_origin = setup_client.post(
+        "/api/settings/browser-import-token",
+        headers={"X-CSRF-Token": session["csrf_token"], "Origin": "https://evil.example"},
+    )
+    assert bad_origin.status_code == 403
+    assert bad_origin.json()["error"]["code"] == "csrf_invalid"
+
+
+def test_token_issue_returns_the_documented_shape(setup_client, csrf) -> None:
+    response = setup_client.post("/api/settings/browser-import-token", headers=csrf)
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"token", "header"}
+    assert body["header"] == "X-Gawe-Token"
+    assert body["token"]

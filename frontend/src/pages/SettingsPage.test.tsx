@@ -18,6 +18,7 @@ vi.mock("../app/apiClient", async (importOriginal) => {
     listSources: vi.fn(),
     createSource: vi.fn(),
     updateSource: vi.fn(),
+    issueBrowserImportToken: vi.fn(),
   };
 });
 
@@ -216,5 +217,32 @@ describe("SettingsPage consent", () => {
     expect(
       screen.getByText("Provider aktif tidak mengirim data ke layanan eksternal."),
     ).toBeTruthy();
+  });
+});
+
+describe("SettingsPage import token", () => {
+  beforeEach(() => {
+    vi.mocked(api.issueBrowserImportToken).mockClear();
+  });
+
+  it("issues a token only when the button is clicked", async () => {
+    vi.mocked(api.issueBrowserImportToken).mockResolvedValue({
+      token: "tok_1",
+      header: "X-Gawe-Token",
+    });
+
+    await renderLoaded();
+
+    // Opening Settings must not rotate the extension token. A query on this
+    // endpoint would refetch on mount and on window focus, revoking the token
+    // the user already pasted into the popup.
+    expect(api.issueBrowserImportToken).not.toHaveBeenCalled();
+    expect(screen.queryByText("tok_1")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Buat token baru" }));
+
+    expect(await screen.findByText("tok_1")).toBeTruthy();
+    expect(api.issueBrowserImportToken).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Salin token" })).toBeTruthy();
   });
 });

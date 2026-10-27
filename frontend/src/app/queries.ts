@@ -9,7 +9,6 @@ import {
   createExport,
   createSource,
   getApplication,
-  getBrowserImportToken,
   getConsent,
   getDocumentFindings,
   getDocumentVersion,
@@ -19,6 +18,7 @@ import {
   getProfileVersion,
   getTask,
   grantConsent,
+  issueBrowserImportToken,
   listApplications,
   listDiscoveryRuns,
   listExports,
@@ -131,7 +131,7 @@ export function useRevokeConsent() {
 }
 
 export function useImportToken() {
-  return useSetupMutation(() => getBrowserImportToken());
+  return useSetupMutation(() => issueBrowserImportToken());
 }
 
 export function useReviewEligibility() {

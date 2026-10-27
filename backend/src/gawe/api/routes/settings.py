@@ -91,9 +91,14 @@ def revoke_consent(request: Request, consent_id: str) -> dict:
         ) from exc
 
 
-@router.get("/browser-import-token")
-def get_browser_import_token(request: Request) -> dict:
-    """Return the pairing token for the extension. Session-authenticated only."""
+@router.post("/browser-import-token")
+def issue_browser_import_token(request: Request) -> dict:
+    """Issue a pairing token for the extension, replacing the previous one.
+
+    POST, not GET: issuing revokes the token already installed in the extension,
+    so it must not be reachable from a plain page load or a cross-site image.
+    Being a mutation, it keeps the SPA CSRF + Origin check.
+    """
     config = request.app.state.config
     token = browser_token.issue(config)
     return {"token": token, "header": browser_token.TOKEN_HEADER}

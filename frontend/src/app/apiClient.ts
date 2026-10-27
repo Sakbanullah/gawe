@@ -203,8 +203,13 @@ export function revokeConsent(consentId: string): Promise<ConsentRecord> {
   return apiSend<ConsentRecord>("DELETE", `/api/settings/consent/${consentId}`);
 }
 
-export function getBrowserImportToken(): Promise<{ token: string; header: string }> {
-  return apiGet<{ token: string; header: string }>("/api/settings/browser-import-token");
+export function issueBrowserImportToken(): Promise<{ token: string; header: string }> {
+  // POST: the backend rotates the token, and a GET that mutates could be fired
+  // by any page the browser has open.
+  return apiSend<{ token: string; header: string }>(
+    "POST",
+    "/api/settings/browser-import-token",
+  );
 }
 
 export type ProviderSettingsView = {

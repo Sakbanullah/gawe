@@ -23,7 +23,7 @@ DESCRIPTION = "\n".join(
 
 
 def _token(client, csrf) -> dict[str, str]:
-    response = client.get("/api/settings/browser-import-token", headers=csrf)
+    response = client.post("/api/settings/browser-import-token", headers=csrf)
     assert response.status_code == 200, response.json()
     return {"X-Gawe-Token": response.json()["token"]}
 
