@@ -148,10 +148,10 @@ def _to_raw(card: dict, source: str, description: str, *, full: bool) -> RawJob:
             # A company taken from a slug is a guess; keep it visible as a gap.
             "company_from_slug": not (card.get("company") or "").strip(),
             "posted_at_unknown": not (card.get("posted_at") or "").strip(),
-            # The detail page shows the full text, the card only a snippet. A
-            # detail import must never be marked as snippet-only, or every
-            # later rule trips over a gap that is not there.
-            "snippet_only": not full and len(description) < MIN_DESCRIPTION_CHARS,
+            # The detail page shows the full text, the card only a snippet, so a
+            # card import is always snippet-only regardless of its length: the
+            # reader must know the posting was never fully read.
+            "snippet_only": not full,
         },
     )
 

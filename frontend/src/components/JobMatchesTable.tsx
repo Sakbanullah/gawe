@@ -68,6 +68,7 @@ const RESULT_COLOR: Record<string, string> = {
 const COMPLETENESS_LABEL: Record<string, string> = {
   company_name: "Nama perusahaan dari slug",
   posted_at: "Tanggal posting tidak tersedia",
+  snippet_only: "Perlu deskripsi lengkap",
 };
 
 function completenessNotes(missing: string[] | undefined): string[] {

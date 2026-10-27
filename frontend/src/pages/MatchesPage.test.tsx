@@ -222,6 +222,31 @@ describe("MatchesPage", () => {
     expect(drawer.getByText("Tanggal posting tidak tersedia")).toBeTruthy();
   });
 
+  it("says a snippet-only job needs the full description, and shows no fit", async () => {
+    const teaser = item();
+    teaser.fit = null;
+    teaser.eligibility.status = "needs_review";
+    teaser.eligibility.reason_summary = "Tidak ada persyaratan wajib yang dapat dievaluasi.";
+    teaser.job.completeness = {
+      missing_fields: ["snippet_only"],
+      fetched_at: "2026-10-20T00:00:00Z",
+      stale: false,
+    };
+    vi.mocked(api.listMatches).mockResolvedValue(list([teaser]));
+    vi.mocked(api.getMatch).mockResolvedValue({
+      ...detail(),
+      fit: null,
+      job_detail: { ...detail().job_detail, job: teaser.job },
+    });
+    renderPage();
+
+    expect(await screen.findByText("Perlu deskripsi lengkap")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Senior Backend Engineer"));
+    const drawer = within(await screen.findByRole("dialog"));
+    expect(drawer.getByText("Perlu deskripsi lengkap")).toBeTruthy();
+  });
+
   it("shows no gap note for a job whose source fills every field", async () => {
     renderPage();
 

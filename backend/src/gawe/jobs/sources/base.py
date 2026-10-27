@@ -250,6 +250,10 @@ def normalize(raw: RawJob, source: dict, fetched_at: str) -> dict:
         missing.append("company_name")
     if raw.extra.get("posted_at_unknown"):
         missing.append("posted_at")
+    if raw.extra.get("snippet_only"):
+        # A card teaser has no readable requirements, so the UI must say why the
+        # job cannot be judged instead of showing an empty fit.
+        missing.append("snippet_only")
     record = {
         "source_id": source["source_id"],
         "source_job_id": source_job_id[:255],
