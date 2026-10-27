@@ -6,9 +6,10 @@
  * Nothing here paginates. The user moves to the next page in their own browser;
  * that keeps the traffic indistinguishable from a person browsing.
  *
- * On a job page the same button sends the full description for that one job,
- * keyed by the URL it already had from the search page. The backend replaces the
- * snippet and re-assesses, so the job stays one row and not two.
+ * The two sends are independent. On a split Jobstreet view the card list and a
+ * job's full description are both on screen, so both buttons can be enabled at
+ * once. A detail send is keyed by the URL it already had from the card import;
+ * the backend replaces the snippet and re-assesses, so the job stays one row.
  */
 
 const $ = (id) => document.getElementById(id);
@@ -92,23 +93,25 @@ async function init() {
     $("summary").textContent = "Halaman ini bukan hasil pencarian atau detail lowongan.";
     return;
   }
-  if (page.kind === "detail") {
-    const detail = page.detail;
-    if (!detail || !detail.description) {
-      $("summary").textContent =
-        "Deskripsi lowongan tidak ditemukan di halaman ini. Buka halaman detailnya dulu.";
-      return;
-    }
-    const warning = likelyMissingRequirements(detail.description)
+
+  // The two actions are independent: a split view shows cards on the left and
+  // one job's full description on the right, so both buttons can be enabled.
+  const available = gaweAvailable(page);
+  const lines = [];
+  if (available.detail) {
+    const warning = likelyMissingRequirements(page.detail.description)
       ? " Deskripsi ini belum memuat bagian persyaratan."
       : "";
-    $("summary").textContent = `Detail: ${detail.title}.${warning}`;
-    $("send").textContent = "Kirim deskripsi penuh";
-    $("send").disabled = false;
-    return;
+    lines.push(`Detail: ${page.detail.title}.${warning}`);
   }
-  $("summary").textContent = `Terdeteksi ${page.jobs.length} lowongan di halaman ini.`;
-  $("send").disabled = page.jobs.length === 0;
+  if (available.cards) {
+    lines.push(`Terdeteksi ${page.jobs.length} kartu lowongan di halaman ini.`);
+  }
+  $("summary").textContent = lines.length
+    ? lines.join("\n")
+    : "Tidak ada kartu atau deskripsi lowongan yang terbaca. Muat ulang lalu coba lagi.";
+  $("send-cards").disabled = !available.cards;
+  $("send-detail").disabled = !available.detail;
 }
 
 $("save").addEventListener("click", async () => {
@@ -117,18 +120,24 @@ $("save").addEventListener("click", async () => {
   $("status").textContent = token ? "Token disimpan." : "Token dikosongkan.";
 });
 
-$("send").addEventListener("click", async () => {
-  try {
-    await send();
-  } catch (error) {
-    $("status").textContent = error.message || "Gagal mengirim.";
-  }
-});
+function onSend(button, action) {
+  $(button).addEventListener("click", async () => {
+    try {
+      await action();
+    } catch (error) {
+      $("status").textContent = error.message || "Gagal mengirim.";
+    }
+  });
+}
 
-async function send() {
+onSend("send-cards", () => send("cards"));
+onSend("send-detail", () => send("detail"));
+
+/** Sends one mode. Both bodies match the backend contract; only one is chosen. */
+async function send(mode) {
   const page = await readPage();
   let body;
-  if (page.kind === "detail") {
+  if (mode === "detail") {
     if (!page.detail || !page.detail.description) {
       $("status").textContent = "Deskripsi lowongan tidak ditemukan di halaman ini.";
       return;

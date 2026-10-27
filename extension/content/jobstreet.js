@@ -7,8 +7,11 @@
  * it returns is text the user can already see, so the page is loaded by the
  * user's browser and never by an automated one.
  *
- * - `cards`  — search results: one record per job card, snippet only.
- * - `detail` — one job page: full description, company, location, posted date.
+ * Both are read on every page, because Jobstreet's split view shows the card
+ * list and a job detail side by side:
+ *
+ * - `jobs`   — one record per job card, snippet only.
+ * - `detail` — full description, company, location, posted date, or null.
  *
  * The popup injects this file every time it opens (`chrome.scripting`
  * re-runs a file rather than caching it), so everything lives inside one IIFE
@@ -116,25 +119,47 @@ if (!window.gaweReadJobstreet) {
       return cards;
     }
 
+    /**
+     * Nearest ancestor of the description that also holds a heading. On a split
+     * view the first `h1` on the page is the search header, so the title has to
+     * come from the detail panel, not from the document.
+     */
+    function detailScope(body) {
+      let node = body.parentElement;
+      while (node && node !== document.documentElement) {
+        if (node.querySelector(SEL.detailTitle)) return node;
+        node = node.parentElement;
+      }
+      return null;
+    }
+
+    function scopeTitle(scope) {
+      for (const node of scope.querySelectorAll(SEL.detailTitle)) {
+        if (!node.closest(SEL.card)) return text(node);
+      }
+      return null;
+    }
+
     function readDetail() {
-      const title = text(document.querySelector(SEL.detailTitle));
+      const body = document.querySelector(SEL.description);
+      if (!body) return null;
+      const scope = detailScope(body);
+      const title = scope ? scopeTitle(scope) : null;
       const url = absolute(window.location.toString());
       if (!title || !url) return null;
       // One line per block, so headings survive and the section splitter can
       // still find "Requirements".
-      const body = document.querySelector(SEL.description);
-      const description = body
-        ? Array.from(body.children)
-            .map((node) => text(node))
-            .filter(Boolean)
-            .join("\n")
-        : null;
+      const description =
+        Array.from(body.children)
+          .map((node) => text(node))
+          .filter(Boolean)
+          .join("\n") || null;
       return {
         title,
         url,
-        company: text(document.querySelector(SEL.detailCompany)),
-        location: text(document.querySelector(SEL.detailLocation)),
-        posted_at: postedAt(document.querySelector(SEL.posted)),
+        company: text(scope.querySelector(SEL.detailCompany)),
+        location: text(scope.querySelector(SEL.detailLocation)),
+        posted_at: postedAt(scope.querySelector(SEL.posted)),
         description,
       };
     }
@@ -145,23 +170,15 @@ if (!window.gaweReadJobstreet) {
       // tracking, `?type=standard`) is dropped so the detail import lands on the
       // row the card import created instead of a second one.
       const pageUrl = window.location.toString();
-      if (kind === "detail") {
-        return {
-          kind,
-          pageUrl,
-          url: absolute(pageUrl),
-          pageTitle: document.title,
-          jobs: [],
-          detail: readDetail(),
-        };
-      }
+      // `kind` only decides which page this is; both payloads are read whenever
+      // the page shows them, so the split view can offer both imports.
       return {
         kind,
         pageUrl,
         url: absolute(pageUrl),
         pageTitle: document.title,
-        jobs: kind === "search" ? readCards() : [],
-        detail: null,
+        jobs: kind === "wrong-host" ? [] : readCards(),
+        detail: kind === "wrong-host" ? null : readDetail(),
       };
     };
   })();

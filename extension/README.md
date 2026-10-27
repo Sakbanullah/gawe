@@ -14,19 +14,23 @@ Bot diblokir. Indeed mengembalikan `Blocked`, Jobstreet memasang Cloudflare chal
 4. Buka halaman Settings Gawe, klik **Buat token baru**, lalu **Salin token**.
 5. Klik ikon ekstensi, tempel token, klik **Simpan token**.
 
-## Dua langkah pakai
+## Dua tombol, pilih sendiri
 
-**1. Halaman pencarian — triase.**
+Popup punya dua tombol independen. Keduanya bisa aktif bersamaan.
 
-Buka hasil pencarian Jobstreet, klik ikon ekstensi. Popup menampilkan jumlah kartu terdeteksi. Klik **Kirim lowongan di halaman ini**.
+**1. Impor kartu — triase.**
+
+Buka hasil pencarian Jobstreet, atau tampilan split dengan daftar kartu di kiri dan detail lowongan di kanan. Klik ikon ekstensi. Popup menampilkan jumlah kartu terdeteksi dan mengaktifkan **Impor kartu**.
 
 Kartu hanya memuat ringkasan pendek, bukan bagian persyaratan. Karena itu hampir semua job dari langkah ini berstatus `needs_review`. Itu wajar, bukan kegagalan.
 
-**2. Halaman detail — deskripsi penuh.**
+**2. Kirim deskripsi penuh.**
 
-Buka satu lowongan yang menarik. Klik ikon ekstensi. Tombolnya berubah menjadi **Kirim deskripsi penuh**.
+Buka satu lowongan yang menarik, atau pilih kartunya di tampilan split. Kalau deskripsi lowongan terbaca, **Kirim deskripsi penuh** aktif.
 
 Backend memperbarui job yang sama (bukan membuat baris kedua), lalu menilai ulang eligibility. Deskripsi penuh memuat bagian "Requirements", sehingga aturan punya bahan untuk memutuskan.
+
+Pada tampilan split, urutan bebas. Kirim kartu untuk memasukkan lowongan ke Gawe, lalu kirim deskripsi penuh untuk lowongan yang sedang terbuka. Setiap tombol membaca ulang halaman saat diklik, jadi popup tidak perlu ditutup.
 
 Kalau deskripsi tidak memuat kata requirement/kualifikasi/persyaratan, popup memberi peringatan. Kirim saja; hasilnya akan terlihat di Gawe.
 
