@@ -1064,3 +1064,127 @@ Bukti:
 - `pytest tests -k "eligib or assessment or score or match" -q` -> junit `tests="133"`, `failures="0"`.
 - `pytest tests -q` (seluruh suite backend) -> junit `tests="531"`, `failures="0"`, `errors="0"`.
 Tidak dijalankan: discovery ulang dari Jobstreet, uji manual di Brave.
+
+## Run 2026-10-26 - CV: revisi tidak menghapus isi, urutan berbasis skill lowongan
+
+Permintaan pengguna: CV makin tipis setiap kali revisi, dan pengalaman/skill yang relevan (mis. database) harus tampil lebih dulu.
+
+Perubahan:
+- `documents/ai_draft.py`: `_restore_missing_roles` mengembalikan role profil yang dihapus model (dicocokkan company + title, bukan id, karena role tidak punya id). `experience` tidak masuk `_MERGE_SECTIONS` karena jalur itu berbasis id dan akan menggandakan role.
+- `services/document_service.py`: `_revision_instructions` menambahkan larangan eksplisit untuk finding `factuality`: jangan hapus poin/fakta, urutkan ulang atau ganti dengan poin profil yang punya bukti.
+- `documents/draft.py`: `_wanted_skills` + `_skill_rank` memberi bobot urut pada `_experience` dan `_skills` berdasarkan skill lowongan, memakai tabel padanan `_SKILL_FAMILY` (database -> sql/postgres/mysql/...).
+
+Bukti:
+- `.venv\Scripts\python.exe -m pytest tests/test_documents.py tests/test_documents_ai.py -q -p no:warnings` -> 32 passed, exit 0.
+- Pemeriksaan manual `draft.build("cv", ...)`: role `Data Engineer` (PostgreSQL) naik ke atas `Marketing Lead`; skill `Database Design` di atas `Public Speaking`.
+- Pemeriksaan manual `_restore_missing_facts` + `_restore_missing_roles`: model mengosongkan `experience` dan `skills`, hasil pulih 2 role + 1 skill.
+
+Tidak dijalankan: seluruh suite backend, uji UI di browser, versi `id`.
+
+## Run 2026-10-26 - Prompt write_cv 0.3.0 + penjaga header/skill
+
+Permintaan pengguna: template CV master (intake, audit, struktur, bullet, tailoring, ATS, quality gate) wajib jadi acuan saat LLM menulis CV.
+
+Perubahan:
+- `docs/phase-00/prompts/write_cv.md` -> versi 0.3.0. Ditambah fase eksplisit: aturan mutlak, tailoring (ekstraksi keyword + peta bukti), header, summary (rumus 60 kata), skills (maks 20, wajib berbukti), experience (rumus bullet, larangan kata pembuka, tense, skala jujur), projects, education, aturan ATS, quality gate, mode revisi, gaps.
+- `backend/src/gawe/documents/ai_draft.py`: `_fill_header` mengambil header dari profil (model tidak boleh menghapus tautan); `_drop_unsupported_skills` membuang skill yang `evidence_ids`-nya tidak ada di indeks bukti.
+- `backend/tests/test_documents_ai.py`: ekspektasi `prompt_version` 0.2.0 -> 0.3.0.
+
+Bukti:
+- `.venv\Scripts\python.exe -m pytest tests/test_documents.py tests/test_documents_ai.py tests/test_reviewer_seeded_defects.py -q -p no:warnings` -> 35 passed, exit 0.
+- Uji langsung 9Router (`deepseek`, base_url `http://localhost:20128/v1`) dengan profil fiktif: `source=llm`, prompt 0.3.0. Sebelum penjaga, skill `YOLOv8` masuk CV dan tautan GitHub hilang; setelah penjaga, skills `['Node.js','PostgreSQL']` dan header memuat 2 tautan profil. `gaps` berisi requirement tanpa bukti.
+
+Tidak dijalankan: generate ulang dari UI, uji dengan data kandidat nyata.
+
+## Run 2026-10-26 - Cancel/arsip application workspace
+
+Permintaan pengguna: di menu Applications, workspace yang tidak jadi bisa dibatalkan agar tidak menumpuk.
+
+Keputusan: arsip, bukan hapus. Approval terikat `document_version_id` + `content_hash`; hard delete memutus jejak audit. Status baru `cancelled` ditambahkan ke kontrak.
+
+Perubahan:
+- `backend/src/gawe/db/migrations/0017_application_cancel.sql`: kolom `cancelled_at`, `cancel_reason`, indeks `idx_application_cancelled`.
+- `backend/src/gawe/services/application_service.py`: `cancel()` menolak `409 task_already_running` dan `409 approval_exists`, idempoten pada workspace yang sudah dibatalkan; `_status()` melaporkan `cancelled` lebih dulu; `list()` punya `include_cancelled` dan filter `status=cancelled` tetap menampilkan arsip; `ApplicationSummary` memuat `cancelled_at` dan `cancel_reason`.
+- `backend/src/gawe/api/routes/applications.py`: `POST /api/applications/{application_id}/cancel` (`reason` maks 500, opsional), `include_cancelled` pada `GET /api/applications`, status `cancelled` masuk allow-list.
+- `docs/phase-00/contracts/openapi.yaml`: enum `ApplicationStatus` + `cancelled`, properti `cancelled_at`/`cancel_reason` pada `ApplicationSummary`, parameter `include_cancelled`, operasi `cancelApplication`. Tipe frontend diregenerasi.
+- `docs/source-of-truth/API-CONTRACTS.md`: nilai `ApplicationSummary.status` ditambah `cancelled`.
+- `frontend/src/app/apiClient.ts`, `frontend/src/app/queries.ts`: `listApplications({includeCancelled})`, `cancelApplication`, `useCancelApplication`.
+- `frontend/src/pages/ApplicationsPage.tsx`: kolom aksi `Batalkan` (nonaktif bila `approved` atau `processing`), `Modal` konfirmasi dengan alasan opsional, baris arsip diredupkan, toggle `Tampilkan yang dibatalkan (n)`, badge `Dibatalkan`.
+
+Bukti:
+- `.venv\Scripts\python.exe -m pytest tests/test_applications.py -q` -> 18 passed, exit 0 (termasuk 3 test baru: arsip + idempotensi + filter, CSRF wajib, task aktif ditolak).
+- `.venv\Scripts\python.exe -m pytest tests/test_api.py tests/test_export.py tests/test_documents.py tests/test_revision_endpoint.py -q` -> exit 0.
+- `npx tsc --noEmit` di `frontend` -> exit 0 setelah `npm run gen:api`.
+
+Tidak dijalankan: klik manual di UI, build produksi frontend.
+
+## Run 2026-10-26 - CV hanya dari LLM + gate penulisan
+
+Permintaan pengguna: CV wajib ditulis LLM, tidak boleh ada template. Aturan penulisan dari file markdown di `docs/phase-00/prompts/rules/`.
+
+Perubahan:
+- `docs/phase-00/prompts/write_cv.md` -> 0.5.0: `{{rules}}` menyuntik `CV_MASTER_TEMPLATE.md`; kontrak menambah larangan frase kosong, kalimat terpotong, peran yang dibuang, dan keyword stuffing.
+- `docs/phase-00/prompts/write_cover_letter.md` -> 0.3.0: pola sama memakai `COVER_LETTER_MASTER_TEMPLATE.md`.
+- `backend/src/gawe/llm/prompts.py`: `load_rules()` + `RULE_FILES`; file aturan hilang = `PromptNotFound`.
+- `backend/src/gawe/documents/ai_draft.py`: tidak ada lagi penulis deterministik. `write()` mengembalikan `None` + `writer_unavailable` bila prompt/rules/provider gagal. `skills` dan `projects` tidak lagi di-restore buta (`_CURATED_SECTIONS`), hanya diisi bila model mengosongkan. Peran yang dibuang tidak disalin dari profil; `_missing_roles` + `_writing_problems` + `_rewrite` meminta model menulis ulang (2 putaran) dan sisa pelanggaran dilaporkan di `metadata["writing_problems"]`. `_drop_unsupported_skills` juga membuang skill yang tidak diminta lowongan dan tidak dipakai di body.
+- `backend/src/gawe/services/document_service.py`: `_draft` melempar `DocumentError` dengan pesan per kode (`_WRITER_MESSAGES`); reviewer juga wajib LLM.
+- `backend/src/gawe/llm/client.py`: pengecekan injeksi hanya pada pesan yang `content`-nya string.
+
+Bukti:
+- Uji langsung 9Router `deepseek` (base_url `http://localhost:20128/v1`, key di keyring `gawe/llm/9router`) dengan profil fiktif: `source=llm`, prompt 0.5.0, `problems left: []`, skills tanpa `YOLOv8`/`Faster R-CNN`, summary tanpa `hands-on`/`comfortable`.
+- Sebelum gate, model menghasilkan `"delivered government agency"`, `"modules one two developers"`, bullet terpotong, yang sekarang ditolak dan diminta ditulis ulang.
+
+Tidak dijalankan: `tests/test_documents*.py` gagal start karena MySQL `127.0.0.1:3306` mati setelah restart server. Uji UI end-to-end belum.
+
+## Run 2026-10-27 - Requirement extraction lewat LLM + fit "tidak bisa dinilai"
+Permintaan pengguna: (1) reproduksi Jobstreet `needs_review`/fit tak bermakna, (2) ekstraksi requirement LLM dari `docs/phase-00/prompts/parse_requirements.md` dengan fallback regex + cache + `llm_call`, (3) fit `null` saat tidak ada `must_have` dan UI menampilkan "Perlu deskripsi lengkap" untuk `snippet_only`.
+
+Perubahan:
+- `backend/src/gawe/jobs/requirements.py`: `extract_with_llm` (role `extract`, schema `job.schema.json#/properties/requirements`, `MAX_REQUIREMENTS`, `LLM_MAX_TOKENS`, `LLM_MIN_DESCRIPTION_CHARS`), `_from_llm` (kutipan wajib ada di deskripsi lewat `quote_matches`, kind dibatasi `LLM_KINDS`, bobot backend), `extract_requirements` -> `(requirements, source)` dengan source `llm`/`regex`/`none`, `YEARS` menerima `tahun`.
+- `backend/src/gawe/llm/prompts.py`: `load_schema` menerima fragmen JSON pointer; `parse_requirements` masuk `ROLE_PROMPTS`.
+- `docs/phase-00/prompts/parse_requirements.md`: front matter `role: classify` -> `role: extract` (sesuai pemakaian).
+- `backend/src/gawe/services/assessment_service.py`: `_requirements` mengembalikan `(rows, source)`; cache hanya untuk baris hasil model (`source = 'llm'`); fallback yang gagal dibaca diulang; `_store_requirements` delete-then-insert + kolom `source`.
+- `backend/src/gawe/db/migrations/0019_requirement_source.sql`: kolom `job_requirement.source` (default `regex`).
+- Wiring klien: `api/deps.py`, `api/routes/matches.py`, `api/routes/applications.py`, `services/discovery_service.py`, `services/browser_import_service.py`, `services/application_service.py`.
+- `backend/src/gawe/match/score.py`: `score()` mengembalikan `None` bila tidak ada `must_have` (dulu `must_coverage` = 1.0).
+- `backend/src/gawe/jobs/sources/base.py`: `snippet_only` masuk `completeness.missing_fields`.
+- `backend/src/gawe/services/browser_import_service.py`: impor kartu selalu `snippet_only` (bukan hanya bila teks pendek).
+- `frontend/src/components/JobMatchesTable.tsx`: label `snippet_only` -> "Perlu deskripsi lengkap".
+- Docs: `docs/domains/DATABASE.md`, `docs/domains/ELIGIBILITY-AND-SCORING.md` (sumber ekstraksi + aturan fit tanpa `must_have`).
+- Test baru: `backend/tests/test_requirements_jobstreet.py` (fixtures Jobstreet: 4 passed + 1 xfail), `test_requirements_llm.py` (15), `test_requirements_cache.py` (5), `test_fit_unscored.py` (8), `frontend/src/pages/MatchesPage.test.tsx` (+1).
+- Perbaikan bug lama saat reproduksi: `discovery_service._persist_source` membongkar 2 nilai dari 3-tuple `_store_job` (semua run ATS gagal).
+
+Bukti:
+- `.venv\Scripts\python.exe -m pytest tests/test_requirements_jobstreet.py tests/test_requirements_llm.py tests/test_requirements_cache.py tests/test_fit_unscored.py tests/test_assessment.py tests/test_browser_import.py tests/test_discovery.py tests/test_api.py tests/test_db.py -q -p no:warnings` -> 224 passed, 1 xfailed, exit 0.
+- `npm test -- --run src/pages/MatchesPage.test.tsx` -> 10 passed, exit 0.
+- `npx tsc --noEmit` -> exit 0.
+- Suite penuh: 44 gagal, semuanya di `test_documents.py`, `test_documents_ai.py`, `test_export.py`, `test_revision_endpoint.py`, `test_profile_normalize.py`, `test_closed_jobs.py`. Bukti bahwa ini bukan regresi: run yang sama pada working tree yang di-stash (HEAD bersih) -> 43 failed / 12 passed vs 43 failed / 12 passed dengan perubahan; selisih satu test berasal dari `test_closed_jobs.py::test_documents_still_generate_and_review_after_the_job_closes` yang sebelumnya sudah gagal karena `writer_unavailable` (fixture `repo_root` tidak membawa `docs/`).
+Tidak dijalankan/diverifikasi: panggilan provider nyata (9Router) untuk `parse_requirements`; perilaku UI di browser sungguhan; migrasi 0019 pada database pengguna yang sudah ada (baru diuji di schema test).
+Koreksi/angka final run 2026-10-27:
+- Cache diubah: hanya baris `source = 'llm'` yang dianggap cache. Pembacaan deterministik dihitung ulang (murah) supaya lowongan yang pernah dinilai tanpa provider tidak membeku di fallback. Jawaban model yang kosong tetap disimpan sebagai `llm` (bukan fallback), jadi tidak ditanya dua kali.
+- `python -m pytest tests/test_requirements_jobstreet.py tests/test_requirements_llm.py tests/test_requirements_cache.py tests/test_fit_unscored.py tests/test_assessment.py tests/test_browser_import.py tests/test_discovery.py tests/test_api.py tests/test_db.py tests/test_eligibility_review.py -p no:warnings` -> 225 passed, 1 xfailed, exit 0, 44.26s.
+- `tests/test_requirements_cache.py` sekarang 6 test (tambah: model menjawab kosong tetap di-cache; baris regex dihitung ulang).
+- Perbandingan suite dokumen (stash vs perubahan) yang benar: 43 failed / 12 passed pada HEAD bersih dan 43 failed / 12 passed dengan perubahan. Angka 44 pada catatan sebelumnya salah hitung (file daftar gagal tertimpa BOM).
+
+## Run 2026-10-27 - Prioritas sumber discovery (A1-A3, B2) dan dokumen Rev 10
+
+Cakupan: perubahan kode A1 (kode error fetch halaman manual), A2 (satu retry assessment pada `create_from_url`), A3 (judul alert per kode + tombol tempel teks), B2 (baris kanonik dedupe menurut band sumber), plus dokumentasi Revisi 10 (D26/D27).
+
+Perintah dan hasil aktual:
+- `pytest tests/test_discovery_dedupe.py tests/test_manual_fallback.py tests/test_applications.py -p no:warnings --tb=short` -> 77 passed, 0 failed, 0 skipped, exit 0, 18.85s.
+- `pytest tests/test_discovery.py tests/test_browser_import.py tests/test_assessment.py tests/test_sources.py tests/test_source_health.py tests/test_api.py tests/test_closed_jobs.py -p no:warnings --tb=line` -> 205 passed, 1 failed, exit 1, 48.18s. Kegagalan: `test_closed_jobs.py::test_documents_still_generate_and_review_after_the_job_closes` (`writer_unavailable`). Kegagalan lama yang sudah tercatat, bukan regresi perubahan ini.
+- `pytest tests/test_project_rules.py tests/test_api.py -p no:warnings --tb=short` -> 12 passed, exit 0, 4.80s.
+- `npm test -- --run src/pages/ApplicationsPage.test.tsx` -> 17 passed, exit 0, 7.38s.
+- `npx tsc --noEmit` -> exit 0.
+
+File yang berubah:
+- Kode: `backend/src/gawe/services/discovery_service.py`, `backend/src/gawe/services/application_service.py`, `backend/src/gawe/jobs/dedupe.py`, `frontend/src/pages/ApplicationsPage.tsx`.
+- Test: `backend/tests/test_manual_fallback.py` (+3), `backend/tests/test_discovery_dedupe.py` (+2), `frontend/src/pages/ApplicationsPage.test.tsx` (+4 parametrik).
+- Dokumen: `PLAN.md` (Revisi 10), `AGENTS.md`, `docs/README.md`, `docs/source-of-truth/{DECISIONS,API-CONTRACTS,PRODUCT,SECURITY,UI-DESIGN}.md`, `docs/domains/{JOB-DISCOVERY,BACKEND,FRONTEND,TESTING}.md`, `docs/phases/{README,PHASE-03,PHASE-04,PHASE-05,PHASE-07}.md`, `docs/notes/himalayas-*.md`, `extension/README.md`, baru `docs/notes/aggregator-shortlist.md`.
+
+Belum dijalankan/diverifikasi:
+- Suite frontend penuh (`npm test -- --run`) belum selesai saat catatan ini ditulis; hanya `ApplicationsPage.test.tsx` yang punya bukti.
+- Suite backend penuh tidak dijalankan (di luar scope yang diminta).
+- Kelas `src/pages/ApplicationsPage.test.tsx` memakai `ApiError` dari modul asli; tidak ada verifikasi UI manual di browser sungguhan.
+- `manual_fetch_failed` belum ditambahkan ke enum `ErrorCode` di `docs/phase-00/contracts/openapi.yaml` (kontrak terkunci, tidak disentuh). `npm run gen:api` karena itu akan menghasilkan tipe tanpa kode tersebut; frontend membandingkan `ApiError.code` sebagai string sehingga tidak terpengaruh.
+- Promosi baris kanonik tidak di-backfill: baris lama tetap memakai pemenang pertama tersimpan sampai ada baris baru dari sumber berband lebih baik.

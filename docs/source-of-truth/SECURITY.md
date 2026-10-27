@@ -103,8 +103,18 @@ Berlaku untuk fetch lowongan, halaman lamaran, dan URL manual.
 - 403, CAPTCHA, atau login → berhenti untuk sumber itu; minta pengguna paste teks atau simpan halaman.
 - Tidak ada bypass CAPTCHA, paywall, login otomatis, atau rotasi proxy.
 - `robots.txt` dicek untuk fetch HTML umum.
-- **Pengecualian sumber `browser`:** fetch memakai sesi login pengguna sendiri, atas perintah eksplisit, di profil Chromium lokal. Untuk jalur ini `robots.txt` tidak dicek, karena aturan itu mengatur akses anonim. Login tetap dilakukan pengguna di jendela Chromium; Gawe tidak menyimpan password, tidak menangani 2FA, tidak menyamar sebagai browser lain, dan tidak retry otomatis setelah diblokir. Detail: [`../domains/JOB-DISCOVERY.md`](../domains/JOB-DISCOVERY.md) §4.6.
+- **Pengecualian sumber `browser`:** fetch memakai sesi login pengguna sendiri, atas perintah eksplisit, di profil Chromium lokal. Untuk jalur ini `robots.txt` tidak dicek, karena aturan itu mengatur akses anonim. Login tetap dilakukan pengguna di jendela Chromium; Gawe tidak menyimpan password, tidak menangani 2FA, tidak menyamar sebagai browser lain, dan tidak retry otomatis setelah diblokir. Detail: [`../domains/JOB-DISCOVERY.md`](../domains/JOB-DISCOVERY.md) §4.6. Sejak 2026-10-27 (D26) jalur ini **opsional dan prioritas terakhir**; syarat keamanannya tidak dilonggarkan.
 - 403/429 → berhenti untuk sumber itu dan laporkan.
+
+### 4.2a API agregator resmi (`aggregator_api`, D27)
+
+- Adapter agregator hanya ditulis bila penyedia punya dokumentasi API resmi. Scrape halaman hasil bukan pengganti API.
+- API key disimpan di keyring atau environment; tidak masuk database, log, `tos_notes`, atau respons API.
+- Kuota harian diisi eksplisit di `daily_request_quota`. Scheduler berhenti pada kuota; tidak retry saat kuota habis.
+- `tos_notes` memuat kutipan ketentuan penyedia (attribution, cache, retensi, larangan redistribusi). Attribution yang diminta ditampilkan apa adanya.
+- Bila respons hanya memuat cuplikan deskripsi, sumber ditandai `snippet_only` dan hasil eligibility wajib `needs_review`.
+- `apply_url` wajib menunjuk halaman lamaran asli. Tautan ke halaman agregator tidak boleh dipakai sebagai URL lamaran.
+- Pada 2026-10-27 belum ada adapter agregator dan `ACCESS_METHODS` tetap `{ats_api}`.
 
 ### 4.3 Tautan Apply
 

@@ -31,9 +31,9 @@ Acceptance criteria dari `PLAN.md` disalin tanpa perubahan. File fase boleh mena
 | [Phase 2](PHASE-02.md) | Master CV dan `/setup` (2A/2B) | MVP inti | 2A selesai; 2B terimplementasi tanpa acceptance live | Konfirmasi kualitas profil; D1 untuk 2B |
 | [Phase 3](PHASE-03.md) | Discovery otomatis, eligibility, `/apply` | MVP inti selesai | Berjalan: 3A sebagian besar, 3B/3C terimplementasi, 3D sebagian (Matches UI + Application Workspace + dokumen deterministik/versi/review/approval; PDF/ekspor/reviewer LLM belum ada) | Setiap milestone 3A–3D; human review kualitas output |
 | [Phase 4](PHASE-04.md) | Perluasan sumber dan skala discovery | MVP discovery | Belum dimulai | Hasil relevan; D17 untuk cakupan Indonesia |
-| [Phase 5](PHASE-05.md) | Aggregator dan operasi | Di luar MVP | Belum dimulai | Tidak ada pelanggaran ToS |
+| [Phase 5](PHASE-05.md) | Aggregator dan operasi | Di luar MVP | Belum dimulai | Tidak ada pelanggaran ToS; D27 untuk adapter `aggregator_api` |
 | [Phase 6](PHASE-06.md) | Hardening opsional | Opsional | Belum dimulai | Keputusan terpisah |
-| [Phase 7](PHASE-07.md) | Sumber `browser` dengan sesi login pengguna | Di luar MVP | Disetujui 2026-10-25 (D23); belum dimulai | D23; ToS situs pertama dicatat |
+| [Phase 7](PHASE-07.md) | Sumber `browser` dengan sesi login pengguna | Di luar MVP; opsional dan prioritas terakhir (D26) | Disetujui 2026-10-25 (D23); belum dimulai | D23; ToS situs pertama dicatat |
 
 Urutan build tidak sama dengan urutan produk. Produk selalu setup → konfirmasi → discovery. Build dimulai dari fondasi dan setup agar discovery tidak pernah mendahului profil confirmed.
 

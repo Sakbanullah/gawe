@@ -87,6 +87,15 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 | D24 | Apakah provider endpoint dan API key dapat diedit dari browser? | Ya. `PUT /api/settings/provider` menerima `base_url`, provider id, model per role, dan `api_key` write-only. Key ditulis ke Windows Credential Manager via `keyring`, tidak pernah masuk `config.toml`, DB, log, atau response. `POST /api/settings/provider/test` melakukan satu `GET /models` tanpa data kandidat | `CLOSED` 2026-10-25 | — |
 | D22 | Library komponen UI? | **Mantine** satu-satunya library komponen UI utama; React + TS + Vite; styling bawaan; CSS manual hanya pengecualian terdokumentasi; tidak mencampur library UI utama | **Diputuskan** | Tidak |
 | D23 | Boleh mengambil lowongan dari jobboard yang menolak fetch anonim? | **Disetujui pengguna 2026-10-25.** Jalur `browser` memakai Playwright dengan profil Chromium lokal yang pengguna login sendiri (headed sekali, headless saat crawl). Password dan 2FA tidak pernah disimpan Gawe; cookie tidak dibaca atau dikirim ke klien; tidak ada rotasi proxy, penyamaran identitas browser, login otomatis, atau retry otomatis setelah diblokir. `robots.txt` tidak berlaku untuk jalur ini karena permintaan datang dari sesi pengguna sendiri. ToS tiap situs tetap berlaku dan risiko pembatasan akun ditanggung pengguna. Implementasi: Phase 7; menambah dependency `playwright` + Chromium. | **Diputuskan** 2026-10-25 | Tidak; tapi situs pertama yang diaktifkan wajib dicatat `tos_notes`-nya |
+| D26 | Urutan prioritas sumber discovery | API resmi dulu (ATS per perusahaan, lalu agregator resmi `aggregator_api`), URL manual kedua, jalur `browser`/ekstensi terakhir dan opsional. Dituangkan sebagai pita `priority_order` (10-29 API, 30-69 agregator non-API, 900+ manual/ekstensi) dan sebagai aturan pemilihan baris kanonik dedupe: baris API mengalahkan `manual_url` dan impor ekstensi. | **Diputuskan** 2026-10-27 | Tidak |
+| D27 | Syarat memakai API agregator lowongan | Adapter hanya ditulis bila ada dokumentasi API resmi, `tos_notes` berisi kutipan ketentuan, kuota harian eksplisit, API key dari keyring/environment, sumber `snippet_only` ditandai dan wajib `needs_review`, serta `apply_url` menunjuk halaman lamaran asli. `ACCESS_METHODS` tetap `{ats_api}` sampai adapter dibangun; tidak ada adapter agregator pada 2026-10-27. | **Diputuskan** 2026-10-27 | Tidak memblokir; memblokir penulisan adapter agregator |
+
+**Catatan 2026-10-27 (D26/D27, tidak mengubah isi keputusan di atas):**
+
+- D23 tetap berlaku, tetapi jalur `browser` turun menjadi **opsional dan prioritas terakhir**. Syarat keamanannya tidak dilonggarkan.
+- D3 tetap "global-only" untuk Phase 3. Sumber Indonesia tetap menunggu D17.
+- `aggregator_api` adalah nama metode yang didokumentasikan pada 2026-10-27. Nilai itu belum dapat ditulis: `ACCESS_METHODS` di `backend/src/gawe/jobs/sources/registry.py` tetap `{ats_api}`, tidak ada adapter, tidak ada migrasi.
+- Kandidat agregator pertama belum dipilih. Perbandingan ada di [`../notes/aggregator-shortlist.md`](../notes/aggregator-shortlist.md).
 
 ---
 
@@ -120,6 +129,7 @@ Sumber: `PLAN.md` §15.4. Tabel ini otoritatif untuk status operasional.
 - **Stripe dipersempit 2026-10-23 (keputusan pengguna):** board Stripe tidak di-fetch; Stripe hanya lewat URL manual. Board API Greenhouse Stripe mengabaikan `per_page` dan `page` (selalu 726 job), sehingga respons melebihi batas 5 MB: 5,65 MB dengan `content=true`. Tanpa `content`, 453 KB tetapi deskripsi kosong sehingga eligibility tidak dapat dinilai. Bukti: [`../../temporary/api-results/`](../../temporary/api-results/).
 - **Himalayas dihapus 2026-10-23 (keputusan pengguna):** sumber `aggregator` tidak didukung lagi; adapter dan seluruh entri UI/konfigurasinya dihapus. Lihat "Blocker ditutup" di bawah.
 - **Sumber pengganti agregator:** `OPEN`. Pengguna menyatakan akan menyebutkan sumbernya; belum ada nama, jadi tidak ada sumber baru yang diaktifkan.
+  - **Diperbarui 2026-10-27:** arahnya ditetapkan sebagai API resmi agregator (`aggregator_api`) dengan syarat D27; kandidat dibahas di [`../notes/aggregator-shortlist.md`](../notes/aggregator-shortlist.md). Tetap belum ada adapter, belum ada nama final, dan `ACCESS_METHODS` tetap `{ats_api}`.
 - **Indonesia (tetap nonaktif):** Xendit (Greenhouse), Amartha (Workable), Ajaib (Workable). Menunggu D17 dan persetujuan ToS/atribusi. Workable belum punya adapter.
 - **Aturan verifikasi:** `verified` hanya bila kriteria proyek terpenuhi (adapter ada, endpoint diuji, bukti fetch tersimpan).
 - **Batas klaim:** daftar ini bukan cakupan lowongan Indonesia nasional dan bukan sumber yang mencakup seluruh lowongan.
@@ -236,6 +246,37 @@ ulang di sini.
 - **Klarifikasi ke `hi@himalayas.app` tidak dikirim dan tidak akan dikirim.**
 - **Rujukan:** [`../domains/JOB-DISCOVERY.md`](../domains/JOB-DISCOVERY.md) §4.3, [`../notes/himalayas-clarification.md`](../notes/himalayas-clarification.md).
 
+### D26 — Urutan prioritas sumber discovery
+
+- **Status:** `CLOSED` 2026-10-27. Diputuskan pengguna.
+- **Konteks:** arah discovery perlu ditegaskan. API resmi paling murah, paling stabil, dan paling sah; URL manual selalu bisa dipakai tetapi bergantung pada satu halaman; jalur `browser` paling rapuh dan paling berisiko secara ToS.
+- **Keputusan:**
+  - Urutan yang dikejar: API resmi (ATS per perusahaan, lalu agregator resmi `aggregator_api`), URL manual, lalu `browser`/impor ekstensi.
+  - Jalur `browser` dan ekstensi browser **dipertahankan**, tetapi menjadi opsional dan prioritas terakhir. Keduanya tidak dihapus dan tidak dikerjakan lebih dulu.
+  - Dituangkan sebagai pita `priority_order`: 10-29 API, 30-69 agregator non-API, 900+ manual/ekstensi. Pita adalah konvensi, bukan constraint database; validasi tetap 1-1000.
+  - Dedupe memilih baris kanonik menurut band sumber: `ats_api` mengalahkan `aggregator_api`, yang mengalahkan `manual_url` dan impor ekstensi. Tie-break: `priority_order`, lalu `created_at`, lalu `job_id`.
+  - Baris yang sudah dipakai sebuah workspace tidak pernah diturunkan menjadi duplikat, karena semua pembacaan daftar dan match melewati baris duplikat.
+  - Tanpa backfill: baris lama tetap memakai pemenang "pertama tersimpan" sampai ada baris baru dari sumber berband lebih baik.
+- **Konsekuensi:** lowongan yang ditempel manual lalu ditemukan lagi oleh API berpindah kanonik ke baris API. Sebaliknya, tempelan manual tidak pernah mengambil alih baris API.
+- **Bukti:** `backend/src/gawe/jobs/dedupe.py`, `backend/tests/test_discovery_dedupe.py`.
+- **Rujukan:** [`../domains/JOB-DISCOVERY.md`](../domains/JOB-DISCOVERY.md) §3 dan §8.
+
+### D27 — Syarat memakai API agregator lowongan
+
+- **Status:** `CLOSED` 2026-10-27. Diputuskan pengguna.
+- **Konteks:** agregator dapat menambah cakupan Indonesia yang tidak tersedia di ATS per perusahaan, tetapi hanya sebagian yang punya API resmi, dan banyak yang hanya memberi cuplikan deskripsi atau tautan perantara.
+- **Keputusan:** adapter agregator hanya boleh ditulis bila seluruh syarat berikut terpenuhi:
+  1. Ada dokumentasi API resmi yang dapat dirujuk, bukan hasil scrape halaman hasil.
+  2. `tos_notes` pada baris sumber memuat kutipan ketentuan yang relevan (attribution, cache, retensi, larangan redistribusi).
+  3. Kuota harian diisi eksplisit di `daily_request_quota`; scheduler berhenti pada kuota, bukan retry.
+  4. API key berasal dari keyring atau environment; tidak pernah disimpan di baris database, log, atau respons API.
+  5. Bila respons hanya memuat cuplikan deskripsi, sumber ditandai `snippet_only` dan hasil eligibility-nya wajib `needs_review`.
+  6. `apply_url` wajib menunjuk halaman lamaran asli; bila agregator hanya memberi tautan ke halamannya sendiri, lowongan tetap disimpan dengan `apply_url_status = unavailable`.
+  7. Attribution yang diminta penyedia ditampilkan apa adanya.
+- **Yang tidak berubah pada 2026-10-27:** `ACCESS_METHODS` di `backend/src/gawe/jobs/sources/registry.py` tetap `{ats_api}`. `aggregator_api` hanya nama metode yang didokumentasikan; belum ada adapter, belum ada migrasi, dan belum ada baris sumber yang dapat ditulis dengan nilai itu. Nama agregator pertama belum dipilih; kandidat dibahas di [`../notes/aggregator-shortlist.md`](../notes/aggregator-shortlist.md).
+- **Konsekuensi:** penulisan adapter agregator adalah pekerjaan fase berikutnya dan tetap butuh persetujuan. Klaim cakupan Indonesia tetap menunggu D17.
+- **Rujukan:** [`../domains/JOB-DISCOVERY.md`](../domains/JOB-DISCOVERY.md) §4.7, [`../source-of-truth/API-CONTRACTS.md`](API-CONTRACTS.md) §3.2, [`../source-of-truth/SECURITY.md`](SECURITY.md) §5.
+
 ### D7, D8, D9, D11
 
 | ID | Ringkasan | Dampak bila belum diputuskan |
@@ -244,6 +285,8 @@ ulang di sini.
 | D8 | Enkripsi at-rest | BitLocker + ACL dianggap cukup untuk v1 |
 | D9 | Model reviewer berbeda | **Ditunda untuk Phase 3** (persetujuan pengguna 2026-10-21). Reviewer deterministik tidak setara dengan reviewer LLM: cakupannya fakta-vs-profil dan aturan format saja. Dampak: independensi reviewer lebih lemah dan dicatat di §8.2 `PHASE-03.md` |
 | D11 | API berbayar | Tidak dipakai di v1 |
+
+**Catatan 2026-10-27 (D27, tidak mengubah status):** larangan "API berbayar" tetap berlaku untuk v1. Adapter agregator resmi hanya boleh ditulis bila penyedianya menyediakan kuota gratis tanpa data pribadi; rencana berbayar tidak diaktifkan tanpa persetujuan baru. Kandidat dan angkanya ada di [`../notes/aggregator-shortlist.md`](../notes/aggregator-shortlist.md).
 
 ### D9 — Reviewer model terpisah (ditunda untuk Phase 3)
 
@@ -265,7 +308,7 @@ ulang di sini.
 | Phase 2A | Tidak ada | Fondasi, ingest, schema, UI review, fake provider |
 | Phase 2B | D1 + consent | D1 sudah diputuskan 2026-10-19 (9Router via `openai_compatible`); consent cloud versioned tersedia 2026-10-19 (API + UI Settings). Acceptance 2B tetap menunggu uji live |
 | Phase 3 | D1 untuk uji live; D3 untuk aktivasi sumber; D17 untuk klaim cakupan Indonesia; D6 saat instalasi Tectonic; D21 sebelum override `ineligible` | D1 diputuskan 2026-10-19; D3 global-only disetujui 2026-10-21; D6 diputuskan 2026-10-21. Phase 3 mencakup discovery otomatis. D17 dan sumber Indonesia tetap terbuka |
-| Phase 4 (implementasi) | Tidak ada gate baru selain Phase 3 selesai | Perluasan sumber dan agregator |
+| Phase 4 (implementasi) | Tidak ada gate baru selain Phase 3 selesai; D27 mengatur syarat adapter agregator | Perluasan sumber dan agregator. Pada 2026-10-27 belum ada adapter agregator dan `ACCESS_METHODS` tetap `{ats_api}` |
 | Phase 4 (acceptance) | Tidak ada gate Indonesia; cakupan Indonesia tidak diklaim | Disetujui pengguna 2026-10-22: fokus worldwide, Indonesia bonus. Acceptance diukur pada sumber global terverifikasi |
 | Phase 5 | ToS/attribution per sumber | Tidak ada D baru |
 | Phase 6 | Keputusan terpisah per fitur | Opsional |
@@ -297,7 +340,7 @@ Aturan tambahan:
 | "Override ineligible adalah fitur default" | Salah. D21 `CLOSED`: hanya `needs_review` yang dapat ditinjau manusia, `ineligible` tidak dapat dinaikkan |
 | "Phase 2 selesai tanpa D1" | Salah. Hanya 2A/fondasi yang selesai. D1 kini sudah diputuskan, tetapi Phase 2 tetap menunggu persetujuan eksplisit |
 | "Acceptance discovery bisa diclaim tanpa D3/D17" | Salah. Tidak boleh |
-| "URL manual adalah jalur utama discovery" | Salah. Discovery otomatis adalah jalur utama; URL manual hanya fallback |
+| "URL manual adalah jalur utama discovery" | Salah. Discovery otomatis adalah jalur utama; URL manual adalah jalur kedua. Sejak 2026-10-27 urutannya D26: API resmi per perusahaan, API agregator resmi, URL manual, lalu `browser`/ekstensi |
 | "Apply otomatis mengirim lamaran" | Salah. Apply membuka halaman resmi; pengguna submit |
 
 ---

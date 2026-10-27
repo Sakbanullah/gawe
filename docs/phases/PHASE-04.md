@@ -16,6 +16,8 @@ Perluas cakupan discovery tanpa mengubah aturan eligibility, fit, atau ranking y
 
 Di luar scope: agregator remote/EU dan operasi backup (Phase 5), OCR (Phase 6), perubahan aturan ranking, perubahan aturan approval/ekspor. Sumber `browser` dengan sesi login pengguna masuk Phase 7, bukan Phase 4.
 
+**Catatan 2026-10-27 (Revisi 10, D26).** Phase ini tetap soal API resmi per perusahaan dan cakupan Indonesia (D17). Pita `priority_order` yang dipakai scheduler: 10-29 API, 30-69 agregator non-API, 900+ manual/ekstensi. Pita adalah konvensi, bukan constraint database; tidak ada migrasi. Adapter agregator resmi (`aggregator_api`) bukan scope phase ini: syaratnya D27 dan pengerjaannya di Phase 5.
+
 ---
 
 ## 2. Prasyarat dan Dependensi

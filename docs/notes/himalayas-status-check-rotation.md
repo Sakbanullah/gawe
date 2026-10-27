@@ -2,6 +2,8 @@
 
 Status: **BLOCKED**, bukan selesai. Blokir B1 (retensi Himalayas) ditutup 2026-10-23 karena sumber itu dihapus; B2 dan B3 tetap berlaku.
 
+> Superseded by D26/D27 (`docs/source-of-truth/DECISIONS.md`) 2026-10-27 untuk arah sumber: agregator yang didukung adalah API resmi (`aggregator_api`), belum ada adapter, dan `ACCESS_METHODS` tetap `{ats_api}`. Status BLOCKED catatan ini tidak berubah.
+
 Alasan: tidak ada kolom penanda cek status pada `job`, dan perilaku `410` belum teramati pada sumber mana pun yang didukung. Keduanya menghalangi implementasi yang dapat dipertanggungjawabkan.
 
 Catatan 2026-10-23: desain ini tidak bergantung pada Himalayas. Sumber itu dihapus dari daftar yang didukung, sehingga kewajiban penghapusan lowongan kedaluwarsa miliknya tidak lagi menjadi pertanyaan proyek. Lihat [`DECISIONS.md`](../source-of-truth/DECISIONS.md) "Blocker ditutup".

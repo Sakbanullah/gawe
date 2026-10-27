@@ -2,6 +2,8 @@
 
 Status: **DITUTUP 2026-10-23**. Catatan ini disimpan sebagai jejak keputusan.
 
+> Superseded by D26/D27 (`docs/source-of-truth/DECISIONS.md`) 2026-10-27 untuk arah sumber penggantinya: jalur agregator yang didukung sekarang adalah API resmi (`aggregator_api`), belum ada adapter, dan `ACCESS_METHODS` tetap `{ats_api}`. Catatan ini tetap berlaku sebagai jejak bahwa sumber Himalayas tidak dipakai.
+
 Keputusan pengguna: sumber Himalayas **dihapus** dari daftar sumber yang didukung. Klarifikasi tidak dikirim dan tidak akan dikirim.
 
 Tujuan asli: menutup pertanyaan retensi sebelum sumber Himalayas boleh diaktifkan.

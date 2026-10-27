@@ -18,6 +18,8 @@ Memperluas sumber remote + operability:
 
 Di luar scope: OCR, model lokal (Phase 6). Sumber `browser` dengan sesi login pengguna berada di Phase 7. Sumber Indonesia terverifikasi sudah ditangani Phase 4.
 
+**Catatan 2026-10-27 (Revisi 10, D26/D27).** Phase ini adalah tempat pertama adapter agregator resmi (`aggregator_api`) boleh ditulis, dan hanya bila syarat D27 terpenuhi: dokumentasi API resmi, `tos_notes` berisi kutipan ketentuan, kuota harian eksplisit, key dari keyring/environment, `snippet_only` wajib `needs_review`, `apply_url` ke halaman asli, attribution ditampilkan apa adanya. Sampai adapter itu dibangun, `ACCESS_METHODS` tetap `{ats_api}` dan nama agregator pertama belum dipilih (kandidat: `docs/notes/aggregator-shortlist.md`). Jalur `browser`/ekstensi tidak dinaikkan ke phase ini.
+
 ---
 
 ## 2. Prasyarat dan Dependensi

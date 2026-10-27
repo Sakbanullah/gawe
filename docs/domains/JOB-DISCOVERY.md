@@ -26,7 +26,7 @@
 - Pembuatan dokumen.
 - Menentukan sumber Indonesia final (D17).
 
-Discovery otomatis adalah jalur utama produk. URL manual adalah fallback opsional dan memakai sumber sintetis `manual_url`.
+Discovery otomatis adalah jalur utama produk. Urutan prioritas sumber (D26, 2026-10-27): API resmi per perusahaan, lalu API agregator resmi (`aggregator_api`, belum dapat ditulis), lalu URL manual yang memakai sumber sintetis `manual_url`, lalu jalur `browser`/ekstensi yang bersifat opsional dan paling akhir.
 
 ---
 
@@ -51,7 +51,7 @@ Setiap sumber adalah record yang dapat dikelola dari web UI:
   "company": "...",
   "market": "indonesia | global",
   "careers_url": "...",
-  "access_method": "ats_api | aggregator | html | manual_url",
+  "access_method": "ats_api | aggregator | aggregator_api | html | manual_url | browser",
   "ats": "greenhouse | lever | ashby | unknown",
   "verification_status": "unverified | verified | restricted | broken",
   "tos_notes": "...",
@@ -73,6 +73,20 @@ Setiap sumber adalah record yang dapat dikelola dari web UI:
 Operasi UI: tambah, edit, nonaktifkan, ubah status verifikasi, atur prioritas/interval/kuota.
 
 `access_method` yang boleh dibuat pengguna hanya `ats_api` (board satu perusahaan yang punya adapter). `html` ditolak saat write karena tidak ada adapter yang dapat mengambilnya; menyimpannya hanya menjanjikan fetch yang selalu di-skip. `aggregator` juga ditolak sejak 2026-10-23: satu-satunya adapter feed (Himalayas) dihapus dari daftar sumber. Baris lama bertipe `html`/`aggregator` tetap terbaca dan dapat dinonaktifkan, tetapi tidak pernah di-fetch.
+
+`aggregator_api` (D27, 2026-10-27) adalah nama metode untuk adapter agregator resmi. Nilai itu **belum dapat ditulis**: `ACCESS_METHODS` di `backend/src/gawe/jobs/sources/registry.py` tetap `{ats_api}` sampai adapter-nya dibangun. Baris `aggregator_api` tidak boleh dibuat lewat UI, dan tidak ada adapter yang membaca nilai itu.
+
+#### Pita `priority_order` (D26, 2026-10-27)
+
+`priority_order` kecil dijalankan lebih dulu oleh scheduler dan dipakai sebagai tie-break pemilihan baris kanonik saat dedupe:
+
+| Pita | Rentang | Isi |
+|---|---|---|
+| API | 10-29 | `ats_api`; sumber resmi per perusahaan |
+| Agregator non-API | 30-69 | Feed publik tanpa auth (Arbeitnow, Remotive, Jobicy) |
+| Manual dan ekstensi | 900+ | `manual_url`, impor ekstensi browser |
+
+Nilai di luar pita tetap sah (registry menerima 1-1000). Pita adalah konvensi operasional, bukan constraint database: tidak ada migrasi dan tidak ada validasi baru. Sumber `manual_url` sintetis memakai `access_method` sebagai penentu peringkat, bukan angka `priority_order` yang tersimpan.
 
 ### Kesehatan dan penjadwalan
 
@@ -158,7 +172,33 @@ Konsekuensinya:
 
 Keputusan: [`../source-of-truth/DECISIONS.md`](../source-of-truth/DECISIONS.md) D3 dan "Blocker ditutup".
 
+### 4.4 Sumber yang tidak dapat dipakai v1
+
+| Sumber | Alasan |
+|---|---|
+| Adzuna | Butuh key; kuota gratis tidak dipublikasikan (terlihat di akun); tidak mencakup Indonesia. Ditinjau ulang 2026-10-27 sebagai kandidat `aggregator_api`, masih di luar v1 (§4.7). |
+| Jooble | Key per domain negara; kuota gratis 500 request seumur kunci; respons hanya cuplikan. Ditinjau ulang 2026-10-27 sebagai kandidat `aggregator_api`, masih di luar v1 (§4.7). |
+| SEEK / Jobstreet | Akses butuh persetujuan Integration Request |
+| Kalibrr | API integrasi hanya untuk pelanggan, lewat Account Manager |
+| Glints, Dealls | Tidak ada API lowongan publik resmi yang ditemukan |
+| Karirhub (Kemnaker) | Integrasi API dengan mitra disebut ada; tidak ada API developer publik terdokumentasi |
+| Workday | Tidak ada API job posting publik; REST/SOAP per tenant |
+| LinkedIn, Indeed | Anti-bot/auth/ToS; tidak didukung |
+| Halaman karier perusahaan (HTML) | Satu perusahaan; tergantung robots/ToS; perlu verifikasi per situs |
+| URL manual | Satu lowongan; validasi per request; **fallback**, bukan jalur utama; dapat memakai teks tempel bila halaman menolak akses atau dirender JavaScript |
+| Himalayas | Dihapus 2026-10-23: API mewajibkan penghapusan lowongan tidak aktif tanpa menjelaskan cakupannya, dan klarifikasi tidak dikejar. Adapter dan konfigurasinya ikut dihapus. |
+
+### 4.5 Catatan cakupan
+
+- ATS API bukan mesin pencari lowongan umum.
+- Tidak ada sumber dengan API resmi yang memberi cakupan Indonesia luas.
+- Cakupan Indonesia bergantung pada daftar perusahaan Indonesia yang memakai ATS tersebut (D3) dan verifikasi sumber (D17).
+- Jangan mengklaim cakupan Indonesia sebelum D17 tersedia dan sumber diuji.
+- Sumber tanpa API resmi tidak di-scrape lewat HTTP biasa; gunakan fallback URL manual. Pengecualian: sumber bertipe `browser` (§4.6) memakai sesi login pengguna sendiri, atas perintah eksplisit, dan tanpa klaim cakupan.
+
 ### 4.6 Sumber `browser` (sesi login pengguna)
+
+**Prioritas: opsional dan paling akhir** (D26, 2026-10-27). Jalur ini dipertahankan, tidak dihapus, tetapi bukan target Phase 3-7 yang dikejar lebih dulu. Urutan sumber: API resmi (ATS per perusahaan, lalu agregator resmi), URL manual, baru `browser`. Jalur ini hanya dipakai bila pengguna memintanya secara eksplisit untuk satu sumber.
 
 Jalur ini ada karena jobboard besar (Indeed, Jobstreet, LinkedIn) tidak menyediakan API lowongan publik dan menolak fetch anonim. Jalur ini **bukan crawler publik** dan **bukan bypass**: sistem memakai sesi login yang pengguna sendiri buat di profil Chromium lokal.
 
@@ -177,29 +217,23 @@ Aturan:
 
 Kontrak adapter tetap: `build_url(source)` + `parse(html, source)` menghasilkan `ParsedJobs(jobs, skipped, complete)`. Dedupe, eligibility, ranking, dan approval tidak berubah.
 
-### 4.4 Sumber yang tidak dapat dipakai v1
+### 4.7 Agregator resmi (`aggregator_api`) — desain, belum diimplementasikan
 
-| Sumber | Alasan |
-|---|---|
-| Adzuna | Butuh key; ~250 call/hari gratis; tidak mencakup Indonesia (D11: tidak untuk v1) |
-| Jooble | Key per domain negara; formulir review |
-| SEEK / Jobstreet | Akses butuh persetujuan Integration Request |
-| Kalibrr | API integrasi hanya untuk pelanggan, lewat Account Manager |
-| Glints, Dealls | Tidak ada API lowongan publik resmi yang ditemukan |
-| Karirhub (Kemnaker) | Integrasi API dengan mitra disebut ada; tidak ada API developer publik terdokumentasi |
-| Workday | Tidak ada API job posting publik; REST/SOAP per tenant |
-| LinkedIn, Indeed | Anti-bot/auth/ToS; tidak didukung |
-| Halaman karier perusahaan (HTML) | Satu perusahaan; tergantung robots/ToS; perlu verifikasi per situs |
-| URL manual | Satu lowongan; validasi per request; **fallback**, bukan jalur utama; dapat memakai teks tempel bila halaman menolak akses atau dirender JavaScript |
-| Himalayas | Dihapus 2026-10-23: API mewajibkan penghapusan lowongan tidak aktif tanpa menjelaskan cakupannya, dan klarifikasi tidak dikejar. Adapter dan konfigurasinya ikut dihapus. |
+**Status 2026-10-27:** desain dan dokumentasi saja. Tidak ada adapter, tidak ada perubahan `ACCESS_METHODS` (tetap `{ats_api}`), tidak ada migrasi, tidak ada pemanggilan jaringan. Ringkasan kandidat: [`../notes/aggregator-shortlist.md`](../notes/aggregator-shortlist.md).
 
-### 4.5 Catatan cakupan
+Bentuk adapter mengikuti kontrak yang sama dengan ATS: `build_url(source)` + `parse(body, source)` menghasilkan `ParsedJobs(jobs, skipped, complete)`. Bedanya hanya sumber kredensial dan bentuk payload.
 
-- ATS API bukan mesin pencari lowongan umum.
-- Tidak ada sumber dengan API resmi yang memberi cakupan Indonesia luas.
-- Cakupan Indonesia bergantung pada daftar perusahaan Indonesia yang memakai ATS tersebut (D3) dan verifikasi sumber (D17).
-- Jangan mengklaim cakupan Indonesia sebelum D17 tersedia dan sumber diuji.
-- Sumber tanpa API resmi tidak di-scrape lewat HTTP biasa; gunakan fallback URL manual. Pengecualian: sumber bertipe `browser` (§4.6) memakai sesi login pengguna sendiri, atas perintah eksplisit, dan tanpa klaim cakupan.
+Syarat sebelum adapter agregator boleh ditulis (D27):
+
+1. Ada dokumentasi API resmi yang dapat dirujuk, bukan hasil scrape halaman hasil.
+2. `tos_notes` pada baris sumber memuat kutipan ketentuan yang relevan (attribution, cache, retensi, larangan redistribusi).
+3. Kuota harian diisi eksplisit di `daily_request_quota`; scheduler berhenti pada kuota, bukan retry.
+4. API key berasal dari keyring atau environment, tidak pernah disimpan di baris database, log, atau respons API.
+5. Bila respons hanya memuat cuplikan deskripsi, sumber ditandai `snippet_only = true`. Eligibility dan fit untuk lowongan seperti itu wajib `needs_review`, karena teks lengkap tidak tersedia untuk verifikasi requirement.
+6. `apply_url` wajib menunjuk halaman lamaran asli. Bila agregator hanya memberi tautan ke halaman agregator, lowongan tetap disimpan dengan `apply_url_status = unavailable` dan UI membuka halaman sumber.
+7. Attribution yang diminta penyedia ditampilkan apa adanya di UI dan tidak dihapus saat normalisasi.
+
+Yang tidak boleh: mengarang URL lamaran, melewati halaman perantara berbayar, menyimpan hasil scrape agregator sebagai pengganti API resmi, atau mengklaim cakupan Indonesia dari agregator sebelum D17 diselesaikan.
 
 ---
 

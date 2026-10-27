@@ -1,5 +1,7 @@
 # Gawe Job Import (ekstensi)
 
+**Prioritas: opsional dan paling akhir (D26, 2026-10-27).** Ekstensi ini dipertahankan, bukan jalur utama. Urutan yang dikejar: API resmi per perusahaan, API agregator resmi, URL manual, lalu ekstensi ini. Pakai ekstensi hanya bila jalur di atas tidak tersedia untuk situs yang kamu incar.
+
 Ekstensi kecil untuk Brave/Chrome/Edge. Ia **tidak** membuka situs, tidak menggulir, tidak mengklik "next". Kamu yang membuka Jobstreet dan mencari; ekstensi hanya membaca yang sudah tampil, lalu mengirimkannya ke Gawe.
 
 ## Kenapa begini

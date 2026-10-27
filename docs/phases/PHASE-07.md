@@ -3,6 +3,8 @@
 **Status:** disetujui 2026-10-25 (D23). Belum diimplementasikan. Papan pelacakan ada di §11A.
 **Sumber:** `PLAN.md` §13 Phase 7, `docs/source-of-truth/DECISIONS.md` D23, `docs/domains/JOB-DISCOVERY.md` §4.6.
 
+**Peringatan prioritas 2026-10-27 (Revisi 10, D26):** phase ini **opsional dan prioritas terakhir**. Urutan yang dikejar lebih dulu: API resmi per perusahaan, API agregator resmi (Phase 5, syarat D27), lalu URL manual. Jalur `browser` dan impor ekstensi tetap dipertahankan dan tidak dihapus; syarat keamanan D23 tidak dilonggarkan.
+
 ---
 
 ## 1. Tujuan dan Scope

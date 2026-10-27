@@ -11,7 +11,7 @@
 Gawe adalah **aplikasi web lokal untuk satu pengguna** yang membantu kandidat:
 
 1. Mengubah Master CV menjadi profil kandidat terverifikasi.
-2. Menemukan lowongan secara otomatis dari sumber terverifikasi; URL manual tersedia sebagai fallback.
+2. Menemukan lowongan secara otomatis dari sumber terverifikasi; URL manual tersedia sebagai jalur kedua. Urutan prioritas sumber (D26): API resmi per perusahaan, lalu API agregator resmi, lalu URL manual, lalu jalur `browser`/ekstensi yang bersifat opsional dan paling akhir.
 3. Menilai kelayakan dan kecocokan lowongan secara terpisah dan transparan.
 4. Menghasilkan CV turunan dan cover letter per lowongan yang dapat ditelusuri ke fakta sumber.
 5. Meninjau, menyetujui per versi, dan mengekspor PDF.
@@ -42,7 +42,7 @@ Bukan tujuan produk: deployment publik, multi-user, auto-submit, auto-email, ata
 | Fit score adalah dasar ranking | Priority tier hanya tie-breaker |
 | Integritas dokumen lebih penting daripada kreativitas | Setiap klaim penting harus punya bukti atau deklarasi pengguna |
 | Reviewer terisolasi | Instruksi reviewer terpisah dari proses penulisan |
-| Sumber lowongan harus jujur | Discovery otomatis adalah jalur utama; seed adalah target, bukan cakupan terverifikasi; URL manual hanya fallback |
+| Sumber lowongan harus jujur | Discovery otomatis adalah jalur utama; seed adalah target, bukan cakupan terverifikasi; URL manual adalah jalur kedua; jalur `browser`/ekstensi opsional dan paling akhir (D26) |
 | Apply adalah tindakan manusia | Tidak ada auto-submit |
 | Approval melekat pada versi dokumen | Edit/regenerate membuat versi baru yang belum disetujui |
 | Backend adalah sumber kebenaran | Frontend tidak menghitung aturan bisnis otoritatif |
@@ -179,7 +179,7 @@ Workflow dari **discovery otomatis sampai ekspor**:
 
 - Master CV terunggah.
 - Profil terkonfirmasi.
-- Lowongan ditemukan otomatis dari source registry; URL manual tersedia sebagai fallback.
+- Lowongan ditemukan otomatis dari source registry (API resmi); URL manual tersedia sebagai jalur kedua.
 - Lowongan dinilai eligibility dan fit-nya, lalu diurutkan fit-first.
 - CV turunan + cover letter disetujui per versi.
 - PDF bernama standar.

@@ -1,7 +1,7 @@
 # Dokumentasi Gawe
 
 **Status:** implementasi Phase 1–3 berjalan; Phase 3 gap 3D ditutup 2026-10-21 dan acceptance-nya menunggu gate §11. Dokumen di folder ini tetap dokumen perencanaan dan source of truth.
-**Sumber master:** [`PLAN.md`](../PLAN.md) Revisi 7 (19 Oktober 2026).
+**Sumber master:** [`PLAN.md`](../PLAN.md) Revisi 10 (27 Oktober 2026).
 **Direktori proyek:** `D:\gawe`
 
 Dokumen ini adalah pintu masuk dokumentasi. Tujuannya: memberi coding agent dan reviewer satu peta konteks yang ringkas, modular, dan tidak saling bertentangan.
@@ -141,6 +141,12 @@ Jangan membaca seluruh `PLAN.md` secara default. Jangan mengulang pembacaan doku
 | [SECURITY-AND-PRIVACY.md](domains/SECURITY-AND-PRIVACY.md) | Penerapan kontrol keamanan, PII, redaksi, retensi, purge, SSRF, CSRF, consent |
 | [TESTING.md](domains/TESTING.md) | Strategi unit/integration/e2e, fixture, isolasi, bukti, acceptance gate |
 | [GRAPHIFY.md](domains/GRAPHIFY.md) | Baseline graph dokumentasi, perintah query, prosedur pembaruan, batasan operasional |
+
+### Catatan riset
+
+| Dokumen | Tanggung jawab |
+|---|---|
+| [notes/aggregator-shortlist.md](notes/aggregator-shortlist.md) | Perbandingan kandidat API agregator (Adzuna, Jooble, Google Jobs via SerpApi/JSearch). Riset read-only, bukan keputusan; `aggregator_api` belum dapat ditulis |
 
 ### Fase
 

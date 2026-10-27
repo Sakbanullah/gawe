@@ -1,8 +1,8 @@
 # Gawe — Rencana Arsitektur dan Implementasi
 
 **Status:** Draft revisi untuk review. Belum ada implementasi.
-**Tanggal:** 19 Oktober 2026
-**Revisi:** 9 — discovery otomatis dipindahkan ke Phase 3 sebagai jalur utama; URL manual menjadi fallback opsional. Phase 4 menjadi perluasan sumber terverifikasi.
+**Tanggal:** 27 Oktober 2026
+**Revisi:** 10 — urutan prioritas sumber discovery ditetapkan (API resmi, lalu URL manual, lalu jalur browser/ekstensi sebagai opsi terakhir); API agregator resmi disiapkan sebagai desain dengan syarat D27, tanpa adapter dan tanpa perubahan `ACCESS_METHODS`.
 **Direktori proyek:** `D:\gawe`
 **Effort:** High
 
@@ -10,6 +10,7 @@
 
 **Catatan perubahan:**
 
+- **Revisi 10 (27 Oktober 2026):** Urutan prioritas sumber discovery ditetapkan (D26). API resmi menjadi target utama: ATS per perusahaan lebih dulu, lalu API agregator resmi. URL manual menjadi jalur kedua. Jalur `browser` dan ekstensi browser dipertahankan tetapi turun menjadi opsional dan prioritas terakhir; syarat keamanan D23 tidak dilonggarkan. API agregator resmi disiapkan sebagai desain dengan syarat D27 (dokumentasi API resmi, `tos_notes`, kuota harian, key dari keyring/environment, `snippet_only` wajib `needs_review`, `apply_url` ke halaman asli). Tidak ada adapter agregator yang dibangun, tidak ada migrasi, dan `ACCESS_METHODS` tetap `{ats_api}`. Pita `priority_order` (10-29 API, 30-69 agregator non-API, 900+ manual/ekstensi) adalah konvensi, bukan constraint. Dedupe memilih baris kanonik menurut band sumber; baris lama tidak di-backfill. Perbandingan kandidat agregator ada di [`docs/notes/aggregator-shortlist.md`](docs/notes/aggregator-shortlist.md). Tidak ada perubahan pada aturan Master CV, eligibility-before-fit, approval, ekspor, atau larangan auto-submit.
 - **Revisi 9 (19 Oktober 2026):** Arah discovery diubah atas arahan pengguna. Discovery otomatis dari source registry menjadi jalur utama dan masuk Phase 3 (milestone 3A discovery, 3B normalisasi/dedupe, 3C eligibility/matching, 3D UI dan dokumen). URL manual menjadi fallback opsional. Phase 4 menjadi perluasan sumber terverifikasi dan skala discovery. D3 kini memblokir aktivasi sumber dan acceptance discovery Phase 3; D17 memblokir klaim cakupan Indonesia. Acceptance lama dipertahankan dan ditambah kriteria per milestone. Tidak ada perubahan pada aturan Master CV, eligibility-before-fit, approval, ekspor, atau larangan auto-submit.
 - **Revisi 8 (19 Oktober 2026):** Sinkronisasi status D1 dengan [`docs/source-of-truth/DECISIONS.md`](docs/source-of-truth/DECISIONS.md). D1 **Diputuskan** 2026-10-19: 9Router sebagai satu provider aktif lewat adapter `openai_compatible`; `base_url` dan model per role tetap konfigurasi; API key lewat `api_key_ref` atau environment development; fake provider dipertahankan. Consent cloud dan D18 detail provider tetap berlaku. Tidak ada keputusan, kontrak konfigurasi, schema, atau OpenAPI yang diubah. Catatan status D1 pada Revisi 6 dan Revisi 7 bersifat historis.
 - **Revisi 7 (19 Oktober 2026):** Konsistensi D1 dan timing provider: fake provider cukup untuk Phase 1; provider nyata wajib dipilih sebelum Phase 2 dinyatakan berfungsi penuh; tanpa pilihan itu Phase 2 dibatasi pada fondasi/fake provider. Gate D3/D17 dipindahkan ke Phase 4 dan tidak memblokir Phase 1–3 atau Master CV. Privasi/retensi diselaraskan: log operasional tanpa isi CV/CL/PII; debug model I/O mati secara default; retensi berlabel sementara sampai D10 disetujui. MVP dibedakan menjadi MVP inti Phase 1–3 dan MVP discovery Phase 1–4. Status D1, D3, D10, dan D17 tetap terbuka. *(Catatan historis: posisi D3/D17 diubah lagi pada Revisi 9.)*
@@ -669,7 +670,7 @@ Setiap sumber adalah record yang dapat dikelola dari web UI:
   "company": "...",
   "market": "indonesia | global",
   "careers_url": "...",
-  "access_method": "ats_api | aggregator | html | manual_url | browser",
+  "access_method": "ats_api | aggregator | aggregator_api | html | manual_url | browser",
   "ats": "greenhouse | lever | ashby | unknown",
   "verification_status": "unverified | verified | restricted | broken",
   "tos_notes": "...",
@@ -695,8 +696,17 @@ Setiap sumber adalah record yang dapat dikelola dari web UI:
 | Jobicy | JSON API | Tidak | Remote | Attribution; maks. 1 poll/jam; jendela 7 hari | Terprobe, Phase 5 |
 | RemoteOK | JSON API | Tidak | Remote | Link-back attribution | Belum diverifikasi ulang |
 | Halaman karier perusahaan | HTML | Tidak | Satu perusahaan | Tergantung robots/ToS | Perlu verifikasi per situs |
-| URL manual | HTTP GET | Tidak | Satu lowongan | Hormati robots/ToS; tanpa bypass | Fallback opsional |
+| URL manual | HTTP GET | Tidak | Satu lowongan | Hormati robots/ToS; tanpa bypass | Jalur kedua setelah API resmi |
 | Adzuna, Jooble, SEEK/Jobstreet, Kalibrr, Glints, Dealls, Karirhub, Workday, LinkedIn, Indeed | Tidak didukung | — | — | Butuh key/persetujuan, partner-only, atau anti-bot/ToS | Tidak |
+
+**Urutan prioritas sumber (Revisi 10, D26):**
+
+1. API resmi per perusahaan (`ats_api`: Greenhouse, Lever, Ashby). Paling murah, paling stabil, paling sah.
+2. API agregator resmi (`aggregator_api`). Nama metode ini **belum dapat ditulis**: `ACCESS_METHODS` di `backend/src/gawe/jobs/sources/registry.py` tetap `{ats_api}`, dan belum ada adapter. Syarat lengkapnya D27 di `docs/source-of-truth/DECISIONS.md`; kandidat dibandingkan di `docs/notes/aggregator-shortlist.md`.
+3. URL manual yang ditempel pengguna.
+4. Jalur `browser` dan impor ekstensi browser. Dipertahankan, tetapi opsional dan prioritas terakhir.
+
+Pita `priority_order` mengikuti urutan ini (10-29 API, 30-69 agregator non-API, 900+ manual/ekstensi). Pita adalah konvensi operasional, bukan constraint database: validasi tetap 1-1000 dan tidak ada migrasi.
 
 Tabel rinci dengan URL dokumentasi resmi ada di [`docs/domains/JOB-DISCOVERY.md`](docs/domains/JOB-DISCOVERY.md) §4.
 
@@ -2306,10 +2316,12 @@ Status: **Diputuskan** = sudah ada keputusan eksplisit; **Menunggu konfirmasi** 
 | D20 | Apakah aplikasi perlu autentikasi lokal sederhana? | Tidak untuk single-user; bind localhost + CSRF | Menunggu konfirmasi | Tidak |
 | D21 | Apakah pembuatan dokumen untuk lowongan `ineligible` dipertahankan sebagai pengecualian? | Default tidak. Jika dipertahankan: aksi eksplisit, peringatan jelas, alasan tercatat, status tetap `ineligible`; bukan tombol utama | Menunggu konfirmasi | Tidak untuk Phase 1–2; ya sebelum Phase 3 jika override diimplementasikan |
 | D22 | Library komponen UI mana yang dipakai? | **Mantine** sebagai satu-satunya library komponen UI utama; React + TypeScript + Vite; komponen dan styling bawaan Mantine; CSS manual hanya pengecualian minimal terdokumentasi; tidak mencampur library UI utama | **Diputuskan** | Tidak |
+| D26 | Urutan prioritas sumber discovery? | API resmi per perusahaan, lalu API agregator resmi, lalu URL manual, lalu `browser`/ekstensi sebagai opsi terakhir. Pita `priority_order`: 10-29 API, 30-69 agregator non-API, 900+ manual/ekstensi. Dedupe memilih kanonik menurut band sumber. Detail: `docs/source-of-truth/DECISIONS.md` D26. | **Diputuskan** 2026-10-27 | Tidak |
+| D27 | Syarat memakai API agregator lowongan? | Dokumentasi API resmi, `tos_notes` berisi kutipan ketentuan, kuota harian eksplisit, key dari keyring/environment, `snippet_only` wajib `needs_review`, `apply_url` ke halaman asli. `ACCESS_METHODS` tetap `{ats_api}` sampai adapter dibangun; belum ada adapter agregator. | **Diputuskan** 2026-10-27 | Memblokir penulisan adapter agregator |
 
 **Catatan audit D19:** D19 ditemukan di §15.4 versi sebelumnya dan memang berarti bahasa CV/cover letter. Isinya tidak ditebak; keputusan di atas menjawab pertanyaan tersebut.
 
-**Catatan:** D1, D2, D4, D5, D12, D13, D14, D15, D16, D18 (prinsip), D19, dan D22 sudah diputuskan. D3, D6, D7–D11, D17, D20, dan D21 masih menunggu konfirmasi atau riset. Gate per fase: Phase 1 tidak membutuhkan keputusan terbuka selain D22; Phase 2B dan Phase 3 live membutuhkan provider aktif terkonfigurasi (D1 sudah diputuskan) dan consent; Phase 3 membutuhkan D3 agar sumber dapat diaktifkan dan D17 untuk klaim cakupan Indonesia; Phase 4 memperluas sumber terverifikasi; D6 dibutuhkan saat instalasi Tectonic; D21 sebelum override `ineligible`; D10 sebelum durasi retensi menjadi final. Jangan memperlakukan item terbuka sebagai keputusan final. Persetujuan atas rencana ini bukan izin memulai implementasi.
+**Catatan:** D1, D2, D4, D5, D12, D13, D14, D15, D16, D18 (prinsip), D19, D22, D26, dan D27 sudah diputuskan. D3, D6, D7–D11, D17, D20, dan D21 masih menunggu konfirmasi atau riset. Gate per fase: Phase 1 tidak membutuhkan keputusan terbuka selain D22; Phase 2B dan Phase 3 live membutuhkan provider aktif terkonfigurasi (D1 sudah diputuskan) dan consent; Phase 3 membutuhkan D3 agar sumber dapat diaktifkan dan D17 untuk klaim cakupan Indonesia; Phase 4 memperluas sumber terverifikasi; D6 dibutuhkan saat instalasi Tectonic; D21 sebelum override `ineligible`; D10 sebelum durasi retensi menjadi final; D27 sebelum adapter agregator ditulis. Jangan memperlakukan item terbuka sebagai keputusan final. Persetujuan atas rencana ini bukan izin memulai implementasi.
 
 ---
 
