@@ -132,6 +132,8 @@ elif fit_score >= 55: verdict = "moderate"
 else: verdict = "weak"
 ```
 
+Tanpa requirement `must_have` yang terbaca, skor tidak dihitung sama sekali: tidak ada baris `fit_assessment`, dan `fit` bernilai `null` di API. Nilai `must_coverage` tidak boleh dianggap 1.0, karena itu memberi skor tinggi pada lowongan yang persyaratannya tidak terbaca.
+
 ### 4.2 Aturan
 
 - Hanya dihitung untuk `eligible`.

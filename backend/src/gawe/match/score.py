@@ -18,9 +18,18 @@ STRONG_THRESHOLD = 75
 MODERATE_THRESHOLD = 55
 
 
-def score(checks: list[dict]) -> dict:
+def score(checks: list[dict]) -> dict | None:
+    """Return the fit payload, or ``None`` when there is nothing to score.
+
+    A description that yielded no mandatory requirement is "cannot be judged",
+    not a perfect match: scoring it would credit a job for the requirements it
+    never stated. Callers treat ``None`` as "no fit assessment" and keep the
+    eligibility verdict, including its reason, as the visible answer.
+    """
     must = [check for check in checks if check.get("kind") == "must_have"]
     nice = [check for check in checks if check.get("kind") == "nice_to_have"]
+    if not must:
+        return None
     must_coverage = _coverage(must)
     nice_coverage = _coverage(nice)
     experience_fit = EXPERIENCE_FIT_FALLBACK
