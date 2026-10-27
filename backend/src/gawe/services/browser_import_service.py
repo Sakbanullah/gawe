@@ -166,7 +166,12 @@ class BrowserImportService:
         self._connection = connection
         self._discovery = discovery
         self._profiles = discovery._profiles  # noqa: SLF001 - same package
-        self._assessments = AssessmentService(connection, self._profiles)
+        self._assessments = AssessmentService(
+            connection,
+            self._profiles,
+            llm_client=discovery._llm,  # noqa: SLF001 - same package
+            root_dir=discovery._root_dir,  # noqa: SLF001 - same package
+        )
         self._tasks = tasks or TaskStore(connection)
 
     def import_cards(self, source: str, page_url: str, cards: list[dict]) -> dict:

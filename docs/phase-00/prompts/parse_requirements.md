@@ -1,7 +1,7 @@
 ---
 prompt_id: parse_requirements
 version: 0.1.0
-role: classify
+role: extract
 temperature_min: 0.0
 temperature_max: 0.2
 response_schema: job.schema.json#/properties/requirements

@@ -26,9 +26,20 @@ DESCRIPTION_MAX_CHARS = 87381
 
 
 class AssessmentService:
-    def __init__(self, connection: Connection, profile_store: ProfileStore) -> None:
+    def __init__(
+        self,
+        connection: Connection,
+        profile_store: ProfileStore,
+        *,
+        llm_client=None,
+        root_dir=None,
+    ) -> None:
         self._connection = connection
         self._profiles = profile_store
+        # Optional: without them requirement extraction stays on the
+        # deterministic path, which is what every read-only caller wants.
+        self._llm = llm_client
+        self._root_dir = root_dir
 
     # -- writes ----------------------------------------------------------
     def assess_job(self, job_id: str, profile: dict | None = None) -> dict | None:
@@ -37,13 +48,18 @@ class AssessmentService:
         job = self._job(job_id)
         if job is None:
             return None
-        requirements = self._requirements(job)
+        requirements, source = self._requirements(job)
         eligibility = evaluate(requirements, profile, job)
         fit = None
         if eligibility["status"] == "eligible":
             fit = fit_score(eligibility["checks"])
         with self._connection:
-            self._store_requirements(job["job_posting_version_id"], requirements)
+            if source != "cache":
+                # Cached rows already carry their own provenance; rewriting them
+                # would relabel a model reading as a cache hit.
+                self._store_requirements(
+                    job["job_posting_version_id"], requirements, source
+                )
             self._store_eligibility(job, profile, eligibility)
             if fit is None:
                 self._delete_fit(job["job_posting_version_id"], profile["profile_version_id"])
@@ -460,27 +476,48 @@ class AssessmentService:
             "priority_tier_override": row.get("priority_tier_override"),
         }
 
-    def _requirements(self, job: dict) -> list[dict]:
+    def _requirements(self, job: dict) -> tuple[list[dict], str]:
+        """Return ``(requirements, source)``; a model reading is the cache.
+
+        Only rows the model produced are treated as a cache hit. A deterministic
+        reading is cheap to recompute, and freezing it would keep a posting that
+        was first assessed without a provider on the fallback forever.
+        """
         rows = self._connection.execute(
             "SELECT * FROM job_requirement WHERE job_posting_version_id = ? "
             "ORDER BY requirement_id",
             (job["job_posting_version_id"],),
         ).fetchall()
-        if rows:
-            return [
-                {
-                    "requirement_id": row["requirement_id"],
-                    "kind": row["kind"],
-                    "category": row["category"],
-                    "text": row["text"],
-                    "quote": row["quote"],
-                    "weight": float(row["weight"]),
-                    "constraint": json.loads(row["constraint_json"]) if row["constraint_json"] else None,
-                }
-                for row in rows
-            ]
-        extracted = requirement_rules.extract(job["description_text"])
-        return extracted or [requirement_rules.fallback_requirement(job["description_text"])]
+        if rows and all(row["source"] == "llm" for row in rows):
+            return (
+                [
+                    {
+                        "requirement_id": row["requirement_id"],
+                        "kind": row["kind"],
+                        "category": row["category"],
+                        "text": row["text"],
+                        "quote": row["quote"],
+                        "weight": float(row["weight"]),
+                        "constraint": json.loads(row["constraint_json"])
+                        if row["constraint_json"]
+                        else None,
+                    }
+                    for row in rows
+                ],
+                "cache",
+            )
+        extracted, source = requirement_rules.extract_requirements(
+            job["description_text"], client=self._llm, root_dir=self._root_dir
+        )
+        if extracted:
+            return extracted, source
+        # The model answered but found nothing: that reading is worth keeping, so
+        # the next assessment does not pay for the same answer. A failed reading
+        # stays on `fallback` and is retried.
+        return (
+            [requirement_rules.fallback_requirement(job["description_text"])],
+            "llm" if source == "llm" else "fallback",
+        )
 
     def _requirements_for(self, version_id: str) -> list[dict]:
         rows = self._connection.execute(
@@ -521,15 +558,22 @@ class AssessmentService:
             "access_method": row["access_method"],
         }
 
-    def _store_requirements(self, version_id: str, requirements: list[dict]) -> None:
+    def _store_requirements(
+        self, version_id: str, requirements: list[dict], source: str
+    ) -> None:
+        # Replaced, not merged: a version extracted twice (fallback first, then a
+        # real list) must not keep the stale zero-weight row beside the new ones.
+        self._connection.execute(
+            "DELETE FROM job_requirement WHERE job_posting_version_id = ?", (version_id,)
+        )
         for requirement in requirements:
             self._connection.execute(
                 "INSERT INTO job_requirement (requirement_id, job_posting_version_id, kind, "
-                "category, text, quote, weight, constraint_json, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "category, text, quote, weight, constraint_json, source, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON DUPLICATE KEY UPDATE kind = VALUES(kind), category = VALUES(category), "
                 "text = VALUES(text), quote = VALUES(quote), weight = VALUES(weight), "
-                "constraint_json = VALUES(constraint_json)",
+                "constraint_json = VALUES(constraint_json), source = VALUES(source)",
                 (
                     requirement["requirement_id"],
                     version_id,
@@ -539,6 +583,7 @@ class AssessmentService:
                     requirement["quote"],
                     requirement["weight"],
                     json.dumps(requirement["constraint"]) if requirement["constraint"] else None,
+                    source,
                     now_iso(),
                 ),
             )

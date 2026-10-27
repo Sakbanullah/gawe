@@ -1,26 +1,40 @@
-"""Deterministic requirement extraction from a job description.
+"""Requirement extraction from a job description.
 
-PLAN.md §4.2 step 8 asks for a deterministic pre-pass before any model call.
-Sentences are classified by explicit cue words only; a sentence without a
-requirement cue is a responsibility and is not stored as a gate.
+Two paths share one output shape, so `evaluate.py`, `match/score.py`, and the
+`job_requirement` table accept either:
+
+* `extract_with_llm` asks the `extract` role for a classified list, validates
+  the reply against `job.schema.json#/properties/requirements`, and drops any
+  item whose quote is not in the description. It returns ``None`` when the
+  model is unavailable, refuses consent, or answers unusable JSON.
+* `extract` is the deterministic fallback: cue words and section headings only.
 
 The description reaches this module as one collapsed line: ``html_to_text``
 drops the markup, so headings, list items, and paragraphs arrive separated by
-single spaces. Section headings are therefore matched inline. A benefit, EEO,
-or company-boilerplate section never yields a requirement, and a benefit or
-legal sentence is skipped even when no heading marks its section.
-
-shortcut: no LLM classification pass yet. Add one for ambiguous requirements
-when a calibrated prompt and consent path exist (D1); every check must keep its
-quote.
+single spaces. The regex path can therefore only use inline headings and cue
+words, which is why an Indonesian bullet list without a standard heading reads
+as nothing there.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
+from pathlib import Path
 
+from ..ingest.types import quote_matches
+from ..llm.prompts import PromptNotFound, load_prompt_with_schema, load_schema, render
 from .normalize import norm_text
+
+logger = logging.getLogger(__name__)
+
+LLM_PROMPT_ID = "parse_requirements"
+# A reply for one description; 200 requirements of ~15 tokens still fit.
+LLM_MAX_TOKENS = 4000
+# Below this length the text is a card teaser, not a description worth a call.
+LLM_MIN_DESCRIPTION_CHARS = 200
+LLM_KINDS = {"must_have", "nice_to_have", "responsibility", "constraint"}
 
 MUST_CUE = re.compile(
     r"\b(required?|requires?(?!\s*[.,;!?])|requiring|must|minimum|at least|proficien\w*|"
@@ -46,7 +60,7 @@ RESPONSIBILITY_START = re.compile(
     re.IGNORECASE,
 )
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|[\r\n]+|(?<=[;])\s+")
-YEARS = re.compile(r"(\d{1,2})\s*\+?\s*(?:years?|yrs?)\b", re.IGNORECASE)
+YEARS = re.compile(r"(\d{1,2})\s*\+?\s*(?:years?|yrs?|tahun)\b", re.IGNORECASE)
 
 CATEGORIES = (
     ("work_authorization", r"\b(authori[sz]ed to work|right to work|work permit|"
@@ -173,6 +187,131 @@ def extract(description_text: str) -> list[dict]:
             )
             if len(requirements) >= MAX_REQUIREMENTS:
                 return requirements
+    return requirements
+
+
+def extract_with_llm(
+    description_text: str, *, client, root_dir: Path | None
+) -> list[dict] | None:
+    """Classify requirements with the `extract` role.
+
+    Returns ``None`` on any condition the caller must survive by falling back:
+    no client, no prompt or schema file, a refusal (consent), a provider error,
+    or a reply whose every item lost its quote. Only content that survives
+    validation is returned, so a stored requirement always quotes the posting.
+    """
+    text = (description_text or "").strip()
+    if client is None or root_dir is None or len(text) < LLM_MIN_DESCRIPTION_CHARS:
+        return None
+    try:
+        prompt_id, prompt_version, body, schema_name = load_prompt_with_schema(
+            root_dir, LLM_PROMPT_ID
+        )
+        if not schema_name:
+            return None
+        item_schema = load_schema(root_dir, schema_name)
+    except (PromptNotFound, ValueError):
+        logger.info("requirement_llm skipped: prompt_or_schema_missing")
+        return None
+
+    # The declared contract is the requirement array; the prompt answers with an
+    # object that also reports `no_must_have_found`.
+    reply_schema = {
+        "type": "object",
+        "required": ["requirements"],
+        "properties": {
+            "requirements": item_schema,
+            "no_must_have_found": {"type": "boolean"},
+        },
+    }
+    messages = [
+        {
+            "role": "system",
+            "content": render(
+                body, {"job_description_text": "(deskripsi lowongan ada di pesan pengguna)"}
+            ),
+        },
+        {"role": "user", "content": "<untrusted>\n" + text + "\n</untrusted>"},
+    ]
+    try:
+        result = client.generate(
+            role="extract",
+            messages=messages,
+            response_schema=reply_schema,
+            temperature=0.0,
+            max_tokens=LLM_MAX_TOKENS,
+            prompt_id=prompt_id,
+            prompt_version=prompt_version,
+        )
+    except Exception as exc:  # provider, consent, validation: all mean "fall back"
+        # Metadata only: the description never reaches the log.
+        logger.info("requirement_llm fell back: %s", type(exc).__name__)
+        return None
+
+    return _from_llm(result.object, text)
+
+
+def extract_requirements(
+    description_text: str, *, client=None, root_dir: Path | None = None
+) -> tuple[list[dict], str]:
+    """Return ``(requirements, source)``: the model when it can answer, else regex.
+
+    ``source`` is ``"llm"``, ``"regex"``, or ``"none"`` when the description
+    yielded no requirement at all. ``"none"`` is not an error: the caller keeps
+    the job out of scoring instead of inventing a gate.
+    """
+    from_llm = extract_with_llm(description_text, client=client, root_dir=root_dir)
+    if from_llm is not None:
+        return from_llm, "llm"
+    from_regex = extract(description_text)
+    return from_regex, "regex" if from_regex else "none"
+
+
+def _from_llm(reply: dict, description_text: str) -> list[dict] | None:
+    """Map the reply onto the stored requirement shape; drop unsupported items.
+
+    ``quote`` must occur in the description, because every stored requirement is
+    challenged later with its own quote. An item without one is a paraphrase or
+    an invention, so it is dropped rather than trimmed into something checkable.
+    """
+    items = reply.get("requirements")
+    if not isinstance(items, list):
+        return None
+
+    requirements: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        text = " ".join(str(item.get("text") or "").split())
+        quote = " ".join(str(item.get("quote") or text).split())
+        if kind not in LLM_KINDS or not text or not quote:
+            continue
+        if not quote_matches(quote, description_text):
+            continue
+        category = _category(text) or "other"
+        key = norm_text(text)
+        if key in seen:
+            continue
+        seen.add(key)
+        requirements.append(
+            {
+                "requirement_id": _requirement_id(category, key),
+                "kind": kind,
+                "category": category,
+                "text": text[:2000],
+                "quote": quote[:2000],
+                "weight": 1.0 if kind == "must_have" else 0.5,
+                "constraint": _constraint(text, category),
+            }
+        )
+        if len(requirements) >= MAX_REQUIREMENTS:
+            break
+    if items and not requirements:
+        # Every item was unsupported. That is a failed reading, not an empty job,
+        # so the caller still gets its chance at the deterministic path.
+        return None
     return requirements
 
 

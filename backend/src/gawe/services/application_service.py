@@ -35,10 +35,19 @@ class ApplicationError(Exception):
 
 
 class ApplicationService:
-    def __init__(self, connection: Connection, profile_store: ProfileStore) -> None:
+    def __init__(
+        self,
+        connection: Connection,
+        profile_store: ProfileStore,
+        *,
+        llm_client=None,
+        root_dir=None,
+    ) -> None:
         self._connection = connection
         self._profiles = profile_store
-        self._assessments = AssessmentService(connection, profile_store)
+        self._assessments = AssessmentService(
+            connection, profile_store, llm_client=llm_client, root_dir=root_dir
+        )
         self._tasks = TaskStore(connection)
         self._documents = DocumentService(connection, profile_store)
 

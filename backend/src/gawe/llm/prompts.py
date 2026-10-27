@@ -81,13 +81,24 @@ def load_prompt_with_schema(root_dir: Path, prompt_id: str) -> tuple[str, str, s
 def load_schema(root_dir: Path, name: str) -> dict:
     """Load a response schema declared in a prompt's front matter.
 
-    Raises `PromptNotFound` so a missing schema fails before a model call rather
-    than after paying for one.
+    ``name`` may carry a JSON-pointer fragment (``job.schema.json#/properties/x``)
+    so a prompt can answer with one part of a larger contract. Raises
+    `PromptNotFound` so a missing schema fails before a model call rather than
+    after paying for one.
     """
-    path = Path(root_dir) / CONTRACTS_DIR / name
+    file_name, _, pointer = name.partition("#")
+    path = Path(root_dir) / CONTRACTS_DIR / file_name
     if not path.is_file():
         raise PromptNotFound(f"response schema not found: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    if not pointer:
+        return schema
+    node: object = schema
+    for step in pointer.lstrip("/").split("/"):
+        if not isinstance(node, dict) or step not in node:
+            raise PromptNotFound(f"response schema fragment not found: {name}")
+        node = node[step]
+    return node
 
 
 def validate_prompts(root_dir: Path, prompt_ids: list[str]) -> None:
@@ -103,7 +114,7 @@ def validate_prompts(root_dir: Path, prompt_ids: list[str]) -> None:
         load_schema(root_dir, schema_name)
 
 
-ROLE_PROMPTS = ["extract_profile", "write_cv", "write_cover_letter", "review"]
+ROLE_PROMPTS = ["extract_profile", "parse_requirements", "write_cv", "write_cover_letter", "review"]
 
 # Writer rules live outside the prompt files so the author can rewrite the CV and
 # cover-letter templates without touching the JSON contract or the placeholder

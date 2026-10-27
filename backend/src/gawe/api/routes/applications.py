@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ...master_cv.store import MasterCvError
 from ...services.application_service import ApplicationError, ApplicationService
-from ..deps import discovery_service, profile_store
+from ..deps import discovery_service, llm_client, profile_store
 from ..errors import ApiError
 
 router = APIRouter(prefix="/api/applications")
@@ -64,7 +64,12 @@ class AnalysisRequest(BaseModel):
 
 
 def _service(request: Request) -> ApplicationService:
-    return ApplicationService(request.state.db, profile_store(request))
+    return ApplicationService(
+        request.state.db,
+        profile_store(request),
+        llm_client=llm_client(request),
+        root_dir=request.app.state.config.root_dir,
+    )
 
 
 def _bad_request(field: str, code: str, message: str) -> ApiError:

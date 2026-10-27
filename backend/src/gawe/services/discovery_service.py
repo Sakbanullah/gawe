@@ -117,6 +117,8 @@ class DiscoveryService:
         max_workers: int = DEFAULT_WORKERS,
         max_run_seconds: int = DEFAULT_MAX_RUN_S,
         document_fetcher=None,
+        llm_client=None,
+        root_dir=None,
     ) -> None:
         self._connection = connection
         self._profiles = profile_store
@@ -127,6 +129,10 @@ class DiscoveryService:
         self._max_workers = max_workers
         self._max_run_seconds = max_run_seconds
         self._document_fetcher = document_fetcher
+        # Passed to assessment so requirement extraction can use the `extract`
+        # role. Left as None in contexts that must not call a model.
+        self._llm = llm_client
+        self._root_dir = root_dir
 
     def start_run(
         self,
@@ -454,8 +460,14 @@ class DiscoveryService:
         hidden: the caller reports ``assessment_failed`` on the run.
         """
         try:
-            result = AssessmentService(self._connection, self._profiles).assess_pending()
-            AssessmentService(self._connection, self._profiles).recompute_ranking()
+            service = AssessmentService(
+                self._connection,
+                self._profiles,
+                llm_client=self._llm,
+                root_dir=self._root_dir,
+            )
+            result = service.assess_pending()
+            service.recompute_ranking()
             return result, None
         except RankingError as exc:
             # Eligibility and fit are already stored; only the ordering failed.

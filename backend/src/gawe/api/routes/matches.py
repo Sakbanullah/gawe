@@ -19,7 +19,7 @@ from ...jobs.priority import TIERS
 from ...master_cv.store import MasterCvError
 from ...profile.store import ProfileStore
 from ...services.assessment_service import AssessmentService
-from ..deps import profile_store
+from ..deps import llm_client, profile_store
 from ..errors import ApiError
 
 router = APIRouter(prefix="/api/matches")
@@ -42,7 +42,12 @@ class EligibilityOverrideRequest(BaseModel):
 
 
 def _service(request: Request) -> AssessmentService:
-    return AssessmentService(request.state.db, profile_store(request))
+    return AssessmentService(
+        request.state.db,
+        profile_store(request),
+        llm_client=llm_client(request),
+        root_dir=request.app.state.config.root_dir,
+    )
 
 
 def _confirmed(request: Request) -> dict:

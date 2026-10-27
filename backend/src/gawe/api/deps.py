@@ -71,6 +71,8 @@ def discovery_service(request: Request) -> DiscoveryService:
         max_workers=settings.max_workers,
         max_run_seconds=settings.max_run_seconds,
         document_fetcher=request.app.state.manual_url_fetcher,
+        llm_client=llm_client(request),
+        root_dir=request.app.state.config.root_dir,
     )
 
 

@@ -1,0 +1,20 @@
+Backend Engineer (Python)
+PT Nusantara Digital
+Jakarta Selatan, Jakarta Raya
+Rp 15.000.000 - Rp 22.000.000 per bulan
+Penuh waktu
+
+Tentang pekerjaan ini
+Kami membangun platform pembayaran untuk UMKM dan mencari Backend Engineer yang siap bekerja di tim kecil.
+Kamu akan merancang API, menjaga reliabilitas layanan, dan bekerja sama dengan tim produk.
+
+Kualifikasi
+- Minimal 3 tahun pengalaman membangun backend dengan Python
+- Menguasai FastAPI atau Django REST Framework
+- Terbiasa dengan PostgreSQL dan Redis
+- Paham Docker dan CI/CD
+- Bersedia bekerja hybrid di Jakarta Selatan
+- Diutamakan yang pernah menangani sistem pembayaran
+
+Tentang perusahaan
+PT Nusantara Digital melayani lebih dari 20.000 UMKM di Indonesia.

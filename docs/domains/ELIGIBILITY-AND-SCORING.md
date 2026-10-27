@@ -184,7 +184,7 @@ Ambang rekomendasi belum ditetapkan di master plan. **`OPEN`** untuk Phase 3/4; 
 |---|---|
 | Input | `job_posting_version`, `job_requirement`, `profile_version` confirmed, evidence |
 | Output | `eligibility_assessment`, `eligibility_check`, `fit_assessment`, `ranking_run` |
-| Dependensi | Discovery (job + requirement), profil confirmed, LLM `classify` untuk requirement ambigu |
+| Dependensi | Discovery (job + requirement), profil confirmed, LLM `extract` untuk requirement (fallback regex bila provider tidak tersedia) |
 
 Setiap hasil menyimpan `profile_version_id` dan `job_posting_version_id`.
 
