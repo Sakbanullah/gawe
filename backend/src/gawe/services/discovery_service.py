@@ -870,7 +870,7 @@ class DiscoveryService:
                 truncated += 1
             if record["completeness"]["stale"]:
                 stale += 1
-            created, job_id = self._store_job(record, raw_sha, fetched_at)
+            created, job_id, _version_added = self._store_job(record, raw_sha, fetched_at)
             if created:
                 accepted += 1
             else:
