@@ -62,7 +62,7 @@ Istilah status dipakai konsisten di seluruh halaman.
 | Master CV | `Tabs` (Original CV / Verified Profile / History), upload, tabel field, dialog konfirmasi |
 | Discovery | Form preferensi, daftar sumber dengan badge status, progress, alert per sumber, tombol retry |
 | Job Matches | `Table` dengan search/sort/filter, `Drawer` side panel, badge eligibility, komponen skor |
-| Applications | Tabel workspace, `Drawer`/tab dokumen, editor per bagian, diff viewer |
+| Applications | Tabel workspace, `Drawer`/tab dokumen, editor per bagian, diff viewer. Form tambah dari URL memberi `Alert` berjudul per kode error dan tombol "Tempel teks lowongan" yang langsung membuka textarea |
 | Settings | Form bertipe, switch consent, daftar sumber, panel retensi |
 
 Komponen Mantine yang disebut: `AppShell`, `Tabs`, `Table`, `Drawer`, `Modal`, `TextInput`, `Select`, `Badge`, `Alert`, `Notification`, `Skeleton`.

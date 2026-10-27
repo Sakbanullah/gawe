@@ -91,7 +91,18 @@ class ApplicationService:
         """Manual-URL fallback: ingest one pasted job page, then create the workspace."""
         profile = self._profiles.require_confirmed()
         result = discovery.ingest_manual_url(url, text=text)
-        return self.create(result["job_id"])
+        job_id = result["job_id"]
+        try:
+            return self.create(job_id)
+        except ApplicationError as exc:
+            # The page was stored but its assessment failed, so `create` finds no
+            # match row and would strand the job as a 404. One retry after one
+            # assessment; no loop. A missing or duplicate job is never retried.
+            if exc.code != "not_found" or self._assessments.job_status(job_id) != "open":
+                raise
+            if self._assessments.assess_job(job_id, profile) is None:
+                raise
+            return self.create(job_id)
 
     def rerun_analysis(self, application_id: str) -> dict:
         """Explicit re-analysis; nothing here is triggered automatically.

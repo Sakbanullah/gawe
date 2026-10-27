@@ -324,6 +324,27 @@ describe("ApplicationsPage", () => {
       ),
     );
   });
+
+  it.each([
+    ["source_not_found", "Halaman lowongan tidak ditemukan"],
+    ["manual_fetch_failed", "Halaman tidak bisa dibaca otomatis"],
+    ["robots_disallowed", "robots.txt menolak pembacaan halaman"],
+    ["manual_page_unreadable", "Isi halaman tidak terbaca"],
+  ])("names the failure for %s and offers the textarea", async (code, title) => {
+    vi.mocked(api.createApplicationFromUrl).mockRejectedValue(
+      new api.ApiError(400, code, "Tempelkan teks lowongan secara manual."),
+    );
+    renderAt("/applications");
+
+    fireEvent.change(await screen.findByLabelText("Tambah dari URL lowongan"), {
+      target: { value: "https://example.com/jobs/1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Buat workspace" }));
+
+    expect(await screen.findByText(title)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Tempel teks lowongan" }));
+    expect(screen.getByLabelText("Teks lowongan")).toBeTruthy();
+  });
 });
 
 describe("ApplicationWorkspacePage", () => {

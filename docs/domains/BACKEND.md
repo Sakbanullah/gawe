@@ -132,6 +132,8 @@ Modul yang diharapkan: `api/routes/`, `api/schemas/`, `services/`, `orchestrator
 
 - Validasi gagal → 4xx dengan pesan aman dan spesifik; tanpa PII/secret.
 - Fetch gagal (403/CAPTCHA/login) → minta input manual; tanpa bypass.
+- Kegagalan fetch halaman URL manual (403, 429, timeout, terlalu besar, host ditolak) → `400 manual_fetch_failed`, bukan `502`: pengguna memilih halaman itu, jadi penolakan situs adalah masalah input. `404` → `400 source_not_found`. Pesan tetap menyuruh pengguna menempelkan teks lowongan.
+- `POST /api/applications` dengan `url`: bila halaman tersimpan tetapi assessment-nya gagal pada run, `create` menemukan job tanpa baris match. Backend menjalankan satu `assess_job` lalu mencoba `create` sekali lagi. Tanpa loop, dan tidak pernah untuk job yang hilang atau duplikat.
 - Data minimal tidak lengkap → berhenti, minta input manual.
 - Provider gagal → retry terbatas, checkpoint, status jelas.
 - Reviewer gagal → `review_unavailable`.

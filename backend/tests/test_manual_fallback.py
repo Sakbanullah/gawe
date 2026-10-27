@@ -6,8 +6,11 @@ import pytest
 
 from gawe.jobs.sources import manual
 from gawe.jobs.sources.base import AdapterError, RawJob, company_of, normalize
+from gawe.jobs.fetch import FetchError
+from gawe.services.assessment_service import AssessmentService
 from tests.test_applications import MANUAL_PAGE, _manual_fetcher
 from tests.test_assessment import _confirm
+from tests.test_discovery import _Fetcher
 
 
 def _page(*, og_url: str | None = None, body: str | None = None) -> str:
@@ -307,3 +310,75 @@ def test_fetched_page_keeps_the_existing_stats_marker(
         "SELECT stats_json FROM discovery_run_source WHERE source_id = 'manual_url'"
     ).fetchone()
     assert "manual_url" in run["stats_json"]
+
+
+def test_blocked_page_is_a_client_error_with_the_paste_hint(
+    setup_client, csrf, monkeypatch
+) -> None:
+    """A page the user chose that refuses us is bad input, not a server fault."""
+    _confirm(setup_client, csrf)
+    fetcher = _Fetcher(
+        {"robots.txt": "User-agent: *\nAllow: /\n"},
+        fail_hosts={
+            "example.com/jobs": FetchError(
+                "source_unavailable",
+                "Halaman menolak akses otomatis. Tempelkan teks lowongan secara manual.",
+                retryable=False,
+                http_status=403,
+            )
+        },
+    )
+    monkeypatch.setattr(setup_client.app.state, "manual_url_fetcher", fetcher, raising=False)
+    response = setup_client.post(
+        "/api/applications", headers=csrf, json={"url": "https://example.com/jobs/1"}
+    )
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "manual_fetch_failed"
+    assert "Tempelkan teks lowongan" in error["message"]
+
+
+def test_missing_page_keeps_its_own_code(setup_client, csrf, monkeypatch) -> None:
+    _confirm(setup_client, csrf)
+    fetcher = _Fetcher(
+        {"robots.txt": "User-agent: *\nAllow: /\n"},
+        fail_hosts={
+            "example.com/jobs": FetchError("source_not_found", "Halaman tidak ditemukan.", retryable=False)
+        },
+    )
+    monkeypatch.setattr(setup_client.app.state, "manual_url_fetcher", fetcher, raising=False)
+    response = setup_client.post(
+        "/api/applications", headers=csrf, json={"url": "https://example.com/jobs/1"}
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "source_not_found"
+
+
+def test_workspace_is_created_when_the_run_assessment_failed(
+    setup_client, csrf, monkeypatch
+) -> None:
+    """A stored job with no assessment must not strand the user on a 404."""
+    _confirm(setup_client, csrf)
+    _manual_fetcher(monkeypatch, setup_client, page=MANUAL_PAGE)
+
+    original = AssessmentService.assess_pending
+    calls = {"count": 0}
+
+    def _fail_once(self, limit: int = 500) -> dict:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("provider unavailable")
+        return original(self, limit)
+
+    monkeypatch.setattr(AssessmentService, "assess_pending", _fail_once)
+
+    response = setup_client.post(
+        "/api/applications", headers=csrf, json={"url": "https://example.com/jobs/1"}
+    )
+    assert response.status_code == 201, response.text
+    workspace = setup_client.get(
+        f"/api/applications/{response.json()['application_id']}"
+    ).json()
+    assert workspace["eligibility"] is not None
+    # One retry only: the second create() call is not followed by a third.
+    assert calls["count"] == 1

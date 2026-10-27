@@ -95,7 +95,8 @@ Draft fixture Phase 0 ada di [`../phase-00/fixtures/`](../phase-00/fixtures/). F
 |---|---|
 | Upload/ingest | Magic bytes, size, page cap, zip bomb, enkripsi, tidak ada partial write |
 | Profil | Kutipan cocok, 0 fakta tanpa bukti, konflik, rollback, gate konfirmasi |
-| Discovery | Adapter contract, normalisasi, dedupe exact/fuzzy, rate limit, partial success |
+| Discovery | Adapter contract, normalisasi, dedupe exact/fuzzy, rate limit, partial success, pemilihan kanonik menurut band sumber (D26) |
+| Manual URL | Parser halaman, `robots.txt`, batas ukuran, `manual_fetch_failed` vs `source_not_found`, retry assessment sekali saat `POST /api/applications` |
 | Tier | D15 hybrid, D16 global remote, `unclassified`, override pengguna |
 | Eligibility | Tiga status, kutipan wajib, tanpa kesimpulan hukum, gate dokumen |
 | Fit | Formula, komponen, confidence, tanpa tier/eligibility, invariant tier swap |

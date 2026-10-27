@@ -59,7 +59,7 @@ Gunakan komponen Mantine, bukan HTML mentah yang ditata manual.
 | Dialog konfirmasi | `Modal` |
 | Form | `TextInput`, `Select`, komponen form Mantine |
 | Status | `Badge` dengan teks |
-| Error per sumber | `Alert` |
+| Error per sumber | `Alert` dengan judul per kode: `source_not_found`, `manual_fetch_failed`, `robots_disallowed`, `manual_page_unreadable`; kode lain memakai judul umum |
 | Notifikasi | `Notification` |
 | Loading | `Skeleton` |
 | Empty/error/retry | Komponen state bersama (`EmptyState`, `ErrorState`, `LoadingState`) |
@@ -152,6 +152,8 @@ Mengacu `PLAN.md` §14:
 - Kriteria 34: tidak menghitung nilai otoritatif.
 - Kriteria 35: build statis; dev proxy.
 - Kriteria 36: aksesibilitas dasar.
+
+Catatan 2026-10-27: `ApplicationsPage` menampilkan judul alert per kode error (`source_not_found`, `manual_fetch_failed`, `robots_disallowed`, `manual_page_unreadable`), masing-masing dengan tombol "Tempel teks lowongan" yang langsung membuka textarea. Frontend tidak menghitung ulang arti kode; ia hanya memetakan kode ke judul.
 
 Verifikasi (dijalankan dari `frontend/`):
 

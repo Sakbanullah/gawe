@@ -23,6 +23,15 @@ import {
 import { PageFrame } from "../components/PageFrame";
 import { EmptyState, type PageState } from "../components/states";
 
+// Codes the URL form can answer with; each one has a different next step, so
+// each one gets its own title (API-CONTRACTS.md §3.4).
+const URL_ERROR_TITLE: Record<string, string> = {
+  source_not_found: "Halaman lowongan tidak ditemukan",
+  manual_fetch_failed: "Halaman tidak bisa dibaca otomatis",
+  robots_disallowed: "robots.txt menolak pembacaan halaman",
+  manual_page_unreadable: "Isi halaman tidak terbaca",
+};
+
 const STATUS_LABEL: Record<string, string> = {
   not_started: "Not started",
   processing: "Processing",
@@ -92,6 +101,8 @@ export function ApplicationsPage() {
                 setText("");
                 setShowText(false);
               })
+              // The mutation state already carries the error into the alert.
+              .catch(() => undefined)
           }
         >
           Buat workspace
@@ -120,10 +131,27 @@ export function ApplicationsPage() {
         />
       ) : null}
       {createFromUrl.isError ? (
-        <Alert color="red" title="URL ditolak">
-          {createFromUrl.error instanceof ApiError
-            ? createFromUrl.error.message
-            : "URL tidak dapat dipakai."}
+        <Alert
+          color="red"
+          title={
+            createFromUrl.error instanceof ApiError
+              ? (URL_ERROR_TITLE[createFromUrl.error.code] ?? "URL ditolak")
+              : "URL ditolak"
+          }
+        >
+          <Stack gap="xs" align="flex-start">
+            <Text size="sm">
+              {createFromUrl.error instanceof ApiError
+                ? createFromUrl.error.message
+                : "URL tidak dapat dipakai."}
+            </Text>
+            {createFromUrl.error instanceof ApiError &&
+            createFromUrl.error.code in URL_ERROR_TITLE ? (
+              <Button size="compact-sm" variant="light" onClick={() => setShowText(true)}>
+                Tempel teks lowongan
+              </Button>
+            ) : null}
+          </Stack>
         </Alert>
       ) : null}
       {items.length === 0 ? <EmptyState message="Belum ada application." /> : null}

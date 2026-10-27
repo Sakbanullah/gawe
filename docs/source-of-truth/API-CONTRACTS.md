@@ -335,7 +335,8 @@ Aturan kontrak:
 - Sumber sintetis tidak muncul di `GET /api/settings/sources`, tidak dapat diubah lewat `PATCH`, dan tidak dihitung sebagai entri registry.
 - Pengguna **tidak perlu** mengonfigurasi sumber untuk memakai fallback URL manual. Discovery otomatis tetap memerlukan setidaknya satu entri registry `verified` dan `enabled`.
 - `verification_status` sumber sintetis adalah `verified` untuk pemakaian manual oleh pengguna, karena URL divalidasi per request oleh URL guard; ini tidak menyatakan situs sumber sudah diuji untuk fetch otomatis.
-- URL tetap divalidasi per request: HTTPS, host publik, tanpa kredensial, redirect tervalidasi, timeout 20 detik, maksimal 5 redirect, maksimal 5 MB. Kegagalan menghasilkan `400 url_rejected`.
+- URL tetap divalidasi per request: HTTPS, host publik, tanpa kredensial, redirect tervalidasi, timeout 20 detik, maksimal 5 redirect, maksimal 5 MB. Kegagalan validasi menghasilkan `400 url_rejected`.
+- **Kegagalan fetch halaman manual (`2026-10-27`).** Pengguna memilih halaman ini, jadi penolakan situs bukan kesalahan server. `403`, `429`, timeout, respons terlalu besar, atau host tidak diizinkan menghasilkan `400 manual_fetch_failed` dengan pesan yang menyuruh pengguna menempelkan teks lowongan. `404` tetap `400 source_not_found`. `url_rejected` tetap dipakai untuk URL yang gagal validasi atau redirect yang ditolak.
 - **Tempel teks (`text`).** `POST /api/applications` menerima `text` opsional bersama `url` untuk halaman yang tidak dapat diambil otomatis (403/429 atau shell JavaScript). Bila `text` diisi:
   - halaman **tidak** di-fetch dan `robots.txt` tidak diperiksa, karena tidak ada pengambilan otomatis;
   - `url` tetap wajib dan tetap divalidasi URL guard; URL menjadi `canonical_url` dan `apply_url` job. URL tidak pernah dikarang;
@@ -684,6 +685,8 @@ Kode error dan pemetaan HTTP:
 | `ats_unavailable` | 400 | false | Detail `validation_failed`: ATS tidak punya adapter |
 | `ats_host_mismatch` | 400 | false | Detail `validation_failed`: host `careers_url` tidak cocok dengan ATS |
 | `robots_disallowed` | 400 | false | `robots.txt` melarang pengambilan halaman URL manual |
+| `manual_fetch_failed` | 400 | false | Halaman URL manual gagal diambil (403, 429, timeout, terlalu besar, host ditolak). Pesan menyuruh pengguna menempelkan teks lowongan |
+| `source_not_found` | 400 | false | Halaman URL manual mengembalikan 404; URL kemungkinan salah atau lowongan sudah dicabut |
 | `manual_page_unreadable` | 400 | false | Halaman URL manual tidak memuat judul/deskripsi yang dapat dibaca, termasuk halaman yang dirender JavaScript |
 | `source_quota_exhausted` | — | false | Kuota request harian sumber habis; dilaporkan sebagai status `skipped` per sumber |
 | `empty_snapshot` | — | false | Snapshot tidak memuat record; penutupan lowongan dilewati |

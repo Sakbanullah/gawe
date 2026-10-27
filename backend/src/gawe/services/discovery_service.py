@@ -353,9 +353,16 @@ class DiscoveryService:
                 response = self._fetch_document(url)
                 raw_job = manual.parse(response.body, url)
             except FetchError as exc:
-                raise MasterCvError(
-                    exc.code, exc.message, 400 if exc.code == "url_rejected" else 502
-                ) from exc
+                # A manual page is one the user chose; a blocked or broken fetch
+                # is an input problem, not a server fault. `url_rejected` and
+                # `source_not_found` keep their own code because the UI reacts
+                # to them differently (API-CONTRACTS.md §3.4).
+                code = (
+                    exc.code
+                    if exc.code in ("url_rejected", "source_not_found")
+                    else "manual_fetch_failed"
+                )
+                raise MasterCvError(code, exc.message, 400) from exc
             except AdapterError as exc:
                 raise MasterCvError("manual_page_unreadable", str(exc), 400) from exc
             raw = response.body
