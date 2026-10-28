@@ -1,4 +1,4 @@
-import { MantineProvider } from "@mantine/core";
+﻿import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
@@ -199,14 +199,14 @@ describe("DiscoveryPage", () => {
     vi.mocked(api.getOverview).mockResolvedValue(overview(false));
     renderPage();
 
-    expect(await screen.findByText("Discovery terkunci")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Buka Master CV" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Jalankan discovery" })).toBeNull();
+    expect(await screen.findByText("Selesaikan CV-mu dulu")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Buka CV Utama" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cari lowongan sekarang" })).toBeNull();
   });
 
   it("starts a run when a verified source is enabled", async () => {
     renderPage();
-    fireEvent.click(await screen.findByRole("button", { name: "Jalankan discovery" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cari lowongan sekarang" }));
     await waitFor(() => expect(api.startDiscoveryRun).toHaveBeenCalledTimes(1));
   });
 
@@ -217,9 +217,9 @@ describe("DiscoveryPage", () => {
     });
     renderPage();
 
-    expect(await screen.findByText("Hasil sebagian")).toBeTruthy();
-    expect(screen.getByText("Sumber tidak dapat dihubungi.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Ulangi sumber gagal" }));
+    expect(await screen.findByText("Sebagian perusahaan tidak bisa dihubungi. Lowongan yang berhasil diambil tetap disimpan.")).toBeTruthy();
+    expect(screen.getByText("Tidak bisa dihubungi")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Coba lagi perusahaan yang gagal" }));
     await waitFor(() =>
       expect(api.retryTask).toHaveBeenCalledWith("tsk_1", "failed_sources"),
     );
@@ -233,9 +233,9 @@ describe("DiscoveryPage", () => {
     vi.mocked(api.getTask).mockResolvedValue(task(false));
     renderPage();
 
-    expect(await screen.findByText("Hasil sebagian")).toBeTruthy();
+    expect(await screen.findByText("Sebagian perusahaan tidak bisa dihubungi. Lowongan yang berhasil diambil tetap disimpan.")).toBeTruthy();
     await waitFor(() => expect(api.getTask).toHaveBeenCalledWith("tsk_1"));
-    expect(screen.queryByRole("button", { name: "Ulangi sumber gagal" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Coba lagi perusahaan yang gagal" })).toBeNull();
   });
 
   it("warns when a source returned truncated or dropped records", async () => {
@@ -247,9 +247,9 @@ describe("DiscoveryPage", () => {
     });
     renderPage();
 
-    expect(await screen.findByText("Data sumber tidak lengkap")).toBeTruthy();
+    expect(await screen.findByText("Sebagian data tidak lengkap")).toBeTruthy();
     expect(
-      screen.getByText("Acme: 2 deskripsi dipotong · 1 record dilewati"),
+      screen.getByText("Acme: 2 deskripsi dipotong · 1 dilewati"),
     ).toBeTruthy();
   });
 
@@ -271,9 +271,12 @@ describe("DiscoveryPage", () => {
     });
     renderPage();
 
-    expect(await screen.findByText("Analisis tidak selesai")).toBeTruthy();
+    expect(await screen.findByText("Pemeriksaan syarat belum selesai")).toBeTruthy();
     expect(
-      screen.getByText("Lowongan tersimpan tetapi analisis eligibility/fit gagal."),
+      screen.getByText(/Lowongan sudah tersimpan, tetapi pemeriksaan syarat dan kecocokan gagal/),
     ).toBeTruthy();
   });
 });
+
+
+

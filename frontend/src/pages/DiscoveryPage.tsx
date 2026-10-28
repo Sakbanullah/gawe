@@ -1,7 +1,10 @@
-import { Alert, Badge, Button, Card, Group, Stack, Table, Text } from "@mantine/core";
+import { Alert, Button, Card, Group, Stack, Table, Text, Title } from "@mantine/core";
+import { useState } from "react";
 import { Link } from "react-router";
 
 import type { DiscoveryRun } from "../app/apiClient";
+import { friendlyError } from "../app/errors";
+import { RUN_STATUS, label } from "../app/labels";
 import {
   useDiscoveryRuns,
   useOverview,
@@ -12,24 +15,7 @@ import {
 } from "../app/queries";
 import { PageFrame } from "../components/PageFrame";
 import { SourceRegistry } from "../components/SourceRegistry";
-import type { PageState } from "../components/states";
-
-const STATUS_COLOR: Record<string, string> = {
-  completed: "green",
-  partial: "yellow",
-  failed: "red",
-  processing: "blue",
-  queued: "gray",
-  skipped: "gray",
-};
-
-function StatusBadge({ status }: { status: string }) {
-  return <Badge color={STATUS_COLOR[status] ?? "gray"}>{status}</Badge>;
-}
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : "Permintaan gagal.";
-}
+import { EmptyState, PartialState, StatusBadge, type PageState } from "../components/states";
 
 function RunCard({
   run,
@@ -44,51 +30,59 @@ function RunCard({
   retryError: unknown;
   onRetry: () => void;
 }) {
-  const partialData = run.sources.filter(
+  const incomplete = run.sources.filter(
     (source) =>
       (source.stats?.truncated ?? 0) > 0 ||
       (source.stats?.stale ?? 0) > 0 ||
       (source.stats?.skipped ?? 0) > 0 ||
       (source.stats?.invalid ?? 0) > 0,
   );
+  const failed = run.sources.filter((source) => source.status === "failed");
+
   return (
     <Card withBorder>
-      <Stack gap="sm">
-        <Group justify="space-between">
+      <Stack gap="md">
+        <Group justify="space-between" wrap="wrap" gap="sm">
           <Group gap="sm">
-            <Text fw={500}>Run terakhir</Text>
-            <StatusBadge status={run.status} />
+            <Title order={3}>Pencarian terakhir</Title>
+            <StatusBadge status={run.status} label={label(RUN_STATUS, run.status)} />
           </Group>
           <Text size="sm" c="dimmed">
             {run.started_at}
           </Text>
         </Group>
 
+        <Text>
+          Gawe menemukan <strong>{run.counts.new_jobs ?? 0} lowongan baru</strong> dari{" "}
+          {run.sources.length} perusahaan. {run.counts.duplicates ?? 0} lowongan sudah pernah ada.
+        </Text>
+
         {run.status === "partial" ? (
-          <Alert color="yellow" title="Hasil sebagian">
-            Sebagian sumber gagal. Hasil sumber yang berhasil tetap disimpan.
-          </Alert>
+          <PartialState message="Sebagian perusahaan tidak bisa dihubungi. Lowongan yang berhasil diambil tetap disimpan." />
         ) : null}
 
         {run.error ? (
-          <Alert color="yellow" title="Analisis tidak selesai">
-            {run.error.message}
+          <Alert color="orange" title="Pemeriksaan syarat belum selesai">
+            <Text size="sm">
+              Lowongan sudah tersimpan, tetapi pemeriksaan syarat dan kecocokan gagal. Coba jalankan
+              ulang pencarian.
+            </Text>
           </Alert>
         ) : null}
 
-        {partialData.length > 0 ? (
-          <Alert color="orange" title="Data sumber tidak lengkap">
-            <Stack gap="xs">
-              {partialData.map((source) => (
+        {incomplete.length > 0 ? (
+          <Alert color="orange" title="Sebagian data tidak lengkap">
+            <Stack gap={4}>
+              {incomplete.map((source) => (
                 <Text key={source.source_id} size="sm">
                   {source.company}:{" "}
                   {[
                     source.stats?.truncated
                       ? `${source.stats.truncated} deskripsi dipotong`
                       : null,
-                    source.stats?.stale ? `${source.stats.stale} data basi` : null,
-                    source.stats?.skipped ? `${source.stats.skipped} record dilewati` : null,
-                    source.stats?.invalid ? `${source.stats.invalid} record invalid` : null,
+                    source.stats?.stale ? `${source.stats.stale} data lama` : null,
+                    source.stats?.skipped ? `${source.stats.skipped} dilewati` : null,
+                    source.stats?.invalid ? `${source.stats.invalid} tidak valid` : null,
                   ]
                     .filter(Boolean)
                     .join(" · ")}
@@ -98,21 +92,13 @@ function RunCard({
           </Alert>
         ) : null}
 
-        <Text size="sm">
-          Diambil {run.counts.fetched ?? 0} · baru {run.counts.new_jobs ?? 0} · sudah ada{" "}
-          {run.counts.duplicates ?? 0}
-        </Text>
-
-        <Table withTableBorder>
+        <Table>
           <Table.Thead>
             <Table.Tr>
-              <Table.Th>Sumber</Table.Th>
-              <Table.Th>Status</Table.Th>
-              <Table.Th>Diambil</Table.Th>
-              <Table.Th>Baru</Table.Th>
-              <Table.Th>Sudah ada</Table.Th>
-              <Table.Th>Terakhir</Table.Th>
-              <Table.Th>Error</Table.Th>
+              <Table.Th>Perusahaan</Table.Th>
+              <Table.Th>Hasil</Table.Th>
+              <Table.Th>Lowongan baru</Table.Th>
+              <Table.Th>Keterangan</Table.Th>
             </Table.Tr>
           </Table.Thead>
           <Table.Tbody>
@@ -120,23 +106,32 @@ function RunCard({
               <Table.Tr key={source.source_id}>
                 <Table.Td>{source.company}</Table.Td>
                 <Table.Td>
-                  <StatusBadge status={source.status} />
+                  <StatusBadge status={source.status} label={label(RUN_STATUS, source.status)} />
                 </Table.Td>
-                <Table.Td>{source.fetched_count}</Table.Td>
                 <Table.Td>{source.accepted_count}</Table.Td>
-                <Table.Td>{source.duplicate_count}</Table.Td>
-                <Table.Td>{source.last_attempt_at ?? "—"}</Table.Td>
-                <Table.Td>{source.error ? source.error.message : "—"}</Table.Td>
+                <Table.Td>
+                  <Text size="sm" c="dimmed">
+                    {source.error
+                      ? "Tidak bisa dihubungi"
+                      : source.duplicate_count > 0
+                        ? `${source.duplicate_count} lowongan sudah pernah ada`
+                        : "—"}
+                  </Text>
+                </Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>
         </Table>
 
-        {retryError ? <Alert color="red">{errorText(retryError)}</Alert> : null}
-        {retryable ? (
+        {retryError ? (
+          <Alert color="red" title="Belum berhasil">
+            {friendlyError(retryError)}
+          </Alert>
+        ) : null}
+        {retryable && failed.length > 0 ? (
           <Group>
             <Button variant="light" loading={retrying} onClick={onRetry}>
-              Ulangi sumber gagal
+              Coba lagi perusahaan yang gagal
             </Button>
           </Group>
         ) : null}
@@ -151,6 +146,7 @@ export function DiscoveryPage() {
   const runs = useDiscoveryRuns();
   const start = useStartDiscoveryRun();
   const retry = useRetryTask();
+  const [notice, setNotice] = useState<string | null>(null);
   const latest = runs.data?.items[0] ?? null;
   const task = useTask(latest?.task_id ?? null);
 
@@ -165,8 +161,9 @@ export function DiscoveryPage() {
 
   return (
     <PageFrame
-      title="Discovery"
-      description="Sumber lowongan, progress, dan error per sumber."
+      eyebrow="Langkah 2"
+      title="Cari Lowongan"
+      description="Gawe mengambil lowongan terbaru dari perusahaan yang sudah terdaftar, lalu memeriksa mana yang sesuai dengan syaratmu."
       state={state}
       onRetry={() => {
         void overview.refetch();
@@ -175,32 +172,55 @@ export function DiscoveryPage() {
       }}
     >
       {!confirmed ? (
-        <Alert color="orange" title="Discovery terkunci">
-          <Stack gap="xs">
-            <Text>Discovery hanya tersedia setelah profil dikonfirmasi.</Text>
-            <Group>
-              <Button component={Link} to="/master-cv" variant="light">
-                Buka Master CV
-              </Button>
-            </Group>
+        <Alert color="orange" title="Selesaikan CV-mu dulu">
+          <Stack gap="sm" align="flex-start">
+            <Text size="sm">
+              Gawe baru bisa mencari lowongan setelah data CV-mu dikonfirmasi. Ini supaya lowongan
+              yang muncul benar-benar sesuai.
+            </Text>
+            <Button component={Link} to="/master-cv" variant="light">
+              Buka CV Utama
+            </Button>
           </Stack>
         </Alert>
       ) : (
-        <Stack gap="md">
+        <Stack gap="lg">
           <Card withBorder>
-            <Group justify="space-between">
-              <Text size="sm">
-                {fetchable.length} sumber verified dan aktif siap dijalankan.
-              </Text>
-              <Button
-                disabled={fetchable.length === 0 || start.isPending}
-                loading={start.isPending}
-                onClick={() => start.mutate()}
-              >
-                Jalankan discovery
-              </Button>
-            </Group>
-            {start.error ? <Alert color="red" mt="sm">{errorText(start.error)}</Alert> : null}
+            <Stack gap="sm">
+              <Group justify="space-between" wrap="wrap" gap="sm">
+                <div>
+                  <Text fw={600}>Mulai pencarian baru</Text>
+                  <Text size="sm" c="dimmed">
+                    {fetchable.length > 0
+                      ? `${fetchable.length} perusahaan siap dicek. Biasanya selesai dalam beberapa menit.`
+                      : "Belum ada perusahaan yang siap dicek. Tambahkan dulu di bagian Sumber lowongan."}
+                  </Text>
+                </div>
+                <Button
+                  size="md"
+                  disabled={fetchable.length === 0 || start.isPending}
+                  loading={start.isPending}
+                  onClick={() =>
+                    start.mutate(undefined, {
+                      onSuccess: () =>
+                        setNotice("Pencarian dimulai. Hasilnya muncul di bawah setelah selesai."),
+                    })
+                  }
+                >
+                  Cari lowongan sekarang
+                </Button>
+              </Group>
+              {start.error ? (
+                <Alert color="red" title="Pencarian belum bisa dimulai">
+                  {friendlyError(start.error)}
+                </Alert>
+              ) : null}
+              {notice ? (
+                <Alert color="indigo" title="Pencarian dimulai">
+                  {notice}
+                </Alert>
+              ) : null}
+            </Stack>
           </Card>
 
           {latest ? (
@@ -212,9 +232,10 @@ export function DiscoveryPage() {
               onRetry={() => retry.mutate({ taskId: latest.task_id })}
             />
           ) : (
-            <Alert color="gray" title="Belum ada run discovery">
-              Jalankan discovery untuk mengambil lowongan dari sumber terverifikasi.
-            </Alert>
+            <EmptyState
+              title="Belum pernah mencari"
+              message="Tekan Cari lowongan sekarang untuk mengambil lowongan pertama kalinya."
+            />
           )}
 
           <SourceRegistry />

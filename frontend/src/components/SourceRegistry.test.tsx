@@ -1,4 +1,4 @@
-import { MantineProvider } from "@mantine/core";
+﻿import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -72,14 +72,14 @@ describe("SourceRegistry", () => {
   it("shows verification status and last checked time", async () => {
     renderRegistry();
     expect(await screen.findByText("Acme")).toBeTruthy();
-    expect(screen.getByText("verified")).toBeTruthy();
-    expect(screen.getByText("2026-10-20T00:00:00Z")).toBeTruthy();
+    expect(screen.getByText("Sudah dicek")).toBeTruthy();
+    expect(screen.getByText("Ya")).toBeTruthy();
     expect(screen.getByText("12")).toBeTruthy();
   });
 
   it("disables a source through the update endpoint", async () => {
     renderRegistry();
-    fireEvent.click(await screen.findByRole("button", { name: "Nonaktifkan" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Jangan dicari" }));
     await waitFor(() =>
       expect(api.updateSource).toHaveBeenCalledWith("src_1", { enabled: false }),
     );
@@ -92,13 +92,13 @@ describe("SourceRegistry", () => {
     });
     renderRegistry();
 
-    fireEvent.change(await screen.findByLabelText("Perusahaan"), {
+    fireEvent.change(await screen.findByLabelText("Nama perusahaan"), {
       target: { value: "Beta" },
     });
-    fireEvent.change(screen.getByLabelText("Careers URL"), {
+    fireEvent.change(screen.getByLabelText("Alamat halaman karier"), {
       target: { value: "https://jobs.lever.co/beta" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Tambah sumber" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tambah perusahaan" }));
 
     await waitFor(() =>
       expect(api.createSource).toHaveBeenCalledWith({
@@ -118,16 +118,16 @@ describe("SourceRegistry", () => {
 
   it("edits a source from the modal", async () => {
     renderRegistry();
-    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ubah" }));
 
     const dialog = await screen.findByRole("dialog");
-    fireEvent.change(within(dialog).getByLabelText("Perusahaan"), {
+    fireEvent.change(within(dialog).getByLabelText("Nama perusahaan"), {
       target: { value: "Acme Baru" },
     });
-    fireEvent.change(within(dialog).getByLabelText("Careers URL"), {
+    fireEvent.change(within(dialog).getByLabelText("Alamat halaman karier"), {
       target: { value: "https://jobs.lever.co/acme" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Simpan" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Simpan perubahan" }));
 
     await waitFor(() =>
       expect(api.updateSource).toHaveBeenCalledWith(
@@ -159,36 +159,46 @@ describe("SourceRegistry", () => {
       ]),
     );
     renderRegistry();
-    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ubah" }));
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getAllByLabelText("Careers URL")).toHaveLength(1);
-    fireEvent.click(within(dialog).getByRole("button", { name: "Simpan" }));
+    expect(within(dialog).getAllByLabelText("Alamat halaman karier")).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Simpan perubahan" }));
+    // The field error is plain language and sits on the input that caused it.
     expect(
-      await within(dialog).findByText("Careers URL tidak cocok dengan ATS."),
+      await within(dialog).findByText(
+        "Alamat halaman karier harus memakai domain penyedia lowongan yang dipilih.",
+      ),
     ).toBeTruthy();
+    // The request error itself stays generic: no raw server wording, no field name.
     expect(
-      await within(dialog).findByText("Host careers_url harus milik ATS yang dipilih."),
+      await within(dialog).findByText("Ada isian yang belum sesuai. Periksa lagi lalu simpan ulang."),
     ).toBeTruthy();
+    expect(within(dialog).queryByText(/careers_url/)).toBeNull();
 
     const input = within(screen.getByRole("dialog")).getByLabelText(
-      "Careers URL",
+      "Alamat halaman karier",
     ) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "https://boards.greenhouse.io/acme-2" } });
     expect(input.value).toBe("https://boards.greenhouse.io/acme-2");
     const refreshed = screen.getByRole("dialog");
     await waitFor(() =>
       expect(
-        within(refreshed).queryByText("Host careers_url harus milik ATS yang dipilih."),
+        within(refreshed).queryByText(
+          "Alamat halaman karier harus memakai domain penyedia lowongan yang dipilih.",
+        ),
       ).toBeNull(),
     );
-    expect(within(refreshed).queryByText("Careers URL tidak cocok dengan ATS.")).toBeNull();
+    expect(
+      within(refreshed).queryByText("Ada isian yang belum sesuai. Periksa lagi lalu simpan ulang."),
+    ).toBeNull();
   });
 
   it("hides management controls in read-only mode", async () => {
     renderRegistry(false);
     expect(await screen.findByText("Acme")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Tambah sumber" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Ubah" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Tambah perusahaan" })).toBeNull();
   });
 });
+
