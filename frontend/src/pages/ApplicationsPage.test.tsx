@@ -1,4 +1,4 @@
-import { MantineProvider } from "@mantine/core";
+﻿import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -272,9 +272,9 @@ describe("ApplicationsPage", () => {
     renderAt("/applications");
 
     expect(await screen.findByText("Senior Backend Engineer")).toBeTruthy();
-    expect(screen.getByText("eligible")).toBeTruthy();
-    expect(screen.getByText("Fit 82")).toBeTruthy();
-    expect(screen.getByText("Not started")).toBeTruthy();
+    expect(screen.getByText("Sesuai syarat")).toBeTruthy();
+    expect(screen.getByText("82 dari 100")).toBeTruthy();
+    expect(screen.getByText("Belum dimulai")).toBeTruthy();
   });
 
   it("shows the empty state when no workspace exists", async () => {
@@ -284,16 +284,17 @@ describe("ApplicationsPage", () => {
     });
     renderAt("/applications");
 
-    expect(await screen.findByText("Belum ada application.")).toBeTruthy();
+    expect(await screen.findByText("Belum ada lamaran")).toBeTruthy();
   });
 
   it("creates a workspace from a pasted URL", async () => {
     renderAt("/applications");
 
-    fireEvent.change(await screen.findByLabelText("Tambah dari URL lowongan"), {
+    fireEvent.click(await screen.findByRole("button", { name: "Tambah lowongan" }));
+    fireEvent.change(await screen.findByLabelText("Alamat lowongan"), {
       target: { value: "https://example.com/jobs/1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Buat workspace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tambah lowongan ini" }));
 
     await waitFor(() =>
       expect(api.createApplicationFromUrl).toHaveBeenCalledWith(
@@ -306,7 +307,8 @@ describe("ApplicationsPage", () => {
   it("sends pasted text when the page cannot be read", async () => {
     renderAt("/applications");
 
-    fireEvent.change(await screen.findByLabelText("Tambah dari URL lowongan"), {
+    fireEvent.click(await screen.findByRole("button", { name: "Tambah lowongan" }));
+    fireEvent.change(await screen.findByLabelText("Alamat lowongan"), {
       target: { value: "https://example.com/jobs/1" },
     });
     fireEvent.click(
@@ -315,7 +317,7 @@ describe("ApplicationsPage", () => {
     fireEvent.change(screen.getByLabelText("Teks lowongan"), {
       target: { value: "Senior Backend Engineer - Acme\n\nPython dan PostgreSQL." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Buat workspace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tambah lowongan ini" }));
 
     await waitFor(() =>
       expect(api.createApplicationFromUrl).toHaveBeenCalledWith(
@@ -326,9 +328,9 @@ describe("ApplicationsPage", () => {
   });
 
   it.each([
-    ["source_not_found", "Halaman lowongan tidak ditemukan"],
+    ["source_not_found", "Alamat lowongan tidak ditemukan"],
     ["manual_fetch_failed", "Halaman tidak bisa dibaca otomatis"],
-    ["robots_disallowed", "robots.txt menolak pembacaan halaman"],
+    ["robots_disallowed", "Situs ini tidak mengizinkan pembacaan otomatis"],
     ["manual_page_unreadable", "Isi halaman tidak terbaca"],
   ])("names the failure for %s and offers the textarea", async (code, title) => {
     vi.mocked(api.createApplicationFromUrl).mockRejectedValue(
@@ -336,10 +338,11 @@ describe("ApplicationsPage", () => {
     );
     renderAt("/applications");
 
-    fireEvent.change(await screen.findByLabelText("Tambah dari URL lowongan"), {
+    fireEvent.click(await screen.findByRole("button", { name: "Tambah lowongan" }));
+    fireEvent.change(await screen.findByLabelText("Alamat lowongan"), {
       target: { value: "https://example.com/jobs/1" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Buat workspace" }));
+    fireEvent.click(screen.getByRole("button", { name: "Tambah lowongan ini" }));
 
     expect(await screen.findByText(title)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Tempel teks lowongan" }));
@@ -351,14 +354,15 @@ describe("ApplicationWorkspacePage", () => {
   it("shows eligibility, fit, filenames, and the Apply link", async () => {
     renderAt("/applications/app_1");
 
-    expect(await screen.findByText("Senior Backend Engineer · Acme")).toBeTruthy();
-    expect(screen.getByText("Fit 82")).toBeTruthy();
+    expect(await screen.findByText("Senior Backend Engineer")).toBeTruthy();
+    expect(screen.getAllByText(/Acme/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/82 dari 100/)).toBeTruthy();
     expect(
       screen.getByText("CV: CV_Candidate_Acme_Senior_Backend_Engineer.pdf"),
     ).toBeTruthy();
     expect(screen.getByText("Buka halaman lamaran resmi")).toBeTruthy();
     expect(
-      screen.getByText("Belum ada versi dokumen. Buat draft saat eligibility eligible."),
+      screen.getByText("Belum ada dokumen"),
     ).toBeTruthy();
   });
 
@@ -382,14 +386,17 @@ describe("ApplicationWorkspacePage", () => {
     );
     renderAt("/applications/app_1");
 
-    expect(await screen.findByText("Dokumen diblokir")).toBeTruthy();
-    expect(screen.getByText("Fit belum dihitung. Eligibility harus eligible lebih dulu.")).toBeTruthy();
+    expect(await screen.findByText("Perlu kamu periksa")).toBeTruthy();
+    expect(screen.getByText("Perlu keputusanmu")).toBeTruthy();
+    expect(
+      screen.getByText("Kecocokan belum dihitung. Gawe menghitungnya setelah syarat lowongan jelas."),
+    ).toBeTruthy();
   });
 
   it("requests an explicit re-analysis and never a silent one", async () => {
     renderAt("/applications/app_1");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Analisis ulang" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Periksa ulang lowongan ini" }));
     await waitFor(() =>
       expect(api.rerunApplicationAnalysis).toHaveBeenCalledWith("app_1", {
         reason: "user_requested",
@@ -400,7 +407,7 @@ describe("ApplicationWorkspacePage", () => {
   it("generates a draft only when eligibility is eligible", async () => {
     renderAt("/applications/app_1");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Buat CV" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Buat CV untuk lowongan ini" }));
     await waitFor(() =>
       expect(api.generateDocuments).toHaveBeenCalledWith("app_1", {
         kinds: ["cv"],
@@ -412,7 +419,7 @@ describe("ApplicationWorkspacePage", () => {
   it("sends only the cover letter when that button is used", async () => {
     renderAt("/applications/app_1");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Buat cover letter" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Buat surat lamaran" }));
     await waitFor(() =>
       expect(api.generateDocuments).toHaveBeenCalledWith("app_1", {
         kinds: ["cover_letter"],
@@ -434,12 +441,15 @@ describe("ApplicationWorkspacePage", () => {
     );
     renderAt("/applications/app_1");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Lihat" }));
-    expect(await screen.findByText("CV v1")).toBeTruthy();
-    expect(screen.getByText("Basis: Master CV")).toBeTruthy();
-    expect(screen.getByText("experience.exp_1")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Baca" }));
+    expect(await screen.findByText("CV versi ke-1")).toBeTruthy();
 
-    const approveButton = screen.getByRole("button", { name: "Setujui versi ini" });
+    // The diff is behind a disclosure so the preview stays readable.
+    fireEvent.click(screen.getByText("Lihat apa yang diubah dari CV Utama"));
+    expect(await screen.findByText(/Dibandingkan dengan CV Utama/)).toBeTruthy();
+    expect(screen.getAllByText("Pengalaman kerja").length).toBeGreaterThan(0);
+
+    const approveButton = screen.getByRole("button", { name: "Setujui dokumen ini" });
     await waitFor(() => expect((approveButton as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(approveButton);
     await waitFor(() =>
@@ -457,8 +467,8 @@ describe("ApplicationWorkspacePage", () => {
     );
     renderAt("/applications/app_1");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Lihat" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Jalankan review" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Baca" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Periksa dokumen ini" }));
     await waitFor(() =>
       expect(api.runDocumentReview).toHaveBeenCalledWith("app_1", "docv_1"),
     );
@@ -479,8 +489,8 @@ describe("ApplicationWorkspacePage", () => {
     );
     renderAt("/applications/app_1");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Lihat" }));
-    const exportButton = await screen.findByRole("button", { name: "Ekspor PDF" });
+    fireEvent.click(await screen.findByRole("button", { name: "Baca" }));
+    const exportButton = await screen.findByRole("button", { name: "Siapkan PDF untuk diunduh" });
     await waitFor(() => expect((exportButton as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(exportButton);
 
@@ -491,7 +501,7 @@ describe("ApplicationWorkspacePage", () => {
         content_hash: "hash_1",
       }),
     );
-    expect(screen.getByText("Preview PDF")).toBeTruthy();
+    expect(screen.getByText("Lihat sebagai PDF")).toBeTruthy();
   });
 
   it("marks information that the profile does not provide", async () => {
@@ -510,8 +520,9 @@ describe("ApplicationWorkspacePage", () => {
     );
     renderAt("/applications/app_1");
 
-    fireEvent.click(await screen.findByRole("button", { name: "Lihat" }));
-    expect(await screen.findByText("Informasi belum tersedia")).toBeTruthy();
-    expect(screen.getByText("personal.email, summary")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Baca" }));
+    expect(await screen.findByText("Ada informasi yang belum ada di CV-mu")).toBeTruthy();
+    expect(screen.getByText("Email, Ringkasan")).toBeTruthy();
   });
 });
+

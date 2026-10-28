@@ -1,4 +1,4 @@
-import { MantineProvider } from "@mantine/core";
+﻿import { MantineProvider } from "@mantine/core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -87,7 +87,7 @@ describe("DocumentReviewPanel revision checkboxes", () => {
     await screen.findByText("Klaim tanpa evidence.");
     const boxes = screen.getAllByRole("checkbox") as HTMLInputElement[];
     fireEvent.click(boxes[1]); // uncheck the major
-    fireEvent.click(screen.getByRole("button", { name: "Minta perubahan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Minta Gawe perbaiki yang dicentang" }));
 
     await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
     expect(vi.mocked(queries.useRequestDocumentRevision)).toBeDefined();
@@ -99,3 +99,4 @@ describe("DocumentReviewPanel revision checkboxes", () => {
     });
   });
 });
+

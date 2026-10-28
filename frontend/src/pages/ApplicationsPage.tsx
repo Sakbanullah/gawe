@@ -1,7 +1,9 @@
 import {
+  Accordion,
   Alert,
   Badge,
   Button,
+  Card,
   Group,
   Modal,
   Stack,
@@ -9,11 +11,14 @@ import {
   Text,
   Textarea,
   TextInput,
+  Title,
 } from "@mantine/core";
 import { useState } from "react";
 import { Link } from "react-router";
 
-import { ApiError, type ApplicationList, type ApplicationSummary } from "../app/apiClient";
+import type { ApplicationList, ApplicationSummary } from "../app/apiClient";
+import { friendlyError } from "../app/errors";
+import { APPLICATION_STATUS, ELIGIBILITY, label } from "../app/labels";
 import {
   useApplications,
   useCancelApplication,
@@ -26,22 +31,10 @@ import { EmptyState, type PageState } from "../components/states";
 // Codes the URL form can answer with; each one has a different next step, so
 // each one gets its own title (API-CONTRACTS.md §3.4).
 const URL_ERROR_TITLE: Record<string, string> = {
-  source_not_found: "Halaman lowongan tidak ditemukan",
+  source_not_found: "Alamat lowongan tidak ditemukan",
   manual_fetch_failed: "Halaman tidak bisa dibaca otomatis",
-  robots_disallowed: "robots.txt menolak pembacaan halaman",
+  robots_disallowed: "Situs ini tidak mengizinkan pembacaan otomatis",
   manual_page_unreadable: "Isi halaman tidak terbaca",
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  not_started: "Not started",
-  processing: "Processing",
-  needs_review: "Needs review",
-  in_review: "In review",
-  approved: "Approved",
-  exported: "Exported",
-  failed: "Failed",
-  outdated: "Outdated",
-  cancelled: "Dibatalkan",
 };
 
 export function ApplicationsPage() {
@@ -50,8 +43,9 @@ export function ApplicationsPage() {
   const createFromUrl = useCreateApplicationFromUrl();
   const [url, setUrl] = useState("");
   const [text, setText] = useState("");
-  const [showText, setShowText] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [showCancelled, setShowCancelled] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
   const cancelMutation = useCancelApplication();
   const [pendingCancel, setPendingCancel] = useState<ApplicationSummary | null>(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -62,206 +56,241 @@ export function ApplicationsPage() {
       : "ready";
 
   const allItems: ApplicationList["items"] = applications.data?.items ?? [];
-  const items = showCancelled
-    ? allItems
-    : allItems.filter((item) => item.status !== "cancelled");
+  const items = showCancelled ? allItems : allItems.filter((item) => item.status !== "cancelled");
   const cancelledCount = allItems.length - items.length;
   const locked = overview.data ? overview.data.profile?.status !== "confirmed" : false;
+  const errorCode = createFromUrl.error && "code" in createFromUrl.error ? String(createFromUrl.error.code) : "";
 
   return (
     <PageFrame
-      title="Applications"
-      description="Satu workspace per lowongan. CV dan cover letter dipisahkan."
+      eyebrow="Langkah 4"
+      title="Lamaran saya"
+      description="Setiap lowongan yang kamu lamar punya ruang sendiri: CV, surat lamaran, dan statusnya."
       state={state}
       onRetry={() => void applications.refetch()}
+      action={
+        <Button onClick={() => setShowAddForm((v) => !v)} variant={showAddForm ? "light" : "filled"}>
+          {showAddForm ? "Tutup formulir" : "Tambah lowongan"}
+        </Button>
+      }
     >
-      {locked ? (
-        <Alert color="orange" title="Profil belum dikonfirmasi">
-          Konfirmasi profil sebelum membuat workspace lamaran.
-        </Alert>
-      ) : null}
-      <Group align="flex-end">
-        <TextInput
-          label="Tambah dari URL lowongan"
-          description="HTTPS publik. Halaman dibaca sekali untuk workspace ini."
-          placeholder="https://contoh.com/karier/backend-engineer"
-          value={url}
-          onChange={(event) => setUrl(event.currentTarget.value)}
-          style={{ flex: 1 }}
-          disabled={locked}
-        />
-        <Button
-          loading={createFromUrl.isPending}
-          disabled={locked || url.trim() === ""}
-          onClick={() =>
-            void createFromUrl
-              .mutateAsync({ url: url.trim(), text: text.trim() || undefined })
-              .then(() => {
-                setUrl("");
-                setText("");
-                setShowText(false);
-              })
-              // The mutation state already carries the error into the alert.
-              .catch(() => undefined)
-          }
-        >
-          Buat workspace
-        </Button>
-      </Group>
-      <Group justify="space-between">
-        <Button
-          variant="subtle"
-          size="compact-sm"
-          onClick={() => setShowText((current) => !current)}
-          disabled={locked}
-        >
-          {showText ? "Sembunyikan teks lowongan" : "Halaman tidak bisa dibaca? Tempel teksnya"}
-        </Button>
-      </Group>
-      {showText ? (
-        <Textarea
-          label="Teks lowongan"
-          description="Untuk halaman yang menolak akses otomatis (403/429) atau dirender JavaScript. Baris pertama menjadi judul. URL di atas tetap wajib."
-          placeholder={"Senior Backend Engineer - Acme\n\nKami mencari backend engineer..."}
-          value={text}
-          onChange={(event) => setText(event.currentTarget.value)}
-          minRows={6}
-          maxLength={200000}
-          disabled={locked}
-        />
-      ) : null}
-      {createFromUrl.isError ? (
-        <Alert
-          color="red"
-          title={
-            createFromUrl.error instanceof ApiError
-              ? (URL_ERROR_TITLE[createFromUrl.error.code] ?? "URL ditolak")
-              : "URL ditolak"
-          }
-        >
-          <Stack gap="xs" align="flex-start">
-            <Text size="sm">
-              {createFromUrl.error instanceof ApiError
-                ? createFromUrl.error.message
-                : "URL tidak dapat dipakai."}
-            </Text>
-            {createFromUrl.error instanceof ApiError &&
-            createFromUrl.error.code in URL_ERROR_TITLE ? (
-              <Button size="compact-sm" variant="light" onClick={() => setShowText(true)}>
-                Tempel teks lowongan
+      <Stack gap="lg">
+        {locked ? (
+          <Alert color="orange" title="Selesaikan CV-mu dulu">
+            <Stack gap="sm" align="flex-start">
+              <Text size="sm">
+                Konfirmasi data CV-mu sebelum mulai menyiapkan lamaran.
+              </Text>
+              <Button component={Link} to="/master-cv" variant="light">
+                Buka CV Utama
               </Button>
-            ) : null}
-          </Stack>
-        </Alert>
-      ) : null}
-      {items.length === 0 ? <EmptyState message="Belum ada application." /> : null}
-      {allItems.length > 0 ? (
-        <Group justify="flex-end">
-          <Button
-            size="compact-sm"
-            variant="subtle"
-            onClick={() => setShowCancelled((value) => !value)}
-          >
-            {showCancelled
-              ? "Sembunyikan yang dibatalkan"
-              : `Tampilkan yang dibatalkan (${cancelledCount})`}
-          </Button>
-        </Group>
-      ) : null}
-      {items.length > 0 ? (
-        <Table withTableBorder>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Lowongan</Table.Th>
-              <Table.Th>Eligibility</Table.Th>
-              <Table.Th>Fit</Table.Th>
-              <Table.Th>Status</Table.Th>
-              <Table.Th>Dokumen</Table.Th>
-              <Table.Th />
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {items.map((item) => (
-              <Table.Tr
-                key={item.application_id}
-                opacity={item.status === "cancelled" ? 0.55 : undefined}
+            </Stack>
+          </Alert>
+        ) : null}
+
+        {showAddForm && !locked ? (
+          <Card withBorder>
+            <Stack gap="sm">
+              <Title order={3}>Tambah lowongan dari alamat halaman</Title>
+              <Text size="sm" c="dimmed">
+                Tempel alamat halaman lowongan. Gawe membacanya sekali untuk membuat ruang lamaran
+                ini.
+              </Text>
+              <TextInput
+                label="Alamat lowongan"
+                description="Diawali https:// dan bisa dibuka tanpa login."
+                placeholder="https://contoh.com/karier/backend-engineer"
+                value={url}
+                onChange={(event) => setUrl(event.currentTarget.value)}
+              />
+              <Accordion
+                variant="contained"
+                value={pasteOpen ? "paste" : null}
+                onChange={(value) => setPasteOpen(value === "paste")}
               >
-                <Table.Td>
-                  <Text component={Link} to={`/applications/${item.application_id}`} fw={500}>
-                    {item.job.title}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {item.job.company}
-                  </Text>
-                </Table.Td>
-                <Table.Td>
-                  <Badge variant="light">{item.eligibility_status ?? "unknown"}</Badge>
-                </Table.Td>
-                <Table.Td>
-                  {item.fit_score === null || item.fit_score === undefined
-                    ? "—"
-                    : `Fit ${item.fit_score}`}
-                </Table.Td>
-                <Table.Td>
-                  <Badge variant="outline" color={item.status === "cancelled" ? "gray" : undefined}>
-                    {STATUS_LABEL[item.status] ?? item.status}
-                  </Badge>
-                </Table.Td>
-                <Table.Td>
-                  <Text size="sm">
-                    CV {item.document_counts?.cv_versions ?? 0} · CL{" "}
-                    {item.document_counts?.cover_letter_versions ?? 0}
-                  </Text>
-                </Table.Td>
-                <Table.Td>
-                  {item.status === "cancelled" ? null : (
-                    <Button
-                      size="compact-xs"
-                      variant="subtle"
-                      color="red"
-                      disabled={item.status === "approved" || item.status === "processing"}
-                      onClick={() => {
-                        setCancelReason("");
-                        setPendingCancel(item);
-                      }}
-                    >
-                      Batalkan
-                    </Button>
-                  )}
-                </Table.Td>
-              </Table.Tr>
-            ))}
-          </Table.Tbody>
-        </Table>
-      ) : null}
+                <Accordion.Item value="paste">
+                  <Accordion.Control>Halaman tidak bisa dibaca? Tempel teksnya</Accordion.Control>
+                  <Accordion.Panel>
+                    <Textarea
+                      label="Teks lowongan"
+                      description="Salin isi halaman lowongan ke sini. Baris pertama jadi judul."
+                      placeholder={"Senior Backend Engineer - Acme\n\nKami mencari backend engineer..."}
+                      value={text}
+                      onChange={(event) => setText(event.currentTarget.value)}
+                      minRows={6}
+                      maxLength={200000}
+                    />
+                  </Accordion.Panel>
+                </Accordion.Item>
+              </Accordion>
+              <Button
+                loading={createFromUrl.isPending}
+                disabled={url.trim() === ""}
+                onClick={() =>
+                  void createFromUrl
+                    .mutateAsync({ url: url.trim(), text: text.trim() || undefined })
+                    .then(() => {
+                      setUrl("");
+                      setText("");
+                      setPasteOpen(false);
+                      setShowAddForm(false);
+                    })
+                    .catch(() => undefined)
+                }
+              >
+                Tambah lowongan ini
+              </Button>
+            </Stack>
+          </Card>
+        ) : null}
+
+        {createFromUrl.isError ? (
+          <Alert color="red" title={URL_ERROR_TITLE[errorCode] ?? "Alamat belum bisa dipakai"}>
+            <Stack gap="sm" align="flex-start">
+              <Text size="sm">{friendlyError(createFromUrl.error)}</Text>
+              {errorCode in URL_ERROR_TITLE ? (
+                <Button size="compact-sm" variant="light" onClick={() => setPasteOpen(true)}>
+                  Tempel teks lowongan
+                </Button>
+              ) : null}
+            </Stack>
+          </Alert>
+        ) : null}
+
+        {items.length === 0 ? (
+          <EmptyState
+            title="Belum ada lamaran"
+            message="Mulai dari daftar lowongan. Pilih satu yang cocok, lalu siapkan CV dan surat lamarannya."
+            action={
+              <Button component={Link} to="/matches">
+                Lihat lowongan
+              </Button>
+            }
+          />
+        ) : (
+          <Card withBorder>
+            <Stack gap="md">
+              <Title order={3}>Daftar lamaran</Title>
+              <Table.ScrollContainer minWidth={640}>
+                <Table>
+                  <Table.Thead>
+                    <Table.Tr>
+                      <Table.Th>Lowongan</Table.Th>
+                      <Table.Th>Syarat</Table.Th>
+                      <Table.Th>Kecocokan</Table.Th>
+                      <Table.Th>Status</Table.Th>
+                      <Table.Th />
+                    </Table.Tr>
+                  </Table.Thead>
+                  <Table.Tbody>
+                    {items.map((item) => (
+                      <Table.Tr
+                        key={item.application_id}
+                        opacity={item.status === "cancelled" ? 0.55 : undefined}
+                      >
+                        <Table.Td>
+                          <Text size="sm" fw={500}>
+                            {item.job.title}
+                          </Text>
+                          <Text size="xs" c="dimmed">
+                            {item.job.company} · {item.job.location?.raw ?? "lokasi tidak dicantumkan"}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Badge
+                            variant="light"
+                            color={item.eligibility_status === "eligible" ? "teal" : "orange"}
+                          >
+                            {item.eligibility_status
+                              ? label(ELIGIBILITY, item.eligibility_status)
+                              : "Belum diperiksa"}
+                          </Badge>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm">
+                            {item.fit_score === null || item.fit_score === undefined
+                              ? "Belum dihitung"
+                              : `${item.fit_score} dari 100`}
+                          </Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Text size="sm">{label(APPLICATION_STATUS, item.status)}</Text>
+                        </Table.Td>
+                        <Table.Td>
+                          <Group gap="xs" wrap="nowrap">
+                            <Button
+                              component={Link}
+                              to={`/applications/${item.application_id}`}
+                              size="compact-sm"
+                              variant="light"
+                            >
+                              Buka
+                            </Button>
+                            {item.status === "cancelled" ? null : (
+                              <Button
+                                size="compact-sm"
+                                variant="subtle"
+                                color="red"
+                                disabled={item.status === "approved" || item.status === "processing"}
+                                onClick={() => {
+                                  setCancelReason("");
+                                  setPendingCancel(item);
+                                }}
+                              >
+                                Hentikan
+                              </Button>
+                            )}
+                          </Group>
+                        </Table.Td>
+                      </Table.Tr>
+                    ))}
+                  </Table.Tbody>
+                </Table>
+              </Table.ScrollContainer>
+
+              {allItems.length > 0 ? (
+                <Group justify="flex-start">
+                  <Button
+                    size="compact-sm"
+                    variant="subtle"
+                    onClick={() => setShowCancelled((value) => !value)}
+                  >
+                    {showCancelled
+                      ? "Sembunyikan yang dihentikan"
+                      : `Tampilkan yang dihentikan (${cancelledCount})`}
+                  </Button>
+                </Group>
+              ) : null}
+            </Stack>
+          </Card>
+        )}
+      </Stack>
+
       <Modal
         opened={pendingCancel !== null}
         onClose={() => setPendingCancel(null)}
-        title="Batalkan application?"
-        centered
+        title="Hentikan lamaran ini?"
       >
         <Stack>
           <Text size="sm">
-            Workspace <strong>{pendingCancel?.job.title}</strong> akan diarsipkan dan hilang
-            dari daftar aktif. Dokumen dan riwayat approval tetap tersimpan, tidak dihapus.
+            Lamaran untuk <strong>{pendingCancel?.job.title}</strong> akan dipindahkan ke daftar
+            yang dihentikan. Dokumen dan riwayatnya tidak dihapus, dan bisa kamu lihat lagi nanti.
           </Text>
           <Textarea
-            label="Alasan (opsional)"
+            label="Alasan (boleh dikosongkan)"
             placeholder="Contoh: lowongan sudah ditutup"
             value={cancelReason}
             onChange={(event) => setCancelReason(event.currentTarget.value)}
             maxLength={500}
           />
           {cancelMutation.isError ? (
-            <Alert color="red" title="Gagal membatalkan">
-              {cancelMutation.error instanceof ApiError
-                ? cancelMutation.error.message
-                : "Coba lagi."}
+            <Alert color="red" title="Belum berhasil">
+              {friendlyError(cancelMutation.error)}
             </Alert>
           ) : null}
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setPendingCancel(null)}>
-              Kembali
+              Batal
             </Button>
             <Button
               color="red"
@@ -274,7 +303,7 @@ export function ApplicationsPage() {
                 );
               }}
             >
-              Batalkan
+              Hentikan lamaran
             </Button>
           </Group>
         </Stack>
@@ -282,3 +311,5 @@ export function ApplicationsPage() {
     </PageFrame>
   );
 }
+
+
