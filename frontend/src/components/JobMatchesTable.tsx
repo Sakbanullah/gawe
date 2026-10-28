@@ -1,12 +1,14 @@
-import {
+﻿import {
+  Accordion,
   Alert,
-  Anchor,
   Badge,
   Button,
+  Card,
   Divider,
   Drawer,
   Group,
   Loader,
+  Progress,
   Select,
   Stack,
   Table,
@@ -17,7 +19,19 @@ import {
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
-import { ApiError, type MatchDetail, type MatchItem } from "../app/apiClient";
+import type { MatchDetail, MatchItem } from "../app/apiClient";
+import { friendlyError } from "../app/errors";
+import {
+  CHECK_CATEGORY,
+  CHECK_RESULT,
+  ELIGIBILITY,
+  FIT_COMPONENT,
+  FIT_VERDICT,
+  RECOMMENDATION,
+  TIER,
+  WORK_MODE,
+  label,
+} from "../app/labels";
 import {
   useCreateApplication,
   useMatchDetail,
@@ -25,68 +39,55 @@ import {
   useReviewEligibility,
 } from "../app/queries";
 
-/** A job that closed after the list was loaded is a state change, not a failure. */
-function errorMessage(error: unknown): string {
-  if (error instanceof ApiError && error.code === "job_not_open") {
-    return "Lowongan sudah ditutup. Muat ulang daftar Matches.";
-  }
-  return error instanceof Error ? error.message : "Permintaan gagal.";
-}
-
-const TIER_LABEL: Record<string, string> = {
-  P1: "P1 · Global onsite",
-  P2: "P2 · Global remote",
-  P3: "P3 · Indonesia remote",
-  P4: "P4 · Indonesia onsite",
-  unclassified: "Belum terklasifikasi",
-};
 
 const TIER_VALUES = ["P1", "P2", "P3", "P4", "unclassified"] as const;
 type TierValue = (typeof TIER_VALUES)[number];
 
-const TIER_OPTIONS = TIER_VALUES.map((value) => ({ value, label: TIER_LABEL[value] }));
+const TIER_OPTIONS = TIER_VALUES.map((value) => ({ value, label: TIER[value] }));
 
 function asTier(value: string | null): TierValue | null {
   return TIER_VALUES.includes(value as TierValue) ? (value as TierValue) : null;
 }
 
-const STATUS_COLOR: Record<string, string> = {
-  eligible: "green",
-  needs_review: "yellow",
-  ineligible: "red",
-};
-
-type ReviewArgs = { jobId: string; status: "eligible" | "ineligible"; reason: string };
-
-const RESULT_COLOR: Record<string, string> = {
-  met: "green",
-  not_met: "red",
-  unknown: "yellow",
-};
-
 /** Only gaps the reader can act on; other missing fields stay out of the UI. */
 const COMPLETENESS_LABEL: Record<string, string> = {
-  company_name: "Nama perusahaan dari slug",
-  posted_at: "Tanggal posting tidak tersedia",
-  snippet_only: "Perlu deskripsi lengkap",
+  company_name: "Nama perusahaan diambil dari alamat halaman",
+  posted_at: "Tanggal tayang tidak tercantum",
+  snippet_only: "Butuh deskripsi lengkap",
 };
 
 function completenessNotes(missing: string[] | undefined): string[] {
   return (missing ?? [])
     .map((field) => COMPLETENESS_LABEL[field])
-    .filter((label): label is string => Boolean(label));
+    .filter((text): text is string => Boolean(text));
 }
 
-export function MatchStatusBadge({ status }: { status: string }) {
-  return <Badge color={STATUS_COLOR[status] ?? "gray"}>{status}</Badge>;
+export function EligibilityBadge({ status }: { status: string }) {
+  const color = status === "eligible" ? "teal" : status === "ineligible" ? "red" : "orange";
+  return (
+    <Badge color={color} variant="light">
+      {label(ELIGIBILITY, status)}
+    </Badge>
+  );
 }
 
 export function FitBadge({ fit }: { fit: MatchItem["fit"] }) {
-  if (!fit) return <Text size="sm" c="dimmed">—</Text>;
+  if (!fit) {
+    return (
+      <Text size="sm" c="dimmed">
+        Belum dihitung
+      </Text>
+    );
+  }
   return (
-    <Badge color={fit.verdict === "strong" ? "green" : fit.verdict === "moderate" ? "blue" : "gray"}>
-      {fit.fit_score} · {fit.verdict}
-    </Badge>
+    <Group gap={6} wrap="nowrap">
+      <Text size="sm" fw={600}>
+        {fit.fit_score}
+      </Text>
+      <Text size="sm" c="dimmed">
+        {label(FIT_VERDICT, fit.verdict)}
+      </Text>
+    </Group>
   );
 }
 
@@ -119,242 +120,267 @@ export function JobDetailDrawer({
       {detail.isPending ? (
         <Group>
           <Loader size="sm" />
-          <Text>Memuat detail…</Text>
+          <Text>Sedang memuat…</Text>
         </Group>
       ) : null}
       {detail.isError ? (
-        <Alert
-          color="red"
-          title={
-            detail.error instanceof ApiError && detail.error.code === "job_not_open"
-              ? "Lowongan sudah ditutup"
-              : "Gagal memuat detail"
-          }
-        >
-          {errorMessage(detail.error)}
+        <Alert color="red" title="Lowongan belum bisa dibuka">
+          {friendlyError(detail.error, "Lowongan ini mungkin sudah ditutup. Coba muat ulang daftar.")}
         </Alert>
       ) : null}
       {data ? (
-        <Stack gap="md">
+        <Stack gap="lg">
           <div>
-            <Title order={3}>{data.job_detail.job.title}</Title>
-            <Text size="sm" c="dimmed">
+            <Title order={2}>{data.job_detail.job.title}</Title>
+            <Text c="dimmed" mt={4}>
               {data.job_detail.job.company} ·{" "}
-              {data.job_detail.job.location?.raw ?? "lokasi tidak dicantumkan"}
+              {data.job_detail.job.location?.raw ?? "lokasi tidak dicantumkan"} ·{" "}
+              {label(WORK_MODE, data.job_detail.job.work_mode)}
             </Text>
             {completenessNotes(data.job_detail.job.completeness?.missing_fields).map((note) => (
-              <Text key={note} size="xs" c="dimmed">
+              <Text key={note} size="xs" c="dimmed" mt={2}>
                 {note}
               </Text>
             ))}
           </div>
 
           <Group gap="xs">
-            <MatchStatusBadge status={data.eligibility.status} />
-            <FitBadge fit={data.fit} />
-            <Badge variant="light">
-              {TIER_LABEL[data.job_detail.job.priority_tier] ?? data.job_detail.job.priority_tier}
+            <EligibilityBadge status={data.eligibility.status} />
+            <Badge variant="light" color="gray">
+              {label(TIER, data.job_detail.job.priority_tier)}
             </Badge>
-            <Badge variant="outline">{data.recommendation}</Badge>
+            <Badge variant="outline" color="indigo">
+              {label(RECOMMENDATION, data.recommendation)}
+            </Badge>
           </Group>
 
           {data.status_outdated ? (
-            <Alert color="orange" title="Analisis kedaluwarsa">
-              Deskripsi lowongan berubah setelah analisis terakhir. Analisis ulang sebelum
+            <Alert color="orange" title="Lowongan ini berubah">
+              Isi lowongan berubah setelah terakhir diperiksa. Jalankan ulang analisis sebelum
               membuat dokumen.
             </Alert>
           ) : null}
 
-          {data.eligibility.reason_summary ? (
-            <Alert color="gray" title="Ringkasan eligibility">
-              {data.eligibility.reason_summary}
-            </Alert>
-          ) : null}
-
           {data.application_id ? (
-            <Group>
-              <Button component="a" href={`/applications/${data.application_id}`}>
-                Buka Application Workspace
-              </Button>
-              <Text size="xs" c="dimmed">
-                Workspace sudah ada untuk lowongan ini.
-              </Text>
-            </Group>
+            <Card withBorder padding="md">
+              <Group justify="space-between" wrap="wrap" gap="sm">
+                <Text size="sm">Kamu sudah mulai menyiapkan lamaran untuk lowongan ini.</Text>
+                <Button component="a" href={`/applications/${data.application_id}`}>
+                  Buka lamaran
+                </Button>
+              </Group>
+            </Card>
           ) : (
-            <Group>
-              <Button
-                variant="light"
-                loading={createApplication.isPending}
-                onClick={() =>
-                  createApplication.mutate(data.job_detail.job.job_id, {
-                    onSuccess: (created) =>
-                      navigate(`/applications/${created.application_id}`),
-                  })
-                }
-              >
-                Buat Application Workspace
-              </Button>
-              <Text size="xs" c="dimmed">
-                Eligibility dan fit ditampilkan di workspace. Dokumen belum tersedia.
-              </Text>
-            </Group>
+            <Card withBorder padding="md">
+              <Group justify="space-between" wrap="wrap" gap="sm">
+                <Text size="sm">
+                  Siap menyiapkan CV dan surat lamaran untuk lowongan ini?
+                </Text>
+                <Button
+                  loading={createApplication.isPending}
+                  onClick={() =>
+                    createApplication.mutate(data.job_detail.job.job_id, {
+                      onSuccess: (created) =>
+                        navigate(`/applications/${created.application_id}`),
+                    })
+                  }
+                >
+                  Siapkan lamaran
+                </Button>
+              </Group>
+            </Card>
           )}
           {createApplication.error ? (
-            <Alert color="red">{errorMessage(createApplication.error)}</Alert>
+            <Alert color="red" title="Belum bisa dibuat">
+              {friendlyError(createApplication.error)}
+            </Alert>
           ) : null}
 
           {data.job_detail.job.apply_url ? (
-            <Group>
-              <Button
-                component="a"
-                href={data.job_detail.job.apply_url}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {data.job_detail.job.apply_url === data.job_detail.job.canonical_url
-                  ? "Buka halaman lowongan"
-                  : "Buka halaman lamaran resmi"}
-              </Button>
-              <Text size="xs" c="dimmed">
-                Gawe tidak mengirim lamaran. Submit dilakukan di situs resmi.
-              </Text>
-            </Group>
+            <Button
+              component="a"
+              href={data.job_detail.job.apply_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              variant="light"
+            >
+              Buka halaman lamaran resmi
+            </Button>
           ) : (
-            <Alert color="gray">Sumber tidak menyediakan URL lamaran.</Alert>
+            <Alert color="gray" title="Alamat lamaran tidak tersedia">
+              Sumber lowongan ini tidak menyediakan alamat lamaran.
+            </Alert>
           )}
+          <Text size="xs" c="dimmed">
+            Gawe tidak mengirim lamaran untukmu. Pengiriman tetap kamu lakukan sendiri di situs
+            resmi perusahaan.
+          </Text>
 
-          <Divider label="Eligibility" labelPosition="left" />
+          <Divider label="Apakah kamu memenuhi syaratnya?" labelPosition="left" />
+          {data.eligibility.reason_summary ? (
+            <Text size="sm">{data.eligibility.reason_summary}</Text>
+          ) : null}
           {data.eligibility.override_reason ? (
-            <Alert color="blue" title="Diputuskan manual">
+            <Alert color="indigo" title="Kamu sudah memutuskan sendiri">
               <Text size="sm">{data.eligibility.override_reason}</Text>
-              <Text size="xs" c="dimmed">
-                Hasil aturan: {data.eligibility.auto_status ?? "tidak tercatat"}.
-              </Text>
             </Alert>
           ) : null}
-          {data.eligibility.status === "needs_review" &&
-          !data.eligibility.override_reason ? (
-            <Alert color="yellow" title="Perlu tinjauan manusia">
-              <Text size="sm">
-                Aturan tidak dapat memastikan kecocokan. Buka halaman lowongan,
-                baca persyaratannya, lalu putuskan.
-              </Text>
-              <TextInput
-                mt="sm"
-                label="Alasan keputusan"
-                placeholder="Contoh: syarat 3 tahun pengalaman terpenuhi."
-                value={reviewReason}
-                onChange={(event) => setReviewReason(event.currentTarget.value)}
-              />
-              <Group mt="xs">
-                <Button
-                  size="xs"
-                  loading={review.isPending}
-                  disabled={!reviewReason.trim()}
-                  onClick={() =>
-                    review.mutate({
-                      jobId,
-                      status: "eligible",
-                      reason: reviewReason.trim(),
-                    } as ReviewArgs)
-                  }
-                >
-                  Tandai eligible
-                </Button>
-                <Button
-                  size="xs"
-                  color="red"
-                  variant="light"
-                  loading={review.isPending}
-                  disabled={!reviewReason.trim()}
-                  onClick={() =>
-                    review.mutate({
-                      jobId,
-                      status: "ineligible",
-                      reason: reviewReason.trim(),
-                    } as ReviewArgs)
-                  }
-                >
-                  Tandai ineligible
-                </Button>
-              </Group>
-              {review.error ? (
-                <Alert color="red" mt="xs">
-                  {errorMessage(review.error)}
-                </Alert>
-              ) : null}
+          {data.eligibility.status === "needs_review" && !data.eligibility.override_reason ? (
+            <Alert color="orange" title="Perlu keputusanmu">
+              <Stack gap="sm">
+                <Text size="sm">
+                  Gawe belum bisa memastikan. Baca syarat di bawah, lalu putuskan apakah kamu
+                  memenuhi.
+                </Text>
+                <TextInput
+                  label="Alasan keputusanmu"
+                  placeholder="Contoh: saya punya 3 tahun pengalaman yang diminta."
+                  value={reviewReason}
+                  onChange={(event) => setReviewReason(event.currentTarget.value)}
+                />
+                <Group>
+                  <Button
+                    size="sm"
+                    loading={review.isPending}
+                    disabled={!reviewReason.trim()}
+                    onClick={() =>
+                      review.mutate({
+                        jobId: jobId as string,
+                        status: "eligible",
+                        reason: reviewReason.trim(),
+                      })
+                    }
+                  >
+                    Saya memenuhi syarat
+                  </Button>
+                  <Button
+                    size="sm"
+                    color="red"
+                    variant="light"
+                    loading={review.isPending}
+                    disabled={!reviewReason.trim()}
+                    onClick={() =>
+                      review.mutate({
+                        jobId: jobId as string,
+                        status: "ineligible",
+                        reason: reviewReason.trim(),
+                      })
+                    }
+                  >
+                    Saya tidak memenuhi
+                  </Button>
+                </Group>
+                {review.error ? (
+                  <Alert color="red">{friendlyError(review.error)}</Alert>
+                ) : null}
+              </Stack>
             </Alert>
           ) : null}
+
           <Stack gap="sm">
             {data.eligibility.checks.map((check) => (
               <Stack key={check.requirement_id} gap={4}>
                 <Group gap="xs">
-                  <Badge color={RESULT_COLOR[check.result] ?? "gray"}>{check.result}</Badge>
+                  <Badge
+                    color={check.result === "met" ? "teal" : check.result === "not_met" ? "red" : "orange"}
+                    variant="light"
+                  >
+                    {label(CHECK_RESULT, check.result)}
+                  </Badge>
                   <Text size="sm" fw={500}>
-                    {check.category}
+                    {label(CHECK_CATEGORY, check.category)}
                   </Text>
                 </Group>
                 <Text size="sm" fs="italic">
                   “{check.job_quote}”
                 </Text>
-                <Text size="sm">{check.reason}</Text>
-                {check.evidence_refs?.length ? (
-                  <Text size="xs" c="dimmed">
-                    Bukti profil: {check.evidence_refs.join(", ")}
-                  </Text>
-                ) : null}
+                <Text size="sm" c="dimmed">
+                  {check.reason}
+                </Text>
               </Stack>
             ))}
           </Stack>
 
+          <Divider label="Seberapa cocok" labelPosition="left" />
           {data.fit ? (
-            <>
-              <Divider label="Fit" labelPosition="left" />
-              <Table withTableBorder>
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>Komponen</Table.Th>
-                    <Table.Th>Bobot</Table.Th>
-                    <Table.Th>Nilai</Table.Th>
-                    <Table.Th>Kontribusi</Table.Th>
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {data.fit.components.map((component) => (
-                    <Table.Tr key={component.name}>
-                      <Table.Td>{component.name}</Table.Td>
-                      <Table.Td>{component.weight}</Table.Td>
-                      <Table.Td>{component.value}</Table.Td>
-                      <Table.Td>{component.contribution}</Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Table.Tbody>
-              </Table>
+            <Stack gap="sm">
+              <Group gap="md">
+                <div style={{ flex: 1 }}>
+                  <Group justify="space-between" mb={6}>
+                    <Text size="sm" fw={500}>
+                      Skor kecocokan
+                    </Text>
+                    <Text size="sm">
+                      {data.fit.fit_score} / 100 · {label(FIT_VERDICT, data.fit.verdict)}
+                    </Text>
+                  </Group>
+                  <Progress value={data.fit.fit_score} color="indigo" size="lg" radius="xl" />
+                </div>
+              </Group>
               {data.fit.gaps.length > 0 ? (
                 <Stack gap={4}>
                   <Text size="sm" fw={500}>
-                    Gap
+                    Yang belum kamu miliki
                   </Text>
                   {data.fit.gaps.map((gap) => (
                     <Text key={gap.requirement_id} size="sm">
-                      {gap.description}
+                      • {gap.description}
                     </Text>
                   ))}
                 </Stack>
-              ) : null}
-            </>
-          ) : null}
+              ) : (
+                <Text size="sm" c="dimmed">
+                  Tidak ada persyaratan penting yang belum terpenuhi.
+                </Text>
+              )}
+              <Accordion variant="contained">
+                <Accordion.Item value="rincian">
+                  <Accordion.Control>Lihat rincian perhitungan</Accordion.Control>
+                  <Accordion.Panel>
+                    <Table>
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>Bagian</Table.Th>
+                          <Table.Th>Bobot</Table.Th>
+                          <Table.Th>Nilai</Table.Th>
+                          <Table.Th>Kontribusi</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {data.fit.components.map((component) => (
+                          <Table.Tr key={component.name}>
+                            <Table.Td>
+                              {label(FIT_COMPONENT, component.name)}
+                            </Table.Td>
+                            <Table.Td>{component.weight}</Table.Td>
+                            <Table.Td>{component.value}</Table.Td>
+                            <Table.Td>{component.contribution}</Table.Td>
+                          </Table.Tr>
+                        ))}
+                      </Table.Tbody>
+                    </Table>
+                  </Accordion.Panel>
+                </Accordion.Item>
+              </Accordion>
+            </Stack>
+          ) : (
+            <Text size="sm" c="dimmed">
+              Kecocokan belum bisa dihitung. Gawe menghitungnya setelah syarat lowongan jelas.
+            </Text>
+          )}
 
-          <Divider label="Persyaratan" labelPosition="left" />
-          <Stack gap={4}>
+          <Divider label="Syarat dari lowongan" labelPosition="left" />
+          <Stack gap={6}>
             {data.job_detail.requirements.length === 0 ? (
               <Text size="sm" c="dimmed">
-                Tidak ada persyaratan tersimpan.
+                Lowongan ini tidak mencantumkan syarat yang bisa dibaca Gawe.
               </Text>
             ) : (
               data.job_detail.requirements.map((requirement) => (
-                <Group key={requirement.requirement_id} gap="xs" align="flex-start">
-                  <Badge variant="light">{requirement.kind}</Badge>
+                <Group key={requirement.requirement_id} gap="xs" align="flex-start" wrap="nowrap">
+                  <Badge variant="light" color="gray">
+                    {requirement.kind === "must_have" ? "Wajib" : "Nilai plus"}
+                  </Badge>
                   <Text size="sm" style={{ flex: 1 }}>
                     {requirement.text}
                   </Text>
@@ -363,60 +389,67 @@ export function JobDetailDrawer({
             )}
           </Stack>
 
-          <Divider label="Deskripsi" labelPosition="left" />
+          <Divider label="Isi lowongan" labelPosition="left" />
           {data.job_detail.description_truncated ? (
-            <Alert color="yellow">
-              Deskripsi dipotong pada batas ukuran kontrak. Buka halaman sumber untuk teks penuh.
+            <Alert color="yellow" title="Teks dipotong">
+              Gawe hanya menyimpan sebagian teks karena batas ukuran. Buka halaman aslinya untuk
+              membaca semuanya.
             </Alert>
           ) : null}
           <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
             {data.job_detail.description_text || "Deskripsi tidak tersedia."}
           </Text>
 
-          <Divider label="Koreksi tier" labelPosition="left" />
-          <Stack gap="xs">
-            <Text size="sm">
-              Koreksi tier hanya tie-breaker. Skor fit dan eligibility tidak berubah, dan urutan
-              daftar baru berubah setelah ranking dihitung ulang.
-            </Text>
-            <Select
-              label="Tier"
-              placeholder={TIER_LABEL[data.job_detail.job.priority_tier]}
-              data={[...TIER_OPTIONS, { value: "__clear__", label: "Hapus koreksi" }]}
-              value={tier}
-              onChange={setTier}
-              clearable
-            />
-            <TextInput
-              label="Alasan"
-              description="Wajib saat mengisi tier."
-              value={reason}
-              onChange={(event) => setReason(event.currentTarget.value)}
-            />
-            {override.error ? (
-              <Alert color="red">{errorMessage(override.error)}</Alert>
-            ) : null}
-            <Group>
-              <Button
-                loading={override.isPending}
-                disabled={tier === null}
-                onClick={() =>
-                  override.mutate({
-                    jobId: data.job_detail.job.job_id,
-                    tier: tier === "__clear__" ? null : asTier(tier),
-                    reason: tier === "__clear__" ? null : reason.trim() || null,
-                  })
-                }
-              >
-                Simpan koreksi
-              </Button>
-              {override.isSuccess ? (
-                <Text size="sm" c="green">
-                  Koreksi tersimpan.
-                </Text>
-              ) : null}
-            </Group>
-          </Stack>
+          <Accordion variant="contained">
+            <Accordion.Item value="prioritas">
+              <Accordion.Control>Ubah prioritas lowongan ini</Accordion.Control>
+              <Accordion.Panel>
+                <Stack gap="sm">
+                  <Text size="sm" c="dimmed">
+                    Prioritas hanya dipakai untuk mengurutkan daftar saat skor kecocokan sama.
+                    Skor dan syarat tidak berubah.
+                  </Text>
+                  <Select
+                    label="Prioritas"
+                    placeholder={label(TIER, data.job_detail.job.priority_tier)}
+                    data={[...TIER_OPTIONS, { value: "__clear__", label: "Kembalikan ke otomatis" }]}
+                    value={tier}
+                    onChange={setTier}
+                    clearable
+                  />
+                  <TextInput
+                    label="Alasan"
+                    description="Wajib diisi saat memilih prioritas."
+                    value={reason}
+                    onChange={(event) => setReason(event.currentTarget.value)}
+                  />
+                  {override.error ? (
+                    <Alert color="red">{friendlyError(override.error)}</Alert>
+                  ) : null}
+                  <Group>
+                    <Button
+                      loading={override.isPending}
+                      disabled={tier === null}
+                      onClick={() =>
+                        override.mutate({
+                          jobId: data.job_detail.job.job_id,
+                          tier: tier === "__clear__" ? null : asTier(tier),
+                          reason: tier === "__clear__" ? null : reason.trim() || null,
+                        })
+                      }
+                    >
+                      Simpan prioritas
+                    </Button>
+                    {override.isSuccess ? (
+                      <Text size="sm" c="teal">
+                        Tersimpan.
+                      </Text>
+                    ) : null}
+                  </Group>
+                </Stack>
+              </Accordion.Panel>
+            </Accordion.Item>
+          </Accordion>
         </Stack>
       ) : null}
     </Drawer>
@@ -431,55 +464,63 @@ export function JobMatchesTable({
   onSelect: (jobId: string) => void;
 }) {
   return (
-    <Table highlightOnHover withTableBorder>
-      <Table.Thead>
-        <Table.Tr>
-          <Table.Th>Judul</Table.Th>
-          <Table.Th>Perusahaan</Table.Th>
-          <Table.Th>Lokasi</Table.Th>
-          <Table.Th>Eligibility</Table.Th>
-          <Table.Th>Fit</Table.Th>
-          <Table.Th>Prioritas</Table.Th>
-        </Table.Tr>
-      </Table.Thead>
-      <Table.Tbody>
-        {items.map((item) => (
-          <Table.Tr
-            key={item.job.job_id}
-            style={{ cursor: "pointer" }}
-            onClick={() => onSelect(item.job.job_id)}
-          >
-            <Table.Td>
-              <Anchor
-                component="button"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onSelect(item.job.job_id);
-                }}
-              >
-                {item.job.title}
-              </Anchor>
-            </Table.Td>
-            <Table.Td>
-              {item.job.company}
-              {completenessNotes(item.job.completeness?.missing_fields).map((note) => (
-                <Text key={note} size="xs" c="dimmed">
-                  {note}
-                </Text>
-              ))}
-            </Table.Td>
-            <Table.Td>{item.job.location?.raw ?? "—"}</Table.Td>
-            <Table.Td>
-              <MatchStatusBadge status={item.eligibility.status} />
-            </Table.Td>
-            <Table.Td>
-              <FitBadge fit={item.fit} />
-            </Table.Td>
-            <Table.Td>{TIER_LABEL[item.job.priority_tier] ?? item.job.priority_tier}</Table.Td>
+    <Table.ScrollContainer minWidth={640}>
+      <Table>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Lowongan</Table.Th>
+            <Table.Th>Lokasi</Table.Th>
+            <Table.Th>Syarat</Table.Th>
+            <Table.Th>Kecocokan</Table.Th>
+            <Table.Th />
           </Table.Tr>
-        ))}
-      </Table.Tbody>
-    </Table>
+        </Table.Thead>
+        <Table.Tbody>
+          {items.map((item) => (
+            <Table.Tr key={item.job.job_id} style={{ cursor: "pointer" }} onClick={() => onSelect(item.job.job_id)}>
+              <Table.Td>
+                <Text size="sm" fw={500}>
+                  {item.job.title}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {item.job.company}
+                </Text>
+                {completenessNotes(item.job.completeness?.missing_fields).map((note) => (
+                  <Text key={note} size="xs" c="dimmed">
+                    {note}
+                  </Text>
+                ))}
+              </Table.Td>
+              <Table.Td>
+                <Text size="sm">{item.job.location?.raw ?? "—"}</Text>
+                <Text size="xs" c="dimmed">
+                  {label(WORK_MODE, item.job.work_mode)}
+                </Text>
+              </Table.Td>
+              <Table.Td>
+                <EligibilityBadge status={item.eligibility.status} />
+              </Table.Td>
+              <Table.Td>
+                <FitBadge fit={item.fit} />
+              </Table.Td>
+              <Table.Td>
+                <Button
+                  size="compact-sm"
+                  variant="light"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onSelect(item.job.job_id);
+                  }}
+                >
+                  Baca detail
+                </Button>
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </Table.ScrollContainer>
   );
 }
+
+

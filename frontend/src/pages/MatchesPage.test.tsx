@@ -141,9 +141,7 @@ function detail(): MatchDetail {
       fit_score: 82,
       verdict: "strong",
       confidence: "high",
-      components: [
-        { name: "must_coverage", weight: 0.6, value: 1, contribution: 0.6 },
-      ],
+      components: [{ name: "must_coverage", weight: 0.6, value: 1, contribution: 0.6 }],
       gaps: [],
       status_outdated: false,
       computed_at: "2026-10-20T00:00:00Z",
@@ -181,19 +179,19 @@ describe("MatchesPage", () => {
     vi.mocked(api.getOverview).mockResolvedValue(overview(false));
     renderPage();
 
-    expect(await screen.findByText("Matches terkunci")).toBeTruthy();
+    expect(await screen.findByText("Selesaikan CV-mu dulu")).toBeTruthy();
     expect(screen.queryByText("Senior Backend Engineer")).toBeNull();
   });
 
   it("renders the ranked table and requests the selected eligibility filter", async () => {
     renderPage();
 
-    expect(await screen.findByText("Eligible · ranked")).toBeTruthy();
+    expect(await screen.findByText("Sesuai syarat (1)")).toBeTruthy();
     expect(screen.getByText("Senior Backend Engineer")).toBeTruthy();
-    expect(screen.getByText("82 · strong")).toBeTruthy();
-    expect(screen.getAllByText("P4 · Indonesia onsite").length).toBeGreaterThan(0);
+    expect(screen.getByText("82")).toBeTruthy();
+    expect(screen.getByText("sangat cocok")).toBeTruthy();
 
-    fireEvent.click(screen.getByText(/Needs review/));
+    fireEvent.click(screen.getByText(/Perlu diperiksa/));
     await waitFor(() =>
       expect(api.listMatches).toHaveBeenLastCalledWith(
         expect.objectContaining({ eligibility: "needs_review", cursor: null }),
@@ -209,17 +207,20 @@ describe("MatchesPage", () => {
       stale: false,
     };
     vi.mocked(api.listMatches).mockResolvedValue(list([withGaps]));
-    vi.mocked(api.getMatch).mockResolvedValue({ ...detail(), job_detail: { ...detail().job_detail, job: withGaps.job } });
+    vi.mocked(api.getMatch).mockResolvedValue({
+      ...detail(),
+      job_detail: { ...detail().job_detail, job: withGaps.job },
+    });
     renderPage();
 
-    expect(await screen.findByText("Nama perusahaan dari slug")).toBeTruthy();
-    expect(screen.getByText("Tanggal posting tidak tersedia")).toBeTruthy();
+    expect(await screen.findByText("Nama perusahaan diambil dari alamat halaman")).toBeTruthy();
+    expect(screen.getByText("Tanggal tayang tidak tercantum")).toBeTruthy();
     expect(screen.queryByText("description_text")).toBeNull();
 
     fireEvent.click(screen.getByText("Senior Backend Engineer"));
     const drawer = within(await screen.findByRole("dialog"));
-    expect(drawer.getByText("Nama perusahaan dari slug")).toBeTruthy();
-    expect(drawer.getByText("Tanggal posting tidak tersedia")).toBeTruthy();
+    expect(drawer.getByText("Nama perusahaan diambil dari alamat halaman")).toBeTruthy();
+    expect(drawer.getByText("Tanggal tayang tidak tercantum")).toBeTruthy();
   });
 
   it("says a snippet-only job needs the full description, and shows no fit", async () => {
@@ -240,19 +241,21 @@ describe("MatchesPage", () => {
     });
     renderPage();
 
-    expect(await screen.findByText("Perlu deskripsi lengkap")).toBeTruthy();
+    expect(await screen.findByText("Butuh deskripsi lengkap")).toBeTruthy();
 
     fireEvent.click(screen.getByText("Senior Backend Engineer"));
     const drawer = within(await screen.findByRole("dialog"));
-    expect(drawer.getByText("Perlu deskripsi lengkap")).toBeTruthy();
+    expect(drawer.getByText("Butuh deskripsi lengkap")).toBeTruthy();
+    // No fit table when the backend has not scored the job.
+    expect(drawer.getByText(/Kecocokan belum bisa dihitung/)).toBeTruthy();
   });
 
   it("shows no gap note for a job whose source fills every field", async () => {
     renderPage();
 
     await screen.findByText("Senior Backend Engineer");
-    expect(screen.queryByText("Nama perusahaan dari slug")).toBeNull();
-    expect(screen.queryByText("Tanggal posting tidak tersedia")).toBeNull();
+    expect(screen.queryByText("Nama perusahaan diambil dari alamat halaman")).toBeNull();
+    expect(screen.queryByText("Tanggal tayang tidak tercantum")).toBeNull();
   });
 
   it("pages forward with the backend cursor", async () => {
@@ -281,7 +284,7 @@ describe("MatchesPage", () => {
 
     await screen.findByRole("button", { name: "Berikutnya" });
 
-    fireEvent.click(screen.getByText("Eligible (1)"));
+    fireEvent.click(screen.getByText("Sesuai syarat (1)"));
     await screen.findByRole("button", { name: "Berikutnya" });
     await waitFor(() =>
       expect(api.listMatches).toHaveBeenLastCalledWith(
@@ -306,11 +309,13 @@ describe("MatchesPage", () => {
     expect(screen.getByText("Buka halaman lamaran resmi")).toBeTruthy();
 
     const drawer = within(screen.getByRole("dialog"));
-    fireEvent.click(drawer.getByLabelText("Tier"));
-    const options = await screen.findAllByText("P1 · Global onsite");
+    // The correction form is collapsed by default: no manual tier work on the main path.
+    fireEvent.click(drawer.getByText("Ubah prioritas lowongan ini"));
+    fireEvent.click(await drawer.findByLabelText("Prioritas"));
+    const options = await screen.findAllByText("Prioritas 1 · luar negeri, di kantor");
     fireEvent.click(options[options.length - 1]);
     fireEvent.change(drawer.getByLabelText("Alasan"), { target: { value: "Relokasi" } });
-    fireEvent.click(drawer.getByRole("button", { name: "Simpan koreksi" }));
+    fireEvent.click(drawer.getByRole("button", { name: "Simpan prioritas" }));
 
     await waitFor(() =>
       expect(api.overrideMatchTier).toHaveBeenCalledWith("job_1", {
@@ -321,10 +326,13 @@ describe("MatchesPage", () => {
   });
 
   it("shows an empty state when no match is returned", async () => {
-    vi.mocked(api.listMatches).mockResolvedValue(list([]));
+    const empty = list([]);
+    empty.counts = { eligible: 0, needs_review: 0, ineligible: 0, hidden_by_min_fit_score: 0 };
+    vi.mocked(api.listMatches).mockResolvedValue(empty);
     renderPage();
 
-    expect(await screen.findByText("Belum ada job match")).toBeTruthy();
+    expect(await screen.findByText("Belum ada lowongan")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Cari lowongan" })).toBeTruthy();
   });
 
   it("tells a closed job apart from a load failure by error code", async () => {
@@ -334,9 +342,6 @@ describe("MatchesPage", () => {
     renderPage();
 
     fireEvent.click(await screen.findByText("Senior Backend Engineer"));
-    expect(await screen.findByText("Lowongan sudah ditutup")).toBeTruthy();
-    expect(
-      screen.getByText("Lowongan sudah ditutup. Muat ulang daftar Matches."),
-    ).toBeTruthy();
+    expect(await screen.findByText("Lowongan ini sudah ditutup. Muat ulang daftar lowongan.")).toBeTruthy();
   });
 });
