@@ -2,7 +2,20 @@
  * Documented CSS exceptions. Mantine theme and props cover the rest.
  *
  * 1. #root needs a minimum height so the AppShell fills the viewport.
+ * 2. The interface must respect a user who asked the system for less motion.
+ *    Mantine animates a few transitions itself, so the rule is global.
  */
 #root {
   min-height: 100vh;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -11,22 +11,24 @@ function renderWithMantine(node: React.ReactNode) {
 describe("shared states", () => {
   it("renders loading text", () => {
     renderWithMantine(<LoadingState />);
-    expect(screen.getByText("Memuat…")).toBeTruthy();
+    expect(screen.getByText("Sedang memuat…")).toBeTruthy();
   });
 
   it("renders error with retry action", () => {
     renderWithMantine(<ErrorState onRetry={() => undefined} />);
-    expect(screen.getByText("Gagal memuat data")).toBeTruthy();
+    expect(screen.getByText("Data belum bisa dimuat")).toBeTruthy();
     expect(screen.getByText("Coba lagi")).toBeTruthy();
   });
 
   it("renders empty message", () => {
-    renderWithMantine(<EmptyState message="Belum ada job match." />);
-    expect(screen.getByText("Belum ada job match.")).toBeTruthy();
+    renderWithMantine(<EmptyState message="Belum ada lowongan." />);
+    expect(screen.getByText("Belum ada lowongan.")).toBeTruthy();
   });
 
   it("renders status as text, not colour alone", () => {
-    renderWithMantine(<StatusBadge status="needs_review" />);
-    expect(screen.getByText("needs_review")).toBeTruthy();
+    renderWithMantine(
+      <StatusBadge status="needs_review" label="Perlu kamu periksa" />,
+    );
+    expect(screen.getByText("Perlu kamu periksa")).toBeTruthy();
   });
 });

@@ -17,7 +17,8 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <MantineProvider theme={theme}>
+    {/* One colour scheme keeps contrast predictable; the app is a local tool. */}
+    <MantineProvider theme={theme} forceColorScheme="light">
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>
