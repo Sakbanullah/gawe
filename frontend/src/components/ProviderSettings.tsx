@@ -1,23 +1,21 @@
-import { Alert, Badge, Button, Card, Group, PasswordInput, Stack, Text, TextInput } from "@mantine/core";
+import { Alert, Badge, Button, Card, Group, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
 import { useEffect, useState } from "react";
 
 import {
-  ApiError,
   getProviderSettings,
   testProviderConnection,
   updateProviderSettings,
   type ProviderSettingsView,
   type ProviderTestResult,
 } from "../app/apiClient";
+import { friendlyError } from "../app/errors";
 
 const ROLES = ["extract", "classify", "write", "review"] as const;
 
-function errorMessage(error: unknown): string {
-  if (error instanceof ApiError) return error.message;
-  return error instanceof Error ? error.message : "Terjadi kesalahan.";
-}
-
-/** Edits the endpoint, the models per role, and the key. D24. */
+/**
+ * Edits the endpoint, the models per role, and the key (D24). Kept in an
+ * accordion on the settings page: it is set once, not every day.
+ */
 export function ProviderSettings() {
   const [loaded, setLoaded] = useState<ProviderSettingsView | null>(null);
   const [providerId, setProviderId] = useState("");
@@ -33,9 +31,7 @@ export function ProviderSettings() {
     setLoaded(data);
     setProviderId(data.provider_id ?? "");
     setBaseUrl(data.base_url ?? "");
-    setModels(
-      Object.fromEntries(ROLES.map((role) => [role, data.roles[role]?.model ?? ""])),
-    );
+    setModels(Object.fromEntries(ROLES.map((role) => [role, data.roles[role]?.model ?? ""])));
   }
 
   useEffect(() => {
@@ -45,7 +41,7 @@ export function ProviderSettings() {
         if (alive) apply(data);
       })
       .catch((error) => {
-        if (alive) setFailure(errorMessage(error));
+        if (alive) setFailure(friendlyError(error, "Pengaturan layanan AI belum bisa dimuat."));
       });
     return () => {
       alive = false;
@@ -62,16 +58,14 @@ export function ProviderSettings() {
         provider_id: providerId.trim(),
         base_url: baseUrl.trim(),
         // The form no longer shows the models, so it sends back what config has.
-        roles: Object.fromEntries(
-          ROLES.map((role) => [role, (models[role] ?? "").trim()]),
-        ),
+        roles: Object.fromEntries(ROLES.map((role) => [role, (models[role] ?? "").trim()])),
         ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
       });
       apply(data);
       setApiKey("");
-      setSaved("Tersimpan. Consent mungkin perlu diperbarui bila model berubah.");
+      setSaved("Tersimpan. Kalau layanan atau modelnya berubah, izin data mungkin perlu diperbarui.");
     } catch (error) {
-      setFailure(errorMessage(error));
+      setFailure(friendlyError(error));
     } finally {
       setBusy(false);
     }
@@ -84,7 +78,7 @@ export function ProviderSettings() {
     try {
       setTest(await testProviderConnection());
     } catch (error) {
-      setFailure(errorMessage(error));
+      setFailure(friendlyError(error, "Layanan AI belum bisa dihubungi."));
     } finally {
       setBusy(false);
     }
@@ -92,79 +86,89 @@ export function ProviderSettings() {
 
   const keyLabel =
     loaded?.key_source === "keyring"
-      ? "tersimpan di keyring"
+      ? "tersimpan di Windows"
       : loaded?.key_source === "env"
-        ? "dari environment"
+        ? "dari pengaturan sistem"
         : "belum ada";
 
   return (
     <Card withBorder>
-      <Group justify="space-between">
-        <Text fw={500}>Provider LLM</Text>
-        <Badge variant="light" color={loaded?.configured ? "green" : "orange"}>
-          {loaded?.configured ? "configured" : "missing"}
-        </Badge>
-      </Group>
-      <Text size="sm" c="dimmed" mt={4}>
-        Endpoint diubah di sini; model per role memakai nilai yang sudah ada di
-        config lokal. API key disimpan di Windows Credential Manager dan tidak
-        pernah ditampilkan kembali.
-      </Text>
-
-      <Stack gap="xs" mt="sm">
-        <Group grow align="end">
-          <TextInput
-            label="Nama provider"
-            value={providerId}
-            onChange={(event) => setProviderId(event.currentTarget.value)}
-            placeholder="router"
-          />
-          <TextInput
-            label="Base URL"
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.currentTarget.value)}
-            placeholder="https://contoh.example/v1"
-          />
+      <Stack gap="md">
+        <Group justify="space-between" wrap="wrap" gap="sm">
+          <div>
+            <Title order={3}>Layanan AI</Title>
+            <Text size="sm" c="dimmed">
+              Gawe memakai satu layanan AI untuk membaca CV dan menulis draf. Isi sekali saja.
+            </Text>
+          </div>
+          <Badge color={loaded?.configured ? "teal" : "orange"} variant="light">
+            {loaded?.configured ? "Sudah siap" : "Belum diisi"}
+          </Badge>
         </Group>
 
-        <PasswordInput
-          label={`API key (${keyLabel})`}
-          description="Kosongkan bila tidak ingin mengganti key yang tersimpan."
-          value={apiKey}
-          onChange={(event) => setApiKey(event.currentTarget.value)}
-          autoComplete="new-password"
-        />
-        {loaded && !loaded.key_writable ? (
-          <Alert color="orange">
-            Keyring tidak tersedia; key tidak dapat disimpan dari browser. Pakai
-            variabel environment GAWE_LLM_API_KEY.
-          </Alert>
-        ) : null}
+        <Stack gap="sm">
+          <Text size="sm" c="dimmed">
+            Kunci akses disimpan di Windows Credential Manager dan tidak pernah ditampilkan kembali.
+          </Text>
 
-        <Group>
-          <Button loading={busy} onClick={() => void save()}>
-            Simpan
-          </Button>
-          <Button variant="light" loading={busy} onClick={() => void runTest()}>
-            Test koneksi
-          </Button>
-        </Group>
+          <Group grow align="flex-start">
+            <TextInput
+              label="Nama layanan"
+              description="Nama pendek, misalnya router."
+              value={providerId}
+              onChange={(event) => setProviderId(event.currentTarget.value)}
+              placeholder="router"
+            />
+            <TextInput
+              label="Alamat layanan"
+              description="Diawali https://"
+              value={baseUrl}
+              onChange={(event) => setBaseUrl(event.currentTarget.value)}
+              placeholder="https://contoh.example/v1"
+            />
+          </Group>
 
-        {saved ? <Alert color="teal">{saved}</Alert> : null}
-        {failure ? <Alert color="red">{failure}</Alert> : null}
-        {test ? (
-          <Alert color="teal" title={`Tersambung dalam ${test.latency_ms} ms`}>
-            <Text size="sm">
-              {test.model_count} model tersedia
-              {test.models.length
-                ? `, contoh: ${test.models.slice(0, 5).join(", ")}`
-                : "."}
-            </Text>
-            <Text size="xs" c="dimmed">
-              Key dibaca dari {test.key_source}. Tidak ada data kandidat yang dikirim.
-            </Text>
-          </Alert>
-        ) : null}
+          <PasswordInput
+            label={`Kunci akses (${keyLabel})`}
+            description="Kosongkan kalau tidak ingin mengganti kunci yang sudah tersimpan."
+            value={apiKey}
+            onChange={(event) => setApiKey(event.currentTarget.value)}
+            autoComplete="new-password"
+          />
+          {loaded && !loaded.key_writable ? (
+            <Alert color="orange" title="Kunci belum bisa disimpan dari sini">
+              Penyimpanan kunci di Windows tidak tersedia. Isi kunci lewat pengaturan sistem
+              dengan nama GAWE_LLM_API_KEY.
+            </Alert>
+          ) : null}
+
+          <Group>
+            <Button loading={busy} onClick={() => void save()}>
+              Simpan
+            </Button>
+            <Button variant="light" loading={busy} onClick={() => void runTest()}>
+              Coba sambungan
+            </Button>
+          </Group>
+
+          {saved ? <Alert color="teal">{saved}</Alert> : null}
+          {failure ? (
+            <Alert color="red" title="Belum berhasil">
+              {failure}
+            </Alert>
+          ) : null}
+          {test ? (
+            <Alert color="teal" title={`Tersambung dalam ${test.latency_ms} milidetik`}>
+              <Text size="sm">
+                {test.model_count} model tersedia
+                {test.models.length ? `, contoh: ${test.models.slice(0, 3).join(", ")}` : "."}
+              </Text>
+              <Text size="xs" c="dimmed">
+                Tidak ada data CV yang dikirim saat pengujian ini.
+              </Text>
+            </Alert>
+          ) : null}
+        </Stack>
       </Stack>
     </Card>
   );

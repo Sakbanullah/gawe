@@ -1,4 +1,4 @@
-import { MantineProvider } from "@mantine/core";
+﻿import { MantineProvider } from "@mantine/core";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -95,7 +95,7 @@ function renderPage() {
 
 async function renderLoaded() {
   renderPage();
-  await screen.findByText("Consent");
+  await screen.findByText("Izin mengirim data ke layanan AI");
 }
 
 beforeEach(() => {
@@ -131,20 +131,24 @@ describe("SettingsPage consent", () => {
 
     await renderLoaded();
 
-    expect(await screen.findByText("aktif")).toBeTruthy();
-    expect(screen.getByText("Cabut consent")).toBeTruthy();
+    expect(await screen.findByText("Izin aktif")).toBeTruthy();
+    expect(screen.getByText("Cabut izin")).toBeTruthy();
     expect(screen.getByText(/Diberikan 2026-10-19T00:00:00Z/)).toBeTruthy();
     expect(screen.getAllByText("provider_a").length).toBeGreaterThan(0);
-    expect(screen.getByText("2026-10-18T01:00:00Z")).toBeTruthy();
+
+    // History is behind a disclosure so the common case stays short.
+    expect(screen.queryByText("2026-10-18T01:00:00Z")).toBeNull();
+    fireEvent.click(screen.getByText("Riwayat izin"));
+    expect(await screen.findByText("2026-10-18T01:00:00Z")).toBeTruthy();
   });
 
   it("requires the checkbox before granting consent and sends the server scope", async () => {
     await renderLoaded();
 
     const checkbox = screen.getByLabelText(
-      "Saya sudah membaca teks consent di atas dan menyetujuinya.",
+      "Saya sudah membaca pernyataan di atas dan setuju.",
     );
-    const button = screen.getByRole("button", { name: "Berikan consent" }) as HTMLButtonElement;
+    const button = screen.getByRole("button", { name: "Beri izin" }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
 
     fireEvent.click(checkbox);
@@ -165,7 +169,7 @@ describe("SettingsPage consent", () => {
     );
 
     await renderLoaded();
-    fireEvent.click(await screen.findByRole("button", { name: "Cabut consent" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cabut izin" }));
 
     await waitFor(() => expect(api.revokeConsent).toHaveBeenCalledWith("consent_1"));
   });
@@ -181,7 +185,7 @@ describe("SettingsPage consent", () => {
     );
 
     await renderLoaded();
-    expect(await screen.findByText("Consent perlu diperbarui")).toBeTruthy();
+    expect(await screen.findByText("Izin perlu diperbarui")).toBeTruthy();
   });
 
   it("warns when a model changed since consent", async () => {
@@ -195,7 +199,7 @@ describe("SettingsPage consent", () => {
     );
 
     await renderLoaded();
-    expect(await screen.findByText("Consent perlu diperbarui")).toBeTruthy();
+    expect(await screen.findByText("Izin perlu diperbarui")).toBeTruthy();
   });
 
   it("reports a truncated history", async () => {
@@ -204,7 +208,7 @@ describe("SettingsPage consent", () => {
     );
 
     await renderLoaded();
-    expect(await screen.findByText("Riwayat lebih lama tidak ditampilkan.")).toBeTruthy();
+    expect(await screen.findByText("Riwayat yang lebih lama tidak ditampilkan.")).toBeTruthy();
   });
 
   it("shows that consent is not required for a local provider", async () => {
@@ -213,9 +217,9 @@ describe("SettingsPage consent", () => {
     );
 
     await renderLoaded();
-    expect(await screen.findByText("tidak diperlukan")).toBeTruthy();
+    expect(await screen.findByText("Tidak diperlukan")).toBeTruthy();
     expect(
-      screen.getByText("Provider aktif tidak mengirim data ke layanan eksternal."),
+      screen.getByText(/tidak mengirim data ke luar komputer ini/),
     ).toBeTruthy();
   });
 });
@@ -239,10 +243,11 @@ describe("SettingsPage import token", () => {
     expect(api.issueBrowserImportToken).not.toHaveBeenCalled();
     expect(screen.queryByText("tok_1")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Buat token baru" }));
+    fireEvent.click(screen.getByRole("button", { name: "Buat kode sambungan" }));
 
     expect(await screen.findByText("tok_1")).toBeTruthy();
     expect(api.issueBrowserImportToken).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "Salin token" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Salin kode" })).toBeTruthy();
   });
 });
+

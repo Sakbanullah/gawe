@@ -1,4 +1,4 @@
-import { MantineProvider } from "@mantine/core";
+﻿import { MantineProvider } from "@mantine/core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -56,7 +56,7 @@ describe("ProviderSettings", () => {
     await waitFor(() =>
       expect(screen.queryByDisplayValue("https://router.example/v1")).not.toBeNull(),
     );
-    expect(screen.queryByText("configured")).not.toBeNull();
+    expect(screen.queryByText("Sudah siap")).not.toBeNull();
   });
 
   it("saves an edited endpoint without sending an empty key", async () => {
@@ -87,7 +87,7 @@ describe("ProviderSettings", () => {
   it("sends the typed key when one is entered", async () => {
     renderCard();
     await screen.findByDisplayValue("https://router.example/v1");
-    fireEvent.change(screen.getByLabelText(/API key/), { target: { value: "sk-new" } });
+    fireEvent.change(screen.getByLabelText(/Kunci akses/), { target: { value: "sk-new" } });
     fireEvent.click(screen.getByRole("button", { name: "Simpan" }));
 
     await waitFor(() => expect(api.updateProviderSettings).toHaveBeenCalled());
@@ -97,9 +97,9 @@ describe("ProviderSettings", () => {
   it("shows the connection test result", async () => {
     renderCard();
     await screen.findByDisplayValue("https://router.example/v1");
-    fireEvent.click(screen.getByRole("button", { name: "Test koneksi" }));
+    fireEvent.click(screen.getByRole("button", { name: "Coba sambungan" }));
 
-    await waitFor(() => expect(screen.queryByText(/Tersambung dalam 42 ms/)).not.toBeNull());
+    await waitFor(() => expect(screen.queryByText(/Tersambung dalam 42 milidetik/)).not.toBeNull());
     expect(screen.queryByText(/model-a, model-b/)).not.toBeNull();
   });
 
@@ -112,7 +112,7 @@ describe("ProviderSettings", () => {
     fireEvent.click(screen.getByRole("button", { name: "Simpan" }));
 
     await waitFor(() =>
-      expect(screen.queryByText("Endpoint harus URL https lengkap.")).not.toBeNull(),
+      expect(screen.queryByText(/Alamat layanan AI harus diawali https/)).not.toBeNull(),
     );
   });
 
@@ -124,7 +124,8 @@ describe("ProviderSettings", () => {
     });
     renderCard();
     await waitFor(() =>
-      expect(screen.queryByText(/Keyring tidak tersedia/)).not.toBeNull(),
+      expect(screen.queryByText(/Kunci belum bisa disimpan dari sini/)).not.toBeNull(),
     );
   });
 });
+

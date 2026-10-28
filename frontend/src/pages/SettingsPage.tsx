@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  Accordion,
   Alert,
   Badge,
   Button,
@@ -11,13 +12,31 @@ import {
   Table,
   Text,
   Textarea,
+  Title,
 } from "@mantine/core";
 
-import { useConsent, useGrantConsent, useImportToken, useOverview, useRevokeConsent } from "../app/queries";
+import { friendlyError } from "../app/errors";
+import {
+  useConsent,
+  useGrantConsent,
+  useImportToken,
+  useOverview,
+  useRevokeConsent,
+} from "../app/queries";
 import { PageFrame } from "../components/PageFrame";
 import { ProviderSettings } from "../components/ProviderSettings";
 import { SourceRegistry } from "../components/SourceRegistry";
 import type { PageState } from "../components/states";
+
+const DATA_CLASS_LABEL: Record<string, string> = {
+  cv_text: "isi CV",
+  job_description: "deskripsi lowongan",
+  profile_slice: "sebagian data profil",
+};
+
+function dataClassList(classes: string[]): string {
+  return classes.map((item) => DATA_CLASS_LABEL[item] ?? item).join(", ");
+}
 
 export function SettingsPage() {
   const overview = useOverview();
@@ -40,11 +59,13 @@ export function SettingsPage() {
   const state: PageState = loading ? "loading" : failed ? "error" : "ready";
   const status = consent.data;
   const scope = status?.required_scope;
+  const consentError = grant.error ?? revoke.error;
 
   return (
     <PageFrame
-      title="Settings"
-      description="Provider, consent, preferensi, sumber, dan retensi sementara."
+      eyebrow="Pengaturan"
+      title="Pengaturan"
+      description="Semua yang berhubungan dengan mesin AI, izin data, dan daftar perusahaan ada di sini. Kamu jarang perlu membukanya setelah semuanya siap."
       state={state}
       onRetry={() => {
         void overview.refetch();
@@ -52,176 +73,200 @@ export function SettingsPage() {
       }}
     >
       {overview.data ? (
-        <Stack gap="md">
-          <ProviderSettings />
+        <Stack gap="lg">
           <Card withBorder>
-            <Group justify="space-between">
-              <Text fw={500}>Status provider</Text>
-              <Badge variant="light">
-                {overview.data.provider_configured ? "configured" : "missing"}
-              </Badge>
-            </Group>
-            <Text size="sm" c="dimmed">
-              Ringkasan dari config yang sedang dipakai proses ini.
-            </Text>
-          </Card>
-
-          <Card withBorder>
-            <Group justify="space-between" mb="xs">
-              <Text fw={500}>Consent</Text>
-              <Badge variant="light" color={status?.granted ? "green" : "orange"}>
-                {status?.granted ? "aktif" : status?.required ? "diperlukan" : "tidak diperlukan"}
-              </Badge>
-            </Group>
-
-            {status?.provider_changed_since_consent || status?.model_changed_since_consent ? (
-              <Alert color="orange" mb="xs" title="Consent perlu diperbarui">
-                Provider atau model berubah sejak consent terakhir. Berikan consent baru sebelum
-                data kandidat dikirim lagi.
-              </Alert>
-            ) : null}
-
-            {status?.required_text ? (
-              <Stack gap="xs">
-                <Textarea
-                  label={`Teks consent (versi ${status.required_text.text_version})`}
-                  value={status.required_text.display_text}
-                  readOnly
-                  autosize
-                  minRows={4}
-                  maxRows={12}
-                />
-                <Text size="xs" c="dimmed">
-                  sha256: <Code>{status.required_text.text_sha256}</Code>
+            <Stack gap="md">
+              <div>
+                <Title order={3}>Izin mengirim data ke layanan AI</Title>
+                <Text size="sm" c="dimmed">
+                  Gawe memakai layanan AI untuk membaca CV dan menulis draf. Sebelum mengirim,
+                  Gawe minta izinmu dulu. Kamu bisa mencabutnya kapan saja.
                 </Text>
-              </Stack>
-            ) : null}
+              </div>
 
-            {status?.granted && status.current ? (
-              <Stack gap="xs" mt="sm">
-                <Text size="sm">
-                  Diberikan {status.current.granted_at} · teks {status.current.text_version} ·
-                  provider {status.current.scope.provider_id}
-                </Text>
-                <Button
-                  variant="light"
-                  color="red"
-                  loading={revoke.isPending}
-                  onClick={() => void revoke.mutate(status.current?.consent_id ?? "")}
-                >
-                  Cabut consent
-                </Button>
-              </Stack>
-            ) : scope ? (
-              <Stack gap="xs" mt="sm">
-                <Checkbox
-                  checked={accepted}
-                  onChange={(event) => setAccepted(event.currentTarget.checked)}
-                  label="Saya sudah membaca teks consent di atas dan menyetujuinya."
-                />
-                <Button
-                  disabled={!accepted || grant.isPending}
-                  onClick={() =>
-                    void grant.mutate({
-                      providerId: scope.provider_id,
-                      dataClasses: scope.data_classes,
-                    })
-                  }
-                >
-                  Berikan consent
-                </Button>
-              </Stack>
-            ) : (
-              <Text size="sm" c="dimmed">
-                Provider aktif tidak mengirim data ke layanan eksternal.
-              </Text>
-            )}
+              <Group gap="xs">
+                <Badge color={status?.granted ? "teal" : status?.required ? "orange" : "gray"} variant="light">
+                  {status?.granted
+                    ? "Izin aktif"
+                    : status?.required
+                      ? "Izin belum diberikan"
+                      : "Tidak diperlukan"}
+                </Badge>
+              </Group>
 
-            {status?.history.length ? (
-              <Stack gap="xs" mt="md">
-                <Text fw={500} size="sm">
-                  Riwayat consent
-                </Text>
-                <Table>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Diberikan</Table.Th>
-                      <Table.Th>Provider</Table.Th>
-                      <Table.Th>Teks</Table.Th>
-                      <Table.Th>Dicabut</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {status.history.map((record) => (
-                      <Table.Tr key={record.consent_id}>
-                        <Table.Td>{record.granted_at}</Table.Td>
-                        <Table.Td>{record.scope.provider_id}</Table.Td>
-                        <Table.Td>{record.text_version}</Table.Td>
-                        <Table.Td>{record.revoked_at ?? "—"}</Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-                {status.history_truncated ? (
-                  <Text size="xs" c="dimmed">
-                    Riwayat lebih lama tidak ditampilkan.
+              {status?.provider_changed_since_consent || status?.model_changed_since_consent ? (
+                <Alert color="orange" title="Izin perlu diperbarui">
+                  Layanan AI yang dipakai sudah berubah sejak izin terakhir. Berikan izin baru
+                  sebelum data dikirim lagi.
+                </Alert>
+              ) : null}
+
+              {status?.required_text ? (
+                <Accordion variant="contained">
+                  <Accordion.Item value="text">
+                    <Accordion.Control>Baca isi pernyataan izin</Accordion.Control>
+                    <Accordion.Panel>
+                      <Stack gap="xs">
+                        <Textarea value={status.required_text.display_text} readOnly autosize minRows={4} maxRows={14} />
+                        <Text size="xs" c="dimmed">
+                          Versi {status.required_text.text_version}
+                        </Text>
+                      </Stack>
+                    </Accordion.Panel>
+                  </Accordion.Item>
+                </Accordion>
+              ) : null}
+
+              {status?.granted && status.current ? (
+                <Stack gap="sm">
+                  <Stack gap={4}>
+                    <Text size="sm">Diberikan {status.current.granted_at}.</Text>
+                    <Text size="sm">
+                      Layanan yang dipakai: <Code>{status.current.scope.provider_id}</Code>
+                    </Text>
+                    <Text size="sm">
+                      Data yang dikirim: {dataClassList(status.current.scope.data_classes)}.
+                    </Text>
+                  </Stack>
+                  <Button
+                    variant="light"
+                    color="red"
+                    loading={revoke.isPending}
+                    onClick={() => void revoke.mutate(status.current?.consent_id ?? "")}
+                  >
+                    Cabut izin
+                  </Button>
+                </Stack>
+              ) : scope ? (
+                <Stack gap="sm">
+                  <Text size="sm">
+                    Data yang akan dikirim: {dataClassList(scope.data_classes)}. Kamu bisa
+                    mencabut izin ini kapan saja.
                   </Text>
-                ) : null}
-              </Stack>
-            ) : null}
+                  <Checkbox
+                    checked={accepted}
+                    onChange={(event) => setAccepted(event.currentTarget.checked)}
+                    label="Saya sudah membaca pernyataan di atas dan setuju."
+                  />
+                  <Button
+                    disabled={!accepted || grant.isPending}
+                    loading={grant.isPending}
+                    onClick={() =>
+                      void grant.mutate({
+                        providerId: scope.provider_id,
+                        dataClasses: scope.data_classes,
+                      })
+                    }
+                  >
+                    Beri izin
+                  </Button>
+                </Stack>
+              ) : (
+                <Text size="sm" c="dimmed">
+                  Layanan AI yang dipakai saat ini tidak mengirim data ke luar komputer ini.
+                </Text>
+              )}
+
+              {consentError ? (
+                <Alert color="red" title="Belum berhasil">
+                  {friendlyError(consentError)}
+                </Alert>
+              ) : null}
+
+              {status?.history.length ? (
+                <Accordion variant="contained">
+                  <Accordion.Item value="history">
+                    <Accordion.Control>Riwayat izin</Accordion.Control>
+                    <Accordion.Panel>
+                      <Stack gap="xs">
+                        <Table>
+                          <Table.Thead>
+                            <Table.Tr>
+                              <Table.Th>Diberikan</Table.Th>
+                              <Table.Th>Layanan</Table.Th>
+                              <Table.Th>Dicabut</Table.Th>
+                            </Table.Tr>
+                          </Table.Thead>
+                          <Table.Tbody>
+                            {status.history.map((record) => (
+                              <Table.Tr key={record.consent_id}>
+                                <Table.Td>{record.granted_at}</Table.Td>
+                                <Table.Td>{record.scope.provider_id}</Table.Td>
+                                <Table.Td>{record.revoked_at ?? "masih berlaku"}</Table.Td>
+                              </Table.Tr>
+                            ))}
+                          </Table.Tbody>
+                        </Table>
+                        {status.history_truncated ? (
+                          <Text size="xs" c="dimmed">
+                            Riwayat yang lebih lama tidak ditampilkan.
+                          </Text>
+                        ) : null}
+                      </Stack>
+                    </Accordion.Panel>
+                  </Accordion.Item>
+                </Accordion>
+              ) : null}
+            </Stack>
           </Card>
 
-          <Card withBorder>
-            <Text fw={500}>Retensi</Text>
-            <Text size="sm" c="dimmed">
-              Durasi retensi masih sementara sampai D10 disetujui.
-            </Text>
-          </Card>
+          <ProviderSettings />
 
           <SourceRegistry editable />
 
           <Card withBorder>
-            <Text fw={500}>Impor dari ekstensi browser</Text>
-            <Text size="sm" c="dimmed" mt={4}>
-              Ekstensi Gawe membaca lowongan yang sudah tampil di halaman
-              Jobstreet di browsermu, lalu mengirimnya ke sini. Tidak ada
-              browser otomatis dan tidak ada login tersimpan.
-            </Text>
-            <Group mt="sm" gap="xs">
-              <Button
-                size="xs"
-                variant="light"
-                loading={importToken.isPending}
-                onClick={() => importToken.mutate()}
-              >
-                Buat token baru
-              </Button>
-              {importToken.data ? (
-                <Button
-                  size="xs"
-                  variant="subtle"
-                  onClick={() => void copyImportToken()}
-                >
-                  Salin token
-                </Button>
-              ) : null}
-            </Group>
-            {importToken.data ? (
-              <>
-                <Text size="xs" mt="sm">
-                  Tempel token ini ke popup ekstensi. Token lama langsung tidak
-                  berlaku.
+            <Stack gap="sm">
+              <div>
+                <Title order={3}>Ambil lowongan dari halaman yang sedang kamu buka</Title>
+                <Text size="sm" c="dimmed">
+                  Ada ekstensi browser kecil yang bisa membaca lowongan yang sedang tampil di
+                  halaman, lalu mengirimnya ke Gawe. Tidak ada login yang disimpan dan tidak ada
+                  halaman yang dibuka otomatis.
                 </Text>
-                <Code block mt={4}>
-                  {importToken.data.token}
-                </Code>
-              </>
-            ) : null}
-            {copied ? (
-              <Text size="xs" c="teal" mt={4}>
-                Token disalin.
+              </div>
+              <Group gap="xs">
+                <Button
+                  variant="light"
+                  loading={importToken.isPending}
+                  onClick={() => importToken.mutate()}
+                >
+                  Buat kode sambungan
+                </Button>
+              </Group>
+              {importToken.data ? (
+                <Stack gap="xs">
+                  <Text size="sm">
+                    Tempel kode ini di jendela kecil ekstensi. Kode lama langsung tidak berlaku.
+                  </Text>
+                  <Code block>{importToken.data.token}</Code>
+                  <Group>
+                    <Button variant="light" onClick={() => void copyImportToken()}>
+                      Salin kode
+                    </Button>
+                    {copied ? (
+                      <Text size="sm" c="teal">
+                        Tersalin.
+                      </Text>
+                    ) : null}
+                  </Group>
+                </Stack>
+              ) : null}
+              {importToken.error ? (
+                <Alert color="red" title="Belum berhasil">
+                  {friendlyError(importToken.error)}
+                </Alert>
+              ) : null}
+            </Stack>
+          </Card>
+
+          <Card withBorder>
+            <Stack gap="xs">
+              <Title order={3}>Penyimpanan data</Title>
+              <Text size="sm" c="dimmed">
+                Semua data lamaranmu tersimpan di komputer ini. Berapa lama data disimpan belum
+                ditetapkan, jadi untuk saat ini tidak ada penghapusan otomatis.
               </Text>
-            ) : null}
+            </Stack>
           </Card>
         </Stack>
       ) : null}
