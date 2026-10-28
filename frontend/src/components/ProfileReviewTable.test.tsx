@@ -44,15 +44,18 @@ function renderTable(node: React.ReactNode) {
 }
 
 describe("ProfileReviewTable", () => {
-  it("shows the source quote and locator for an evidenced fact", () => {
+  it("shows the fact under a human label with its source quote", () => {
     renderTable(
       <ProfileReviewTable profile={profile()} onCorrect={() => undefined} onResolveConflict={() => undefined} />,
     );
 
-    expect(screen.getByText("experience.exp_1")).toBeTruthy();
-    expect(screen.getAllByText("Data Analyst at PT Contoh").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("p1 blk_1").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("bukti CV").length).toBeGreaterThan(0);
+    expect(screen.getByText("Pengalaman kerja")).toBeTruthy();
+    expect(screen.getByText("Data Analyst")).toBeTruthy();
+    expect(screen.getAllByText(/Data Analyst at PT Contoh/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/halaman 1/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Dari CV").length).toBeGreaterThan(0);
+    // Internal paths stay out of the visible table.
+    expect(screen.queryByText("experience.exp_1")).toBeNull();
   });
 
   it("flags unresolved conflicts and blocks nothing silently", () => {
@@ -72,7 +75,7 @@ describe("ProfileReviewTable", () => {
       />,
     );
 
-    expect(screen.getByText("Konflik belum diselesaikan")).toBeTruthy();
+    expect(screen.getByText("Ada data yang berbeda")).toBeTruthy();
     expect(screen.getByText("Senior Data Analyst")).toBeTruthy();
   });
 });
